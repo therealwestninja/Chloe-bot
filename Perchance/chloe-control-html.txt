@@ -128,6 +128,11 @@
     <div class="row" style="margin-top:6px">
       <label class="note" style="display:flex;align-items:center;gap:5px">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
     </div>
+    <div class="row" style="margin-top:6px">
+      <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." style="flex:1;min-width:180px">
+      <button class="ghost sm" id="pinNoticeBtn">Post &amp; pin notice</button>
+      <span class="note" id="noticeState"></span>
+    </div>
     <div class="note" style="margin-top:6px">Chloe replies to messages addressed to her, after a short lull, with a cooldown so she doesn&rsquo;t dominate. <em>Greet</em> welcomes first-time and long-absent speakers (settling-debounced, one per absence). <em>Detect departures</em> slowly 404-checks quiet users so the roster reflects who&rsquo;s still around (never announced in-channel). <em>Backfill</em> walks history once to seed the roster. Anyone can post <code>!chloe forget me</code> to be self-pruned.</div>
   </div>
 
@@ -148,6 +153,7 @@
       <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
       <button class="ghost" id="addModBtn">Add mod</button>
       <button class="ghost" id="modLogBtn">Mod log</button>
+      <button class="ghost" id="diagBtn">Diagnostics</button>
     </div>
     <div id="modListBox" style="margin-top:8px"></div>
   </div>
@@ -446,6 +452,8 @@
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
     var em = byId('engageModeSel'); if (em && document.activeElement !== em) em.value = s.engageMode || 'normal';
     var px = byId('prefixInput'); if (px && document.activeElement !== px) px.value = (s.commandPrefixes || []).join(', ');
+    var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
+    var ni = byId('noticeInput'); if (ni && document.activeElement !== ni && s.noticeText) ni.value = s.noticeText;
     var amc = byId('autoModChk'); if (amc) amc.checked = !!s.autoMod;
     var amr = byId('autoModRules'); if (amr && document.activeElement !== amr) amr.value = JSON.stringify(s.autoModRules || [], null, 2);
     if (s.lastPoll) {
@@ -640,6 +648,20 @@
       log(res.ok ? ('images: ' + res.value.image + (res.value.image ? ' (ask her to "draw ..." and she\u2019ll generate and post it)' : '')) : ('failed: ' + res.reason));
     });
   });
+  byId('pinNoticeBtn').addEventListener('click', function () {
+    var txt = byId('noticeInput').value.trim();
+    var args = txt ? { text: txt } : {};
+    if (byId('noticeState').textContent.indexOf('pinned \u2713') === 0) {
+      if (!confirm('A transparency notice is already pinned. Post and pin a new one?')) return;
+      args.force = true;
+    }
+    call('mod.pinNotice', args).then(function (res) {
+      if (res.ok && res.value && res.value.already) log('transparency notice already pinned');
+      else if (res.ok) log('transparency notice posted and pinned');
+      else log('pin notice failed: ' + res.reason);
+      refresh();
+    });
+  });
   byId('prefixInput').addEventListener('change', function () {
     var parts = byId('prefixInput').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     call('config.setPrefixes', { prefixes: parts }).then(function (res) {
@@ -699,6 +721,16 @@
     call('mod.addMod', { id: v }).then(function (res) {
       if (res.ok) { log('added mod ' + v); byId('modInput').value = ''; renderMods(res.value || []); }
       else log('add mod failed: ' + res.reason);
+    });
+  });
+  byId('diagBtn').addEventListener('click', function () {
+    call('diag.trace').then(function (res) {
+      var ring = (res && res.value) || [];
+      if (!ring.length) { log('diagnostics ring is empty'); return; }
+      var lines = ring.map(function (e) { return new Date(e.t || 0).toLocaleTimeString() + '  [' + e.tag + '] ' + e.msg; });
+      log('--- diagnostics (' + ring.length + ' events) ---');
+      lines.forEach(function (ln) { log('  ' + ln); });
+      try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(lines.join('\n')).then(function () { log('(copied to clipboard)'); }, function () {}); } catch (e) {}
     });
   });
   byId('modLogBtn').addEventListener('click', function () {

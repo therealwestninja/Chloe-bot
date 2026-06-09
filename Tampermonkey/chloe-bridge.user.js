@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.16.0
+// @version      0.18.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1089,10 +1089,18 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.16.0';
+  var VERSION = '0.18.0';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
+  // #17: a small in-memory ring of link/transport/poll events, readable after the fact (the link's
+  // failure modes are timing-dependent and easy to miss live). Mirrors to console; capped at 60.
+  var traceRing = [], TRACE_MAX = 60;
+  function trace(tag, msg) {
+    var e = { t: Date.now(), tag: tag, msg: String(msg) };
+    traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
+    return e;
+  }
   function tokenShape(t) {
     return { len: t ? t.length : 0, parts: t ? t.split('.').length : 0,
              ws: /\s/.test(t || ''), placeholder: !t || t.indexOf('PASTE_') === 0 };
@@ -1146,11 +1154,12 @@
       if (r.status === 429 && _tries < 4) {
         var retry = 1; try { retry = (JSON.parse(r.responseText).retry_after) || 1; } catch (e) {}
         var hdr = /retry-after:\s*([\d.]+)/i.exec(r.responseHeaders || ''); if (hdr) retry = parseFloat(hdr[1]);
+        trace('http', '429 on ' + method + ' ' + path + '; retry in ' + retry + 's');
         return new Promise(function (res) { setTimeout(res, Math.ceil(retry * 1000) + 50); })
           .then(function () { return requestJSON(method, path, opts, _tries + 1); });
       }
       var body = null; try { body = JSON.parse(r.responseText); } catch (e) {}
-      if (r.status < 200 || r.status >= 300) { var err = new Error('HTTP ' + r.status + (body ? ' ' + JSON.stringify(body) : '')); err.status = r.status; err.body = body; throw err; }
+      if (r.status < 200 || r.status >= 300) { trace('http', 'HTTP ' + r.status + ' on ' + method + ' ' + path); var err = new Error('HTTP ' + r.status + (body ? ' ' + JSON.stringify(body) : '')); err.status = r.status; err.body = body; throw err; }
       return body;
     });
   }
@@ -1164,6 +1173,9 @@
     },
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
+    },
+    pinMessage: function (channelId, messageId) {
+      return requestJSON('PUT', '/channels/' + channelId + '/pins/' + messageId, {});   // needs Manage Messages; 204 on success
     },
     startTyping: function (channelId) { return requestJSON('POST', '/channels/' + channelId + '/typing', { json: true, body: {} }); },
     getChannel: function (channelId) { return requestJSON('GET', '/channels/' + channelId, {}); },
@@ -1249,6 +1261,9 @@
         send: function (cid, text) { return transport.sendMessage(cid, text); },
         onPoll: function (summary) {
           lastPoll = summary; pushEvent('poll', summary);
+          if (summary && (summary.ingested || summary.replied || summary.imageJob || summary.greeted || summary.volunteered || summary.commands)) {
+            trace('poll', 'in ' + (summary.ingested || 0) + (summary.replied ? ' reply' : '') + (summary.imageJob ? ' image' : '') + (summary.greeted ? ' greet' : '') + (summary.volunteered ? ' vol' : '') + (summary.commands ? ' cmd' : '') + ' [' + (summary.engageMode || 'normal') + ']');
+          }
           if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode', 'normal')) cfgSet('engageMode', summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
           return presenceMaintenance();
         }
@@ -1331,6 +1346,7 @@
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
       engageMode: cfgGet('engageMode', 'normal'),
       commandPrefixes: cfgGet('commandPrefixes', []),
+      noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       pageLinked: !!pageSource,
       running: !!(engine && engine.isRunning && engine.isRunning()),
       lastPoll: lastPoll
@@ -1368,6 +1384,21 @@
         cfgSet('commandPrefixes', clean); applyConfigChange();
         return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
       }
+      case 'mod.pinNotice': {
+        var force = !!(args && args.force);
+        if (cfgGet('noticePinned', false) && !force) return Promise.resolve({ ok: true, value: { already: true } });
+        var nch = cfgGet('channelId', '');
+        if (!nch) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var ntext = (args && args.text) ? String(args.text) : 'Heads up: Chloe is a roleplay bot character, not a real person. She reads this channel and remembers regulars so she can chat in character. Mods can adjust or pause her at any time.';
+        return transport.sendMessage(nch, ntext).then(function (m) {
+          var mid = m && m.id;
+          if (!mid) return { ok: false, reason: 'no message id returned' };
+          return transport.pinMessage(nch, mid).then(function () {
+            cfgSet('noticePinned', true); cfgSet('noticeMsgId', mid); cfgSet('noticeText', ntext);
+            return { ok: true, value: { messageId: mid } };
+          }, function (e) { return { ok: false, reason: 'posted, but pin failed (Manage Messages permission?): ' + ((e && e.message) || e) }; });
+        }, function (e) { return { ok: false, reason: 'post failed: ' + ((e && e.message) || e) }; });
+      }
       case 'config.setEngageMode': {
         var mode = (args && args.mode);
         if (mode !== 'locked' && mode !== 'normal' && mode !== 'open') return Promise.resolve({ ok: false, reason: 'mode must be locked|normal|open' });
@@ -1399,6 +1430,8 @@
       }
       case 'diag':
         { var snap = statusSnapshot(); console.log('[chloe] diag', snap); return Promise.resolve({ ok: true, value: snap }); }
+      case 'diag.trace':
+        return Promise.resolve({ ok: true, value: traceRing.slice() });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
       case 'start':           { var e1 = ensureEngine(); if (!e1) return Promise.resolve({ ok: false, reason: 'no channel set' }); e1.start(); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
@@ -1464,15 +1497,16 @@
   window.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d || d.__chloe !== 1) return;
-    if (!ORIGIN_OK.test(ev.origin)) return;
+    if (!ORIGIN_OK.test(ev.origin)) { trace('link', 'rejected chloe-shaped message from disallowed origin ' + ev.origin); return; }
     // capture/refresh the control page window so the engine can call its brain
+    if (!pageSource) trace('link', 'control page connected from ' + ev.origin);
     pageSource = ev.source; pageOrigin = ev.origin;
     if (d.kind === 'callres') { var cb = callPending.get(d.nonce); if (cb) { callPending.delete(d.nonce); cb(d); } return; }
     if (d.kind !== 'req') return;
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
     Promise.resolve().then(function () { return dispatch(d.cmd, d.args); })
       .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; try { source.postMessage(res, origin); } catch (e) {} })
-      .catch(function (err) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, origin); } catch (e) {} });
+      .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, origin); } catch (e) {} });
   });
 
   // ---- menu (fallback / token entry; token must be set in the trusted surface) --------
