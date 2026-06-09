@@ -1,198 +1,306 @@
 <!-- ===================================================================
      Chloe bridge — control panel (HTML panel of the control generator).
-     Pure UI. Talks to the chloe-bridge userscript (the trusted surface that
-     holds the token + runs the Discord loop) over an origin-checked,
-     nonce-matched postMessage link to window.top.
+     UI v2 "mission console": sticky command bar (vitals + controls) over a
+     five-tab rail (Setup / Behavior / Moderation / People / System) with the
+     live log always docked below. Pure UI; talks to the chloe-bridge
+     userscript (the trusted surface holding the token + Discord loop) over an
+     origin-checked, nonce-matched postMessage link to window.top.
      Parser-safe style (Perchance scans this source): NO template literals,
-     NO variable bracket-indexing, dot-access + string concatenation only.
-     User-supplied data (usernames, ids) is written via textContent at
-     runtime, so it never passes through the panel parser.
+     NO variable bracket-indexing, NO square brackets in CSS selectors,
+     dot-access + string concatenation only. User-supplied data is written via
+     textContent at runtime, so it never passes through the panel parser.
      =================================================================== -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
 <style>
   :root{
-    --bg:#0f1320; --bg2:#141a2b; --ink:#e8ecf6; --muted:#8b94ad;
-    --surface:#1a2133; --surface2:#212a40; --line:#2c3650;
-    --accent:#5b8cff; --accent-ink:#fff; --good:#37c98a; --warn:#e8b04a; --bad:#ef6b5e;
-    --radius:12px;
+    --bg:#0a0d18; --bg2:#0d1224; --ink:#e9ecf8; --muted:#8e97b3;
+    --surface:#121a2e; --surface2:#1a2340; --line:#27304e;
+    --accent:#8b5cf6; --accent2:#a78bfa; --accent-ink:#fff;
+    --good:#3ddc97; --warn:#f0b454; --bad:#f0716a;
+    --radius:14px;
+    --disp:'Chakra Petch',ui-monospace,monospace;
+    --body:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   @media (prefers-color-scheme: light){
-    :root{ --bg:#f4f6fb; --bg2:#eef1f8; --ink:#1c2233; --muted:#5d6480;
-      --surface:#fff; --surface2:#f3f5fb; --line:#e2e7f2; --accent:#3a6dff; }
+    :root{ --bg:#f3f4fa; --bg2:#eceef8; --ink:#1b2030; --muted:#5d6584;
+      --surface:#ffffff; --surface2:#f1f2fa; --line:#dfe2f0;
+      --accent:#6d3ff0; --accent2:#5a2fd6; }
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);
-    background:linear-gradient(160deg,var(--bg),var(--bg2));-webkit-font-smoothing:antialiased}
-  #app{max-width:860px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  body{font:14px/1.55 var(--body);color:var(--ink);background-color:var(--bg);
+    background-image:radial-gradient(rgba(139,92,246,.07) 1px,transparent 1.4px),linear-gradient(168deg,var(--bg2),var(--bg) 62%);
+    background-size:24px 24px,100% 100%;background-attachment:fixed;-webkit-font-smoothing:antialiased}
+  #app{max-width:880px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+
+  .cmdbar{position:sticky;top:8px;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(10px);
+    border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;
+    box-shadow:0 8px 28px rgba(5,8,18,.35)}
+  .brand{display:flex;align-items:center;gap:9px;margin-right:4px}
+  .wordmark{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.22em}
+  .wordsub{font-family:var(--disp);font-weight:500;font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--muted)}
+  .vital{display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+    padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:background .2s}
+  .dot.on{background:var(--good);animation:heartbeat 1.6s ease-out infinite}
+  .dot.off{background:var(--bad)} .dot.idle{background:var(--warn)}
+  @keyframes heartbeat{
+    0%{box-shadow:0 0 0 0 rgba(61,220,151,.5)}
+    60%{box-shadow:0 0 0 7px rgba(61,220,151,0)}
+    100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}
+  }
+
+  .statusline{display:flex;gap:16px;flex-wrap:wrap;padding:0 6px}
+  .kv{display:flex;gap:6px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .kv b{color:var(--ink);font-weight:600}
+
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);padding:0 4px}
+  .tab{appearance:none;background:transparent;border:0;cursor:pointer;position:relative;
+    font-family:var(--disp);font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);padding:10px 13px;transition:color .15s}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--ink)}
+  .tab.active::after{content:'';position:absolute;left:10px;right:10px;bottom:-1px;height:2px;
+    background:var(--accent);border-radius:2px;box-shadow:0 0 14px rgba(139,92,246,.9)}
+
+  .pane{display:none}
+  .pane.active{display:flex;flex-direction:column;gap:12px;animation:rise .18s ease}
+  @keyframes rise{0%{opacity:0;transform:translateY(5px)}100%{opacity:1;transform:none}}
+
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
-  h1{font-size:17px;margin:0;font-weight:700}
-  h2{font-size:13px;margin:0 0 8px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  h1{font-size:17px;margin:0;font-weight:700;font-family:var(--disp)}
+  h2{font-family:var(--disp);font-size:11px;margin:0 0 9px;font-weight:600;color:var(--accent2);
+    text-transform:uppercase;letter-spacing:.16em}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .grow{flex:1;min-width:120px}
   .spacer{flex:1}
-  input{background:var(--surface2);border:1px solid var(--line);color:var(--ink);border-radius:8px;
-    padding:8px 10px;font:inherit;min-width:0}
+  .note{font-size:12px;color:var(--muted)}
+  .muted{font-size:12px;color:var(--muted)}
+
+  input,select,textarea{background:var(--surface2);border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:8px 10px;font:inherit;min-width:0;transition:border-color .15s}
+  input:focus,select:focus,textarea:focus{outline:2px solid rgba(139,92,246,.45);outline-offset:1px;border-color:var(--accent)}
+  input:where(.chk){accent-color:var(--accent)}
+  input{accent-color:var(--accent)}
+  select{padding:6px 8px}
+  textarea{width:100%;font:12px/1.55 var(--mono);background:var(--bg);resize:vertical}
+
   button{background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:8px 12px;
-    font:inherit;font-weight:600;cursor:pointer}
+    font:inherit;font-weight:600;cursor:pointer;transition:transform .12s,box-shadow .12s,background .12s}
+  button:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(139,92,246,.35)}
+  button:active{transform:none;box-shadow:none}
   button.ghost{background:var(--surface2);color:var(--ink);border:1px solid var(--line)}
+  button.ghost:hover{box-shadow:0 4px 14px rgba(5,8,18,.35);border-color:var(--accent)}
   button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
-  button:disabled{opacity:.45;cursor:default}
+  button.danger:hover{box-shadow:0 4px 14px rgba(240,113,106,.25)}
+  button:disabled{opacity:.45;cursor:default;transform:none;box-shadow:none}
   button.sm{padding:5px 9px;font-size:12px}
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
-    padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--surface2)}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-  .dot.on{background:var(--good)} .dot.off{background:var(--bad)} .dot.idle{background:var(--warn)}
-  .kv{display:flex;gap:6px;font-size:12px;color:var(--muted)} .kv b{color:var(--ink);font-weight:600}
+
+  .chiprow{display:flex;gap:14px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .codehead{display:flex;align-items:center;gap:8px;font-family:var(--disp);font-size:10px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:10px 0 5px}
+  .dial{display:grid;grid-template-columns:92px 1fr;gap:10px;align-items:center;margin-top:4px}
+  .dial .dn{font-size:12px;color:var(--muted);font-family:var(--mono)}
+
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  th{color:var(--muted);font-family:var(--disp);font-size:10px;text-transform:uppercase;letter-spacing:.12em}
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:rgba(139,92,246,.06)}
   td.actions{white-space:nowrap;text-align:right}
   td.actions button{margin-left:4px}
   .empty{color:var(--muted);padding:14px;text-align:center}
-  .note{font-size:12px;color:var(--muted)}
-  .banner{border:1px solid var(--warn);background:rgba(232,176,74,.08);color:var(--ink);
-    border-radius:8px;padding:8px 10px;font-size:12px}
-  .banner.bad{border-color:var(--bad);background:rgba(239,107,94,.08)}
-  #log{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);
-    border:1px solid var(--line);border-radius:8px;padding:8px 10px;height:150px;overflow:auto;white-space:pre-wrap}
+
+  .banner{border:1px solid var(--warn);background:rgba(240,180,84,.07);color:var(--ink);
+    border-radius:10px;padding:8px 10px;font-size:12px}
+  .banner.bad{border-color:var(--bad);background:rgba(240,113,106,.08)}
+
+  .logbar{display:flex;align-items:center;gap:8px}
+  #log{font:12px/1.6 var(--mono);background:#070a13;border:1px solid var(--line);border-radius:10px;
+    padding:9px 11px;height:140px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+  @media (prefers-color-scheme: light){ #log{background:#10142a;color:#dfe4f6} }
 </style>
 
 <div id="app">
-  <div class="card">
-    <div class="row">
-      <h1>Chloe &mdash; Discord bridge</h1>
-      <span class="spacer"></span>
-      <span class="pill"><span class="dot" id="linkDot"></span><span id="linkTxt">connecting&hellip;</span></span>
-      <span class="pill"><span class="dot" id="runDot"></span><span id="runTxt">stopped</span></span>
+  <header class="cmdbar">
+    <div class="brand">
+      <span class="vital"><span class="dot" id="runDot"></span></span>
+      <span class="wordmark">CHLOE</span>
+      <span class="wordsub">bridge console</span>
     </div>
-    <div class="row" style="margin-top:8px">
-      <span class="kv">bridge <b id="verTxt">&ndash;</b></span>
-      <span class="kv">token <b id="tokTxt">&ndash;</b></span>
-      <span class="kv">bot <b id="botTxt">&ndash;</b></span>
-      <span class="kv">last poll <b id="pollTxt">&ndash;</b></span>
-    </div>
+    <span class="pill"><span class="dot" id="linkDot"></span><span id="linkTxt">connecting&hellip;</span></span>
+    <span class="pill"><span id="runTxt">stopped</span></span>
+    <select id="viewChannelSel" title="channel for the roster, mod log, and mode" style="display:none"></select>
+    <span class="spacer"></span>
+    <button id="startBtn">Start</button>
+    <button class="ghost" id="stopBtn">Stop</button>
+    <button class="ghost" id="pollBtn">Poll once</button>
+    <button class="ghost sm" id="refreshBtn">Refresh</button>
+  </header>
+
+  <div class="statusline">
+    <span class="kv">bridge <b id="verTxt">&ndash;</b></span>
+    <span class="kv">token <b id="tokTxt">&ndash;</b></span>
+    <span class="kv">bot <b id="botTxt">&ndash;</b></span>
+    <span class="kv">last poll <b id="pollTxt">&ndash;</b></span>
   </div>
 
-  <div class="card" id="setupCard">
-    <h2>Setup</h2>
-    <div class="row">
-      <input class="grow" id="channelInput" placeholder="Discord channel ID (Developer Mode &rarr; right-click channel &rarr; Copy ID)">
-      <button class="ghost" id="setChannelBtn">Set channel</button>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <input class="grow" id="extraChannelsInput" placeholder="Extra channel IDs, comma-separated (multi-channel, optional)">
-      <button class="ghost" id="setExtraChannelsBtn">Set channels</button>
-      <select id="viewChannelSel" title="channel for the roster, mod log, and mode below" style="display:none"></select>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <button class="ghost" id="setTokenBtn">Set bot token&hellip;</button>
-      <button id="validateBtn">Validate token</button>
-      <span class="note">Token is entered in the userscript and never sent to this page.</span>
-    </div>
-  </div>
+  <nav class="tabs">
+    <button class="tab active" id="tab_setup">Setup</button>
+    <button class="tab" id="tab_behavior">Behavior</button>
+    <button class="tab" id="tab_moderation">Moderation</button>
+    <button class="tab" id="tab_people">People</button>
+    <button class="tab" id="tab_system">System</button>
+  </nav>
 
-  <div class="card">
-    <h2>Control &mdash; T5 (read, reply, volunteer, moderation, presence)</h2>
-    <div class="row">
-      <button id="startBtn">Start</button>
-      <button class="ghost" id="stopBtn">Stop</button>
-      <button class="ghost" id="pollBtn">Poll once</button>
-      <span class="spacer"></span>
-      <label class="note" for="modeSel">replies when&nbsp;</label>
-      <select id="modeSel" style="background:var(--surface2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 8px">
-        <option value="both">@-mention or name</option>
-        <option value="mention">@-mention only</option>
-        <option value="name">name only</option>
-      </select>
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="volChk"> volunteer</label>
-      <button class="ghost sm" id="refreshBtn">Refresh</button>
+  <section class="pane active" id="pane_setup">
+    <div class="card" id="setupCard">
+      <h2>Channels</h2>
+      <div class="row">
+        <input class="grow" id="channelInput" placeholder="Discord channel ID (Developer Mode &rarr; right-click channel &rarr; Copy ID)">
+        <button class="ghost" id="setChannelBtn">Set channel</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input class="grow" id="extraChannelsInput" placeholder="Extra channel IDs, comma-separated (multi-channel, optional)">
+        <button class="ghost" id="setExtraChannelsBtn">Set channels</button>
+      </div>
+      <div class="note" style="margin-top:6px">With more than one channel, a selector appears in the command bar &mdash; it scopes the roster, mod log, and mode.</div>
     </div>
-    <div class="row" style="margin-top:6px">
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="backfillChk"> backfill history (one-time)</label>
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="imageChk"> draw images on request</label>
-      <label class="note" style="display:flex;align-items:center;gap:5px">queue <input type="number" id="imageQueueInput" min="1" max="20" style="width:46px"> imgs</label>
-      <label class="note" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="autoModChk"> auto-moderate</label>
+    <div class="card">
+      <h2>Identity</h2>
+      <div class="row">
+        <button class="ghost" id="setTokenBtn">Set bot token&hellip;</button>
+        <button id="validateBtn">Validate token</button>
+        <span class="note">The token lives only in the userscript (the trusted surface) &mdash; it never enters this page.</span>
+      </div>
     </div>
-    <details style="margin-top:6px">
-      <summary class="note" style="cursor:pointer">Auto-mod rules (JSON list) &mdash; reversible actions only</summary>
-      <div class="note" style="margin-top:4px">One object per rule: a <code>pattern</code>, a <code>type</code> (text, regex, or confusables), and an <code>action</code> (ignore, timeout, or softban). Optional <code>durationMs</code> and <code>reason</code>. Paste a JSON array, then Save. Rules can only be set here, in the trusted panel.</div>
-      <textarea id="autoModRules" rows="5" spellcheck="false" style="width:100%;margin-top:4px;font-family:monospace;font-size:12px" placeholder="Paste a JSON array of rule objects here, then click Save rules."></textarea>
-      <button class="ghost sm" id="saveAutoModBtn">Save rules</button>
-    </details>
-    <details style="margin-top:6px">
-      <summary class="note" style="cursor:pointer">Scheduled beats (JSON list) &mdash; activity-gated</summary>
-      <div class="note" style="margin-top:4px">Each beat: an <code>id</code>, an <code>intervalMs</code>, and either a <code>text</code> or a <code>texts</code> array (picked at random). Optional <code>activeWithinMs</code>. Beats only fire when the room has been active recently, never during lockdown, one per poll. Paste a JSON array, then Save.</div>
-      <textarea id="beatsBox" rows="4" spellcheck="false" style="width:100%;margin-top:4px;font-family:monospace;font-size:12px" placeholder="Paste a JSON array of beat objects here, then click Save beats."></textarea>
-      <button class="ghost sm" id="saveBeatsBtn">Save beats</button>
-    </details>
-    <div class="row" style="margin-top:6px">
-      <label class="note" style="display:flex;align-items:center;gap:5px">engagement
-        <select id="engageModeSel" style="margin-left:2px">
+  </section>
+
+  <section class="pane" id="pane_behavior">
+    <div class="card">
+      <h2>Engagement</h2>
+      <div class="row">
+        <label class="note" for="modeSel">replies when&nbsp;</label>
+        <select id="modeSel">
+          <option value="both">@-mention or name</option>
+          <option value="mention">@-mention only</option>
+          <option value="name">name only</option>
+        </select>
+        <label class="note" for="engageModeSel">&nbsp;mode&nbsp;</label>
+        <select id="engageModeSel">
           <option value="normal">normal (addressed + volunteer)</option>
           <option value="open">open (reply to everyone)</option>
           <option value="locked">locked (mods only &mdash; raid)</option>
         </select>
-      </label>
+      </div>
+      <div class="chiprow" style="margin-top:10px">
+        <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
+        <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
+        <label class="chip"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
+      </div>
     </div>
-    <div class="row" style="margin-top:6px">
-      <label class="note" style="display:flex;align-items:center;gap:5px">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
+    <div class="card">
+      <h2>Abilities</h2>
+      <div class="chiprow">
+        <label class="chip"><input type="checkbox" id="imageChk"> draw images on request</label>
+        <label class="chip">queue <input type="number" id="imageQueueInput" min="1" max="20" style="width:52px"> imgs</label>
+        <label class="chip"><input type="checkbox" id="backfillChk"> backfill history (one-time)</label>
+        <label class="chip">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
+      </div>
+      <div class="codehead">Scheduled beats <span class="note" style="text-transform:none;letter-spacing:0">JSON array; fires only when the room is active</span></div>
+      <textarea id="beatsBox" rows="4" spellcheck="false" placeholder="Paste a JSON array of beat objects here, then click Save beats."></textarea>
+      <div class="row" style="margin-top:6px"><button class="ghost sm" id="saveBeatsBtn">Save beats</button></div>
     </div>
-    <div class="row" style="margin-top:6px">
-      <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." style="flex:1;min-width:180px">
-      <button class="ghost sm" id="pinNoticeBtn">Post &amp; pin notice</button>
-      <span class="note" id="noticeState"></span>
+    <div class="card">
+      <h2>Personality</h2>
+      <div class="note">Dials shape her tone &mdash; 50 is neutral and silent.</div>
+      <div class="dial"><span class="dn">kindness</span><input type="range" min="0" max="100" value="50" id="dial_kindness"></div>
+      <div class="dial"><span class="dn">sarcasm</span><input type="range" min="0" max="100" value="50" id="dial_sarcasm"></div>
+      <div class="dial"><span class="dn">curiosity</span><input type="range" min="0" max="100" value="50" id="dial_curiosity"></div>
+      <div class="dial"><span class="dn">playfulness</span><input type="range" min="0" max="100" value="50" id="dial_playfulness"></div>
+      <div class="dial"><span class="dn">formality</span><input type="range" min="0" max="100" value="50" id="dial_formality"></div>
+      <div class="dial"><span class="dn">verbosity</span><input type="range" min="0" max="100" value="50" id="dial_verbosity"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="savePersonalityBtn">Save dials</button>
+        <label class="chip"><input type="checkbox" id="personaAnchorChk"> &#128204;-reaction notes (mods anchor a style note)</label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <span class="muted" id="personaNoteBox">no anchored note</span>
+        <button class="ghost sm" id="personaClearBtn">Clear note</button>
+      </div>
     </div>
-    <div class="note" style="margin-top:6px">Chloe replies to messages addressed to her, after a short lull, with a cooldown so she doesn&rsquo;t dominate. <em>Greet</em> welcomes first-time and long-absent speakers (settling-debounced, one per absence). <em>Detect departures</em> slowly 404-checks quiet users so the roster reflects who&rsquo;s still around (never announced in-channel). <em>Backfill</em> walks history once to seed the roster. Anyone can post <code>!chloe forget me</code> to be self-pruned.</div>
-  </div>
+  </section>
 
-  <div class="card">
-    <div class="row"><h2>Roster</h2><span class="spacer"></span><span class="note" id="rosterCount">0 people</span></div>
+  <section class="pane" id="pane_moderation">
     <div class="banner" id="modBanner">Reversible actions (ignore / timeout / note / soft-ban / clear) take effect immediately and gate Chloe <em>before</em> she reads a message &mdash; a suppressed user is invisible to her. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Permaban</strong> bans the user from the server <em>and</em> erases Chloe&rsquo;s memory of them: it asks for a final confirmation in the userscript, bans first, and only purges if the ban succeeds &mdash; then verifies the delete actually took. Irreversible.</div>
-    <table style="margin-top:10px">
-      <thead><tr><th>Name</th><th>ID</th><th>Last seen</th><th>Lines</th><th>State</th><th></th></tr></thead>
-      <tbody id="rosterBody"></tbody>
-    </table>
-    <div class="empty" id="rosterEmpty">No one yet. Set a channel, validate the token, then Start (or Poll once).</div>
-  </div>
+    <div class="card">
+      <h2>Auto-moderation</h2>
+      <div class="row"><label class="chip"><input type="checkbox" id="autoModChk"> auto-moderate (rule list below; reversible actions only)</label></div>
+      <div class="codehead">Rules</div>
+      <textarea id="autoModRules" rows="5" spellcheck="false" placeholder="Paste a JSON array of rule objects here, then click Save rules."></textarea>
+      <div class="row" style="margin-top:6px"><button class="ghost sm" id="saveAutoModBtn">Save rules</button></div>
+    </div>
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Mods</h2><span class="spacer"></span><span class="note" id="modCount">0</span></div>
+      <div class="row" style="margin-top:8px">
+        <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
+        <button class="ghost" id="addModBtn">Add mod</button>
+        <button class="ghost" id="modLogBtn">Mod log</button>
+      </div>
+      <div id="modListBox" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h2>Transparency</h2>
+      <div class="row">
+        <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." class="grow">
+        <button class="ghost sm" id="pinNoticeBtn">Post &amp; pin notice</button>
+        <span class="note" id="noticeState"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="pane" id="pane_people">
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Roster</h2><span class="spacer"></span><span class="note" id="rosterCount">0 people</span></div>
+      <table style="margin-top:10px">
+        <thead><tr><th>Name</th><th>ID</th><th>Last seen</th><th>Lines</th><th>State</th><th></th></tr></thead>
+        <tbody id="rosterBody"></tbody>
+      </table>
+      <div class="empty" id="rosterEmpty">No one yet. Set a channel, validate the token, then Start (or Poll once).</div>
+    </div>
+  </section>
+
+  <section class="pane" id="pane_system">
+    <div class="card">
+      <h2>Tabs &amp; workers</h2>
+      <div class="row">
+        <span class="muted" id="bridgeRole">tabs: ...</span>
+        <span class="spacer"></span>
+        <button class="ghost" id="spawnWorkerBtn">Spawn worker tab</button>
+        <button class="ghost" id="workersBtn">Workers</button>
+      </div>
+      <div id="workersBox" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h2>Diagnostics</h2>
+      <div class="row">
+        <button class="ghost" id="diagBtn">Dump trace ring</button>
+        <span class="note">Link, transport, and poll events from the userscript &mdash; lands in the log below and your clipboard.</span>
+      </div>
+    </div>
+  </section>
 
   <div class="card">
-    <div class="row"><h2>Mods</h2><span class="spacer"></span><span class="note" id="modCount">0</span></div>
-    <div class="note">Listed Discord user IDs may issue <code>!chloe</code> commands in-channel. Editable only here (the trusted surface) &mdash; never via a chat command.</div>
-    <div class="row" style="margin-top:8px">
-      <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
-      <button class="ghost" id="addModBtn">Add mod</button>
-      <button class="ghost" id="modLogBtn">Mod log</button>
-      <button class="ghost" id="diagBtn">Diagnostics</button>
-    </div>
-    <div id="modListBox" style="margin-top:8px"></div>
-    <div class="row" style="margin-top:8px">
-      <span class="muted" id="bridgeRole">tabs: ...</span>
-      <button class="ghost" id="spawnWorkerBtn">Spawn worker tab</button>
-      <button class="ghost" id="workersBtn">Workers</button>
-    </div>
-    <div id="workersBox" style="margin-top:8px"></div>
-    <div class="row" style="margin-top:12px"><strong>Personality</strong><span class="muted">dials shape her tone; 50 = neutral (silent)</span></div>
-    <div class="row" style="margin-top:4px"><span style="width:88px">kindness</span><input type="range" min="0" max="100" value="50" id="dial_kindness" class="grow"></div>
-    <div class="row"><span style="width:88px">sarcasm</span><input type="range" min="0" max="100" value="50" id="dial_sarcasm" class="grow"></div>
-    <div class="row"><span style="width:88px">curiosity</span><input type="range" min="0" max="100" value="50" id="dial_curiosity" class="grow"></div>
-    <div class="row"><span style="width:88px">playfulness</span><input type="range" min="0" max="100" value="50" id="dial_playfulness" class="grow"></div>
-    <div class="row"><span style="width:88px">formality</span><input type="range" min="0" max="100" value="50" id="dial_formality" class="grow"></div>
-    <div class="row"><span style="width:88px">verbosity</span><input type="range" min="0" max="100" value="50" id="dial_verbosity" class="grow"></div>
-    <div class="row" style="margin-top:6px">
-      <button class="ghost" id="savePersonalityBtn">Save dials</button>
-      <label class="muted"><input type="checkbox" id="personaAnchorChk"> &#128204;-reaction notes (mods anchor a style note)</label>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <span class="muted" id="personaNoteBox">no anchored note</span>
-      <button class="ghost" id="personaClearBtn">Clear note</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row"><h2>Log</h2><span class="spacer"></span><button class="ghost sm" id="clearLogBtn">Clear</button>
-      <button class="danger sm" id="resetBtn">Reset T0 state</button></div>
+    <div class="logbar"><h2 style="margin:0">Log</h2><span class="spacer"></span>
+      <button class="ghost sm" id="clearLogBtn">Clear</button>
+      <button class="danger sm" id="resetBtn">Reset state</button></div>
     <div id="log"></div>
   </div>
 </div>
@@ -925,4 +1033,20 @@
   refresh();
   refreshMods();
   setInterval(function () { if (document.visibilityState !== 'hidden') refresh(); }, 5000);
+
+  // ---- UI v2: tab rail (in-memory only; never touches location.hash — the worker role lives there)
+  (function () {
+    var names = 'setup behavior moderation people system'.split(' ');
+    function activate(name) {
+      names.forEach(function (n) {
+        var pane = byId('pane_' + n), tab = byId('tab_' + n);
+        if (pane) pane.className = (n === name) ? 'pane active' : 'pane';
+        if (tab) tab.className = (n === name) ? 'tab active' : 'tab';
+      });
+    }
+    names.forEach(function (n) {
+      var tab = byId('tab_' + n);
+      if (tab) tab.addEventListener('click', function () { activate(n); });
+    });
+  })();
 </script>
