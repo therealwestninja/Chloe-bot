@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.20.0
+// @version      0.22.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      discord.com
 // @run-at       document-idle
 // ==/UserScript==
@@ -119,6 +120,7 @@
       commandPrefix: '!chloe',// text-prefix command grammar (no slash under Adapter A)
       commandPrefixes: [],    // optional extra prefixes (e.g. '!c', 'chloe,') — all resolve to the same commands
       ackCommands: true,      // post a brief in-channel confirmation when a command runs
+      backgroundText: false,  // when on, the text lane is fire-and-forget (poll loop never blocks on generation)
       keepActionLog: true,    // T4: keep a separate, purge-surviving record of mod actions (decision #5)
       modLogContextLines: 5,  // #11: snapshot of the target's most recent lines captured with each mod action
       typing: null,           // optional async (channelId) -> POST typing; pulsed before a generation
@@ -252,6 +254,15 @@
       return out.replace(/\s+/g, ' ');
     }
     function autoModEnabled() { return !!cfg.autoMod && (cfg.autoModRules || []).length > 0; }
+    // Pull URL-ish tokens out of a message so a 'link' rule can target a domain precisely (and
+    // confusables-folded), rather than matching the whole message. NOTE: we deliberately do NOT
+    // follow redirects to canonicalize shorteners — that would mean the user's browser fetching
+    // arbitrary URLs from chat (SSRF/tracking risk) and a wildcard @connect grant; not worth it here.
+    function extractUrls(s) {
+      var out = [], re = /((?:https?:\/\/|www\.)[^\s<>]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s<>]*)?)/gi, m;
+      while ((m = re.exec(String(s || ''))) !== null) { out.push(m[1]); if (re.lastIndex === m.index) re.lastIndex++; }
+      return out;
+    }
     function matchAutoMod(content) {
       var raw = String(content || '');
       var rules = cfg.autoModRules || [];
@@ -260,6 +271,7 @@
         var type = r.type || 'text', hit = false;
         if (type === 'regex') { try { hit = new RegExp(r.pattern, r.flags || 'i').test(raw); } catch (e) { hit = false; } }
         else if (type === 'confusables') { hit = confusablesNormalize(raw).indexOf(confusablesNormalize(r.pattern)) >= 0; }
+        else if (type === 'link') { var needle = confusablesNormalize(r.pattern); hit = extractUrls(raw).some(function (u) { return confusablesNormalize(u).indexOf(needle) >= 0; }); }
         else { hit = raw.toLowerCase().indexOf(String(r.pattern).toLowerCase()) >= 0; }
         if (hit) return r;
       }
@@ -903,25 +915,33 @@
                 return processCommandsAndSelect(incoming, touched).then(function (t3) {
                   if (t3 && t3.commands) summary.commands = t3.commands;
                   var imageJob = kickImage();   // fire-and-forget: image broker threads with text; never blocks the loop
-                  return processReply().then(function (replied) {
+                  if (imageJob) summary.imageJob = imageJob;
+                  summary.engageMode = engageMode;
+                  // The text lane (reply -> volunteer -> greet -> beat) is one promise. By default it's
+                  // awaited so the poll resolves only once it's done (every harness relies on this). With
+                  // backgroundText on, it's fire-and-forget (exposed as summary.textJob) so a long
+                  // generation never stalls the poll loop — the per-lane locks still prevent overlap.
+                  var textLane = processReply().then(function (replied) {
                     if (replied) summary.replied = replied;
-                    return processGate().then(function (acted) {
-                      if (acted) summary.volunteered = acted;
-                      return processGreet().then(function (greeted) {
-                        if (greeted) summary.greeted = greeted;
-                        return processBeats().then(function (beat) {
-                          if (beat) summary.beat = beat;
-                          if (imageJob) summary.imageJob = imageJob;
-                          summary.engageMode = engageMode;
-                          pollCount++;
-                          if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
-                            return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
-                          }
-                          return summary;
-                        });
-                      });
-                    });
+                    return processGate();
+                  }).then(function (acted) {
+                    if (acted) summary.volunteered = acted;
+                    return processGreet();
+                  }).then(function (greeted) {
+                    if (greeted) summary.greeted = greeted;
+                    return processBeats();
+                  }).then(function (beat) {
+                    if (beat) summary.beat = beat;
                   });
+                  function finishPoll() {
+                    pollCount++;
+                    if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
+                      return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
+                    }
+                    return summary;
+                  }
+                  if (cfg.backgroundText) { summary.textJob = textLane; return finishPoll(); }
+                  return textLane.then(finishPoll);
                 });
               });
             });
@@ -1181,7 +1201,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.20.0';
+  var VERSION = '0.22.0';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -1297,12 +1317,35 @@
         .then(function (ch) { return ch && ch.id; });
     }
   };
+  // #3: outbound send cap. The engine already spaces text sends, but greet/reply/image/beat lanes and
+  // multi-ack batches can still bunch up; this serializes ALL outbound posts through one queue with a
+  // minimum gap, a hard floor that keeps bursts under Discord's per-channel rate (429s stay the backstop).
+  var SEND_MIN_GAP = cfgGet('sendMinGapMs', 1100), sendQueue = Promise.resolve(), lastSendAt = 0;
+  function paced(fn) {
+    return function () {
+      var args = arguments;
+      var run = function () {
+        var wait = Math.max(0, SEND_MIN_GAP - (Date.now() - lastSendAt));
+        return new Promise(function (res) { setTimeout(res, wait); }).then(function () { lastSendAt = Date.now(); return fn.apply(transport, args); });
+      };
+      var ret = sendQueue.then(run, run);   // run regardless of the previous send's outcome
+      sendQueue = ret.catch(function () {}); // keep the chain alive for the next caller
+      return ret;
+    };
+  }
+  ['sendMessage', 'sendEmbed', 'sendImage'].forEach(function (k) { var orig = transport[k]; transport[k] = paced(orig); });
 
   // ---- bidirectional link plumbing: userscript -> page (brain) ------------------------
   // The page (generator HTML panel) is the only context that can run aiTextPlugin, so the
   // engine asks it to generate over a reverse call. Page window ref is captured on any
   // valid inbound message and refreshed on reload.
   var pageSource = null, pageOrigin = null;
+  // #14: some userscript managers sandbox `window` so the page's postMessages miss a listener bound
+  // to the wrapped window; bind to the real page window when available (Tampermonkey works either way).
+  var LINKWIN = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+  // #15: a sandboxed frame can report origin 'null'; posting back to targetOrigin 'null' is dropped,
+  // so fall back to '*' in that one case (responses are nonce-matched, so this stays safe).
+  function replyTarget(o) { return (o && o !== 'null') ? o : '*'; }
   var callPending = new Map(); var callSeq = 0;
   function callPage(method, args, timeoutMs) {
     return new Promise(function (resolve) {
@@ -1310,11 +1353,11 @@
       var nonce = 'u' + (++callSeq) + '_' + Date.now();
       var t = setTimeout(function () { callPending.delete(nonce); resolve({ ok: false, reason: 'page timeout' }); }, timeoutMs || 30000);
       callPending.set(nonce, function (res) { clearTimeout(t); resolve(res); });
-      try { pageSource.postMessage({ __chloe: 1, kind: 'call', nonce: nonce, method: method, args: args || null }, pageOrigin); }
+      try { pageSource.postMessage({ __chloe: 1, kind: 'call', nonce: nonce, method: method, args: args || null }, replyTarget(pageOrigin)); }
       catch (e) { clearTimeout(t); callPending.delete(nonce); resolve({ ok: false, reason: 'post failed' }); }
     });
   }
-  function pushEvent(name, value) { if (!pageSource) return; try { pageSource.postMessage({ __chloe: 1, kind: 'event', name: name, value: value }, pageOrigin); } catch (e) {} }
+  function pushEvent(name, value) { if (!pageSource) return; try { pageSource.postMessage({ __chloe: 1, kind: 'event', name: name, value: value }, replyTarget(pageOrigin)); } catch (e) {} }
 
   // ---- engine wiring ------------------------------------------------------------------
   var engine = null;
@@ -1340,9 +1383,11 @@
         autoModRules: cfgGet('autoModRules', []),
         engageMode: cfgGet('engageMode', 'normal'),
         beats: cfgGet('beats', []),
+        beatFn: function (b) { return callPage('beat', b, 30000); },
         greetFn: function (ctx) { return callPage('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
+        backgroundText: true,
         commandPrefixes: cfgGet('commandPrefixes', []),
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
@@ -1534,7 +1579,7 @@
         var clean = [];
         rules.forEach(function (r) {
           if (!r || !r.pattern) return;
-          var type = (r.type === 'regex' || r.type === 'confusables') ? r.type : 'text';
+          var type = (r.type === 'regex' || r.type === 'confusables' || r.type === 'link') ? r.type : 'text';
           var action = (r.action === 'timeout' || r.action === 'softban' || r.action === 'clear') ? r.action : 'ignore';  // reversible only
           var o = { pattern: String(r.pattern), type: type, action: action };
           if (r.durationMs) o.durationMs = Number(r.durationMs) || undefined;
@@ -1610,7 +1655,7 @@
       default:                return Promise.resolve({ ok: false, reason: 'unknown command: ' + cmd });
     }
   }
-  window.addEventListener('message', function (ev) {
+  LINKWIN.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d || d.__chloe !== 1) return;
     if (!ORIGIN_OK.test(ev.origin)) { trace('link', 'rejected chloe-shaped message from disallowed origin ' + ev.origin); return; }
@@ -1621,8 +1666,8 @@
     if (d.kind !== 'req') return;
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
     Promise.resolve().then(function () { return dispatch(d.cmd, d.args); })
-      .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; try { source.postMessage(res, origin); } catch (e) {} })
-      .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, origin); } catch (e) {} });
+      .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; try { source.postMessage(res, replyTarget(origin)); } catch (e) {} })
+      .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, replyTarget(origin)); } catch (e) {} });
   });
 
   // ---- menu (fallback / token entry; token must be set in the trusted surface) --------

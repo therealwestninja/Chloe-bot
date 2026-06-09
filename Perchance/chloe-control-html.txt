@@ -210,6 +210,7 @@
       else if (d.method === 'greet') handler = greet;
       else if (d.method === 'recap') handler = recap;
       else if (d.method === 'paint') handler = paint;
+      else if (d.method === 'beat') handler = beat;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
@@ -281,6 +282,23 @@
       var text = String(result || '').trim();      // boxed-String unwrap (skill 0.1)
       return { ok: !!text, value: text };
     }).catch(function (e) { return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // beat(ctx) -> { ok, value:text }  (#12 generated beats). Turns a scheduled beat's prompt into a
+  // short, natural in-character line. The engine only calls this for beats that carry a `prompt`.
+  function beat(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var prompt = (ctx && ctx.prompt) ? String(ctx.prompt) : '';
+    if (!prompt) return Promise.resolve({ ok: false, reason: 'no beat prompt' });
+    var instruction = PERSONA + '\n\n'
+      + 'You are Chloe. Write a short, natural, in-character message to the channel based on this idea: ' + prompt + '\n'
+      + 'One or two sentences. Do not prefix with your name. Do not say that this is scheduled or automated \u2014 just say it as you would in the moment.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '' })).then(function (result) {
+      var text = String(result || '').trim();
+      if (!text) dlog('beat: model returned empty');
+      return { ok: !!text, value: text };
+    }).catch(function (e) { dlog('beat: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
   // recap(ctx) -> { ok, value:text }  (mod command). Summarizes the recent channel window in her
