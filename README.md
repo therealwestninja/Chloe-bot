@@ -29,6 +29,14 @@ In the panel's Mods card, **Spawn worker tab** opens a second copy of the genera
 
 **Failover:** if the queen tab dies (closed by accident, crashed, discarded), the worker tabs notice within a couple of minutes, elect exactly one of themselves as the new queen, and — if Chloe was running — resume her automatically. Closing your laptop lid is fine too: a machine waking from sleep is detected and does *not* trigger a false election. So with one worker tab open, "keep this exact tab alive" relaxes to "keep any one tab alive".
 
+### Multiple channels
+
+The Setup tab takes extra channel IDs (comma-separated). Each channel gets its own independent Chloe: separate memory of people, separate moderation state and strikes, separate engagement mode (`!chloe lockdown` in one channel doesn't lock the others), separate persona note — all served by one bot token and one worker pool. A selector appears in the command bar to scope the roster, mod log, and mode controls to a channel.
+
+### The control panel
+
+The panel is a small console: a sticky command bar (Chloe's heartbeat pulses while she runs) with Start/Stop and the channel selector, five tabs — Setup, Behavior, Moderation, People, System — and the live log always docked below.
+
 ## Talking to Chloe
 
 Mention her or use her name — both work:
