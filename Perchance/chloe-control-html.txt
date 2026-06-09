@@ -116,6 +116,18 @@
       <textarea id="autoModRules" rows="5" spellcheck="false" style="width:100%;margin-top:4px;font-family:monospace;font-size:12px" placeholder="Paste a JSON array of rule objects here, then click Save rules."></textarea>
       <button class="ghost sm" id="saveAutoModBtn">Save rules</button>
     </details>
+    <div class="row" style="margin-top:6px">
+      <label class="note" style="display:flex;align-items:center;gap:5px">engagement
+        <select id="engageModeSel" style="margin-left:2px">
+          <option value="normal">normal (addressed + volunteer)</option>
+          <option value="open">open (reply to everyone)</option>
+          <option value="locked">locked (mods only &mdash; raid)</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="note" style="display:flex;align-items:center;gap:5px">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
+    </div>
     <div class="note" style="margin-top:6px">Chloe replies to messages addressed to her, after a short lull, with a cooldown so she doesn&rsquo;t dominate. <em>Greet</em> welcomes first-time and long-absent speakers (settling-debounced, one per absence). <em>Detect departures</em> slowly 404-checks quiet users so the roster reflects who&rsquo;s still around (never announced in-channel). <em>Backfill</em> walks history once to seed the roster. Anyone can post <code>!chloe forget me</code> to be self-pruned.</div>
   </div>
 
@@ -432,6 +444,8 @@
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
+    var em = byId('engageModeSel'); if (em && document.activeElement !== em) em.value = s.engageMode || 'normal';
+    var px = byId('prefixInput'); if (px && document.activeElement !== px) px.value = (s.commandPrefixes || []).join(', ');
     var amc = byId('autoModChk'); if (amc) amc.checked = !!s.autoMod;
     var amr = byId('autoModRules'); if (amr && document.activeElement !== amr) amr.value = JSON.stringify(s.autoModRules || [], null, 2);
     if (s.lastPoll) {
@@ -626,6 +640,18 @@
       log(res.ok ? ('images: ' + res.value.image + (res.value.image ? ' (ask her to "draw ..." and she\u2019ll generate and post it)' : '')) : ('failed: ' + res.reason));
     });
   });
+  byId('prefixInput').addEventListener('change', function () {
+    var parts = byId('prefixInput').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    call('config.setPrefixes', { prefixes: parts }).then(function (res) {
+      if (res.ok) { log('extra prefixes: ' + (res.value.commandPrefixes.join(', ') || '(none)')); byId('prefixInput').value = res.value.commandPrefixes.join(', '); }
+      else log('failed: ' + res.reason);
+    });
+  });
+  byId('engageModeSel').addEventListener('change', function () {
+    call('config.setEngageMode', { mode: byId('engageModeSel').value }).then(function (res) {
+      log(res.ok ? ('engagement mode: ' + res.value.engageMode) : ('failed: ' + res.reason));
+    });
+  });
   byId('imageQueueInput').addEventListener('change', function () {
     call('config.setImageQueue', { max: byId('imageQueueInput').value }).then(function (res) {
       if (res.ok) { log('image queue depth: ' + res.value.imageQueueMax); byId('imageQueueInput').value = res.value.imageQueueMax; }
@@ -682,7 +708,8 @@
       log('--- mod log (' + l.length + ') ---');
       l.slice(-20).forEach(function (e) {
         var when = new Date(e.at || 0).toLocaleString();
-        log(when + '  ' + e.action + '  ' + (e.name || e.targetId) + (e.reason ? ('  \u2014 ' + e.reason) : ''));
+        log(when + '  ' + e.action + '  ' + (e.name || e.targetId) + (e.byModId === 'auto' ? ' (auto)' : '') + (e.reason ? ('  \u2014 ' + e.reason) : ''));
+        (e.context || []).forEach(function (c) { log('        \u201c' + String(c.text || '').slice(0, 120) + '\u201d'); });
       });
     });
   });

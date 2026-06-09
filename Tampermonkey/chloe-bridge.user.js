@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.13.0
+// @version      0.16.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -96,6 +96,10 @@
       // ---- auto-moderation (off unless autoMod + rules supplied) ----
       autoMod: false,         // apply rule-based moderation with no mod present
       autoModRules: [],       // [{ pattern, type:'text'|'regex'|'confusables', action:'ignore'|'timeout'|'softban', durationMs?, reason? }]
+      // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
+      // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
+      // everyone in the channel — the "stream" mode; addressing no longer required).
+      engageMode: 'normal',
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
       judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
       react: null,            // async (channelId, messageId, emoji) -> any
@@ -105,8 +109,10 @@
       // ---- T3 reversible moderation ----
       modList: [],            // author.ids allowed to issue in-channel commands (seeded by trusted surface)
       commandPrefix: '!chloe',// text-prefix command grammar (no slash under Adapter A)
+      commandPrefixes: [],    // optional extra prefixes (e.g. '!c', 'chloe,') — all resolve to the same commands
       ackCommands: true,      // post a brief in-channel confirmation when a command runs
       keepActionLog: true,    // T4: keep a separate, purge-surviving record of mod actions (decision #5)
+      modLogContextLines: 5,  // #11: snapshot of the target's most recent lines captured with each mod action
       typing: null,           // optional async (channelId) -> POST typing; pulsed before a generation
       recapFn: null,          // optional async (ctx) -> { ok, value } channel summary for !chloe recap
       // ---- T5 presence depth ----
@@ -141,6 +147,7 @@
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
     var lastPaintAt = 0;                 // last image delivery (image clock — independent of the text clock)
+    var engageMode = (cfg.engageMode === 'locked' || cfg.engageMode === 'open') ? cfg.engageMode : 'normal';
     var lastCmdAt = {};                  // per-command last-run clock (for entry.cooldownMs)
     var lastActAt = 0;                   // global last-action clock (light global gap + volunteer cooldown)
     var startedAt = 0;                   // when the loop started (drives the greeting settle window)
@@ -296,9 +303,13 @@
         if (opts.reason) p.modNote = String(opts.reason);
         p.byModId = opts.byModId || null;
         p.modAt = now;
+        // #11: capture what this person was saying, so the mod (or the auto-mod audit trail) has context.
+        var context = (p.recent || []).slice(-(cfg.modLogContextLines || 5)).map(function (ln) { return { ts: ln.ts, text: scrubDiscordTokens(ln.content || '') }; });
         return ensureIndexed(targetId).then(function () {
           return store.set(partKey(targetId), p).then(function () {
-            return { ok: true, value: { action: action, targetId: targetId, state: p.state, until: p.until, ack: ack } };
+            return appendModLog({ action: action, targetId: targetId, name: p.name || targetId, byModId: opts.byModId || null, reason: opts.reason || null, at: now, state: p.state, context: context }).then(function () {
+              return { ok: true, value: { action: action, targetId: targetId, state: p.state, until: p.until, ack: ack } };
+            });
           });
         });
       });
@@ -442,7 +453,7 @@
       { verb: 'unsoftban', modOnly: true, needsTarget: true, action: 'clear' },
       { verb: 'clear',     modOnly: true, needsTarget: true, action: 'clear',   help: 'clear @u' },
       { verb: 'note',      modOnly: true, needsTarget: true, action: 'note',    help: 'note @u <text>' },
-      { verb: 'recap',     modOnly: true, cooldownMs: 20000, help: 'recap', handler: function (modId) {
+      { verb: 'recap',     modOnly: true, cooldownMs: 20000, aliases: ['\ud83d\udcdc'], help: 'recap', handler: function (modId) {
           if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'recap is not available right now' });
           return assembleContext({ authorId: modId, authorName: '' }).then(function (ctx) {
             return Promise.resolve(cfg.recapFn({ recent: ctx })).then(function (res) {
@@ -450,8 +461,11 @@
             }, function () { return { ack: 'recap failed' }; });
           });
         } },
-      { verb: 'status',    modOnly: true, cooldownMs: 5000, help: 'status', handler: function () { return Promise.resolve({ ack: statusText() }); } },
-      { verb: 'help',      modOnly: true, cooldownMs: 5000, handler: function () { return Promise.resolve({ ack: helpText() }); } },
+      { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText() }); } },
+      { verb: 'lockdown',  modOnly: true, aliases: ['lock', '\ud83d\udd12'], help: 'lockdown', handler: function () { engageMode = 'locked'; log('[chloe.mode] lockdown (mods only)'); return Promise.resolve({ ack: 'locked down \u2014 I\u2019ll only respond to mods until you ' + cfg.commandPrefix + ' unlock.' }); } },
+      { verb: 'unlock',    modOnly: true, aliases: ['\ud83d\udd13'], help: 'unlock', handler: function () { engageMode = 'normal'; log('[chloe.mode] back to normal'); return Promise.resolve({ ack: 'unlocked \u2014 back to normal.' }); } },
+      { verb: 'open',      modOnly: true, aliases: ['openchat', '\ud83d\udce2'], help: 'open', handler: function () { engageMode = 'open'; log('[chloe.mode] open (reply to everyone)'); return Promise.resolve({ ack: 'open mode \u2014 I\u2019ll reply to everyone in here. ' + cfg.commandPrefix + ' unlock to stop.' }); } },
+      { verb: 'help',      modOnly: true, cooldownMs: 5000, aliases: ['?', '\ud83c\udd98'], handler: function () { return Promise.resolve({ ack: helpText() }); } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
     function resolveVerb(word) {
@@ -463,14 +477,26 @@
       return null;
     }
     function looksLikeCommand(content) {
-      var c = String(content || '').trim().toLowerCase();
-      return c.indexOf(cfg.commandPrefix.toLowerCase()) === 0;
+      return matchedPrefix(String(content || '').trim()) !== null;
+    }
+    function prefixList() {
+      var arr = [];
+      if (cfg.commandPrefix) arr.push(String(cfg.commandPrefix));
+      if (Array.isArray(cfg.commandPrefixes)) cfg.commandPrefixes.forEach(function (p) { if (p) arr.push(String(p)); });
+      if (!arr.length) arr.push('!chloe');
+      return arr;
+    }
+    function matchedPrefix(trimmed) {   // longest first so "!chloe" wins over a shorter "!c"
+      var lc = String(trimmed || '').toLowerCase();
+      var arr = prefixList().slice().sort(function (a, b) { return b.length - a.length; });
+      for (var i = 0; i < arr.length; i++) { if (arr[i] && lc.indexOf(arr[i].toLowerCase()) === 0) return arr[i]; }
+      return null;
     }
     function parseCommand(content) {
       var raw = String(content || '');
       var c = raw.trim();
-      var pfx = cfg.commandPrefix;
-      if (c.toLowerCase().indexOf(pfx.toLowerCase()) !== 0) return null;
+      var pfx = matchedPrefix(c);
+      if (pfx == null) return null;
       var rest = c.slice(pfx.length).trim();
       if (!rest) return { cmd: 'help', entry: resolveVerb('help'), targetId: null, durationMs: null, reason: '', raw: raw };
       var tokens = rest.split(/\s+/);
@@ -495,7 +521,7 @@
       return 'Chloe mod commands: ' + mod.join(' | ') + '. Anyone: ' + any.join(' | ') + '.';
     }
     function statusText() {
-      return 'Chloe here. replies=' + cfg.addressMode + (cfg.volunteer ? ' +volunteer' : '') + '. mods can ' + cfg.commandPrefix + ' help.';
+      return 'Chloe here. mode=' + engageMode + ', replies=' + cfg.addressMode + (cfg.volunteer ? ' +volunteer' : '') + '. mods can ' + cfg.commandPrefix + ' help.';
     }
     function execCommand(modId, c) {
       var entry = c.entry || resolveVerb(c.cmd);
@@ -568,7 +594,9 @@
                 return applyModAction(act, m.author.id, { durationMs: rule.durationMs, reason: rule.reason || ('auto-mod: ' + rule.pattern), byModId: 'auto' });
               }
             }
-            if (imageEnabled() && isAddressed(m.content)) {
+            if (engageMode === 'locked' && !isMod(m.author.id)) return;   // raid lockdown: only mods get engagement (auto-mod above still ran)
+            var addressed = isAddressed(m.content) || (engageMode === 'open');
+            if (imageEnabled() && addressed) {
               var imgReq = parseImageRequest(m.content);
               if (imgReq) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
@@ -583,11 +611,11 @@
                 return;
               }
             }
-            if (replyEnabled() && isAddressed(m.content)) {
+            if (replyEnabled() && addressed) {
               reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
-            } else if (gateEnabled()) {
+            } else if (gateEnabled() && engageMode === 'normal') {
               gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
             }
           });
@@ -598,7 +626,7 @@
           // T5: pick at most one greeting candidate (intro beats return); never the person we're already
           // engaging, never a command author this batch, never a suppressed user — and not during the
           // settle window right after Start (people already in the room aren't fresh arrivals).
-          if (greetEnabled() && touched && touched.greetInfo && !inGreetSettle(now)) {
+          if (greetEnabled() && engageMode !== 'locked' && touched && touched.greetInfo && !inGreetSettle(now)) {
             var pick = null;
             authorIds.forEach(function (id, i) {
               var info = touched.greetInfo[id]; if (!info) return;
@@ -793,6 +821,7 @@
                       return processGreet().then(function (greeted) {
                         if (greeted) summary.greeted = greeted;
                         if (imageJob) summary.imageJob = imageJob;
+                        summary.engageMode = engageMode;
                         pollCount++;
                         if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
                           return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
@@ -900,6 +929,7 @@
     // decays to 'ignore' (spec F4: the safe action). Addressed replies always take priority.
     // (Independent of the image lane — volunteering text can run while an image generates.)
     function processGate() {
+      if (engageMode !== 'normal') return Promise.resolve(null);   // locked: silent; open: everyone gets a direct reply already
       if (!gateEnabled() || reply.replying || hasPendingReply() || !gate.pending) return Promise.resolve(null);
       var now = clock.now();
       var g = gate.pending;
@@ -1059,7 +1089,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.13.0';
+  var VERSION = '0.16.0';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -1201,9 +1231,11 @@
         imageCooldownMs: cfgGet('imageCooldownMs', 2000),
         autoMod: !!cfgGet('autoMod', false),
         autoModRules: cfgGet('autoModRules', []),
+        engageMode: cfgGet('engageMode', 'normal'),
         greetFn: function (ctx) { return callPage('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
+        commandPrefixes: cfgGet('commandPrefixes', []),
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
         respond: function (ctx) { return callPage('respond', ctx, 40000); },
@@ -1215,7 +1247,11 @@
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
         openDM: function (uid) { return transport.openDM(uid); },
         send: function (cid, text) { return transport.sendMessage(cid, text); },
-        onPoll: function (summary) { lastPoll = summary; pushEvent('poll', summary); return presenceMaintenance(); }
+        onPoll: function (summary) {
+          lastPoll = summary; pushEvent('poll', summary);
+          if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode', 'normal')) cfgSet('engageMode', summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
+          return presenceMaintenance();
+        }
       },
       log: function () { console.log.apply(console, arguments); }
     });
@@ -1293,6 +1329,8 @@
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
+      engageMode: cfgGet('engageMode', 'normal'),
+      commandPrefixes: cfgGet('commandPrefixes', []),
       pageLinked: !!pageSource,
       running: !!(engine && engine.isRunning && engine.isRunning()),
       lastPoll: lastPoll
@@ -1322,6 +1360,20 @@
         { var bf = !!(args && args.on); cfgSet('backfill', bf); applyConfigChange(); return Promise.resolve({ ok: true, value: { backfill: bf } }); }
       case 'config.setImage':
         { var im = !!(args && args.on); cfgSet('image', im); applyConfigChange(); return Promise.resolve({ ok: true, value: { image: im } }); }
+      case 'config.setPrefixes': {
+        var list = (args && args.prefixes);
+        if (!Array.isArray(list)) return Promise.resolve({ ok: false, reason: 'prefixes must be an array' });
+        var clean = [];
+        list.forEach(function (p) { p = String(p || '').trim(); if (p && p !== '!chloe' && clean.indexOf(p) < 0) clean.push(p); });
+        cfgSet('commandPrefixes', clean); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
+      }
+      case 'config.setEngageMode': {
+        var mode = (args && args.mode);
+        if (mode !== 'locked' && mode !== 'normal' && mode !== 'open') return Promise.resolve({ ok: false, reason: 'mode must be locked|normal|open' });
+        cfgSet('engageMode', mode); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { engageMode: mode } });
+      }
       case 'config.setImageQueue': {
         var n = Math.max(1, Math.min(20, parseInt((args && args.max), 10) || 8));
         cfgSet('imageQueueMax', n); applyConfigChange();
