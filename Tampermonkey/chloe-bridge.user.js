@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.19.0
+// @version      0.20.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -100,6 +100,14 @@
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
       engageMode: 'normal',
+      // #12: scheduled proactive beats — light, activity-gated time-based presence (lrrbot timers).
+      // Each beat: { id, intervalMs, text? | texts?[] | prompt?, activeWithinMs? }. Fires at most one
+      // per poll, only if the room has been active recently (won't talk to a dead/empty channel),
+      // never during lockdown, never while she's already replying/painting.
+      beats: [],
+      beatActiveWithinMs: 1800000,  // a beat only fires if someone spoke within this window (30 min)
+      beatMinGapMs: 600000,         // minimum gap between any two beats (10 min)
+      beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
       judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
       react: null,            // async (channelId, messageId, emoji) -> any
@@ -135,6 +143,7 @@
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
+    var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
 
     var running = false;
     var timer = null;
@@ -711,6 +720,55 @@
       }).catch(function (e) { greet.greeting = false; log('[chloe.T5] greet error: ' + e.message); return null; });
     }
 
+    // #12: scheduled proactive beats. Interval-based (last_run + intervalMs), heavily activity-gated:
+    // never to a dead room, never during lockdown, never while replying/painting, at most one per poll,
+    // with a global min gap. A beat is seeded (not fired) the first time it's seen so nothing fires at boot.
+    function beatsEnabled() { return Array.isArray(cfg.beats) && cfg.beats.length > 0; }
+    function pickBeatText(b) {
+      if (b.texts && b.texts.length) return String(b.texts[Math.floor(Math.random() * b.texts.length)]);
+      if (b.text) return String(b.text);
+      return null;
+    }
+    function processBeats() {
+      if (!beatsEnabled() || engageMode === 'locked' || reply.replying || paint.painting) return Promise.resolve(null);
+      var now = clock.now();
+      return Promise.resolve(store.get(BEATS_KEY)).then(function (state) {
+        state = state || {};
+        if (state.__lastAny && (now - state.__lastAny) < (cfg.beatMinGapMs || 0)) return null;   // global gap
+        return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
+          var lastActivity = rh && rh.lastActivity;
+          var fired = null;
+          for (var i = 0; i < cfg.beats.length; i++) {
+            var b = cfg.beats[i]; if (!b || !b.id || !b.intervalMs) continue;
+            if (state[b.id] == null) { state[b.id] = now; continue; }            // seed, don't fire on first sight
+            if (now - state[b.id] < b.intervalMs) continue;                       // interval not elapsed
+            var win = (b.activeWithinMs != null) ? b.activeWithinMs : (cfg.beatActiveWithinMs || 0);
+            if (win > 0 && (lastActivity == null || (now - lastActivity) > win)) continue;   // dead room: skip
+            fired = b; break;                                                     // one beat per poll
+          }
+          if (!fired) return store.set(BEATS_KEY, state).then(function () { return null; });
+          state[fired.id] = now; state.__lastAny = now;
+          return store.set(BEATS_KEY, state).then(function () {
+            function deliver(text) {
+              if (!text || typeof cfg.send !== 'function') return null;
+              indicateTyping();
+              return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
+                lastActAt = clock.now();
+                log('[chloe.beat] fired "' + fired.id + '"');
+                return { beat: fired.id };
+              }, function () { return null; });
+            }
+            if (fired.prompt && typeof cfg.beatFn === 'function') {
+              return Promise.resolve(cfg.beatFn({ id: fired.id, prompt: fired.prompt })).then(function (res) {
+                return deliver((res && res.ok && res.value) ? String(res.value) : pickBeatText(fired));
+              }, function () { return deliver(pickBeatText(fired)); });
+            }
+            return deliver(pickBeatText(fired));
+          });
+        });
+      });
+    }
+
     function partKey(id) { return 'u:' + id; }
 
     function toEpoch(ts) {
@@ -851,13 +909,16 @@
                       if (acted) summary.volunteered = acted;
                       return processGreet().then(function (greeted) {
                         if (greeted) summary.greeted = greeted;
-                        if (imageJob) summary.imageJob = imageJob;
-                        summary.engageMode = engageMode;
-                        pollCount++;
-                        if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
-                          return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
-                        }
-                        return summary;
+                        return processBeats().then(function (beat) {
+                          if (beat) summary.beat = beat;
+                          if (imageJob) summary.imageJob = imageJob;
+                          summary.engageMode = engageMode;
+                          pollCount++;
+                          if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
+                            return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
+                          }
+                          return summary;
+                        });
                       });
                     });
                   });
@@ -1120,7 +1181,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.19.0';
+  var VERSION = '0.20.0';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -1278,6 +1339,7 @@
         autoMod: !!cfgGet('autoMod', false),
         autoModRules: cfgGet('autoModRules', []),
         engageMode: cfgGet('engageMode', 'normal'),
+        beats: cfgGet('beats', []),
         greetFn: function (ctx) { return callPage('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
@@ -1380,6 +1442,7 @@
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
       engageMode: cfgGet('engageMode', 'normal'),
+      beats: cfgGet('beats', []),
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       pageLinked: !!pageSource,
@@ -1433,6 +1496,24 @@
             return { ok: true, value: { messageId: mid } };
           }, function (e) { return { ok: false, reason: 'posted, but pin failed (Manage Messages permission?): ' + ((e && e.message) || e) }; });
         }, function (e) { return { ok: false, reason: 'post failed: ' + ((e && e.message) || e) }; });
+      }
+      case 'config.setBeats': {
+        var bl = (args && args.beats);
+        if (!Array.isArray(bl)) return Promise.resolve({ ok: false, reason: 'beats must be an array' });
+        var cleanB = [];
+        bl.forEach(function (b) {
+          if (!b || !b.id || !b.intervalMs) return;
+          var o = { id: String(b.id), intervalMs: Number(b.intervalMs) || 0 };
+          if (!o.intervalMs) return;
+          if (Array.isArray(b.texts) && b.texts.length) o.texts = b.texts.map(String);
+          else if (b.text) o.text = String(b.text);
+          else if (b.prompt) o.prompt = String(b.prompt);
+          else return;   // a beat with nothing to say is dropped
+          if (b.activeWithinMs != null) o.activeWithinMs = Number(b.activeWithinMs) || 0;
+          cleanB.push(o);
+        });
+        cfgSet('beats', cleanB); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { count: cleanB.length, beats: cleanB } });
       }
       case 'config.setEngageMode': {
         var mode = (args && args.mode);

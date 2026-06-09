@@ -116,6 +116,12 @@
       <textarea id="autoModRules" rows="5" spellcheck="false" style="width:100%;margin-top:4px;font-family:monospace;font-size:12px" placeholder="Paste a JSON array of rule objects here, then click Save rules."></textarea>
       <button class="ghost sm" id="saveAutoModBtn">Save rules</button>
     </details>
+    <details style="margin-top:6px">
+      <summary class="note" style="cursor:pointer">Scheduled beats (JSON list) &mdash; activity-gated</summary>
+      <div class="note" style="margin-top:4px">Each beat: an <code>id</code>, an <code>intervalMs</code>, and either a <code>text</code> or a <code>texts</code> array (picked at random). Optional <code>activeWithinMs</code>. Beats only fire when the room has been active recently, never during lockdown, one per poll. Paste a JSON array, then Save.</div>
+      <textarea id="beatsBox" rows="4" spellcheck="false" style="width:100%;margin-top:4px;font-family:monospace;font-size:12px" placeholder="Paste a JSON array of beat objects here, then click Save beats."></textarea>
+      <button class="ghost sm" id="saveBeatsBtn">Save beats</button>
+    </details>
     <div class="row" style="margin-top:6px">
       <label class="note" style="display:flex;align-items:center;gap:5px">engagement
         <select id="engageModeSel" style="margin-left:2px">
@@ -456,6 +462,7 @@
     var ni = byId('noticeInput'); if (ni && document.activeElement !== ni && s.noticeText) ni.value = s.noticeText;
     var amc = byId('autoModChk'); if (amc) amc.checked = !!s.autoMod;
     var amr = byId('autoModRules'); if (amr && document.activeElement !== amr) amr.value = JSON.stringify(s.autoModRules || [], null, 2);
+    var bb = byId('beatsBox'); if (bb && document.activeElement !== bb) bb.value = JSON.stringify(s.beats || [], null, 2);
     if (s.lastPoll) {
       setText('pollTxt', s.lastPoll.ingested + ' new of ' + s.lastPoll.fetched);
     }
@@ -683,6 +690,16 @@
   byId('autoModChk').addEventListener('change', function () {
     call('config.setAutoMod', { on: byId('autoModChk').checked }).then(function (res) {
       log(res.ok ? ('auto-moderate: ' + res.value.autoMod) : ('failed: ' + res.reason));
+    });
+  });
+  byId('saveBeatsBtn').addEventListener('click', function () {
+    var txt = byId('beatsBox').value.trim();
+    var beats;
+    try { beats = txt ? JSON.parse(txt) : []; } catch (e) { log('beats: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
+    if (!Array.isArray(beats)) { log('beats: expected a JSON array'); return; }
+    call('config.setBeats', { beats: beats }).then(function (res) {
+      if (res.ok) { log('beats saved: ' + res.value.count + ' beat(s)'); byId('beatsBox').value = JSON.stringify(res.value.beats, null, 2); }
+      else log('beats failed: ' + res.reason);
     });
   });
   byId('saveAutoModBtn').addEventListener('click', function () {
