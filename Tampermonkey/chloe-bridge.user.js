@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.25.0
+// @version      0.26.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1287,6 +1287,80 @@
     var lastPingAt = 0;
     var seq = 0;
 
+    // D6 queen failover. Enabled only when a lease adapter is injected ({get, set} over a shared,
+    // script-scoped value — GM storage in production, an in-memory cell in tests). A worker that
+    // hasn't heard the queen for queenDeadAfterMs claims the lease after a rank-jittered delay,
+    // waits a settle period, and promotes ONLY if the read-back still shows its own claim
+    // (last-write-wins resolves simultaneous claims to one winner). A clock jump between watchdog
+    // ticks means the machine slept — the watchdog resets instead of electing a second queen.
+    // If two queens ever coexist (revival after sleep), the lease is the tiebreaker: the queen
+    // that doesn't hold it demotes back to worker.
+    var lease = opts.lease || null;
+    var queenDeadAfterMs = opts.queenDeadAfterMs || 90000;
+    var claimSettleMs = opts.claimSettleMs || 1500;
+    var wakeJumpMs = opts.wakeJumpMs || 30000;
+    var leaseRenewMs = opts.leaseRenewMs || 10000;
+    var lastQueenSeenAt = 0;
+    var lastWatchdogAt = 0;
+    var lastLeaseAt = 0;
+    var claimState = null;   // null | { phase: 'waiting'|'claimed', dueAt, nonce }
+    function rankDelay() {
+      var h = 0, str = tabId;
+      for (var i = 0; i < str.length; i++) h = ((h * 31) + str.charCodeAt(i)) >>> 0;
+      return (h % 5) * 1000 + 250;
+    }
+    function promoteSelf() {
+      role = 'queen'; workers = {}; claimState = null; lastPingAt = 0;
+      log('[bridge] PROMOTED to queen (' + tabId + ')');
+      if (typeof opts.onPromote === 'function') opts.onPromote();
+      broadcast('ping');   // adopt surviving workers immediately (they pong; pong-from-unknown registers them)
+    }
+    function demoteSelf() {
+      role = 'worker'; queenId = null; claimState = null; lastQueenSeenAt = clock.now();
+      log('[bridge] demoted to worker (' + tabId + ') \u2014 another queen holds the lease');
+      if (typeof opts.onDemote === 'function') opts.onDemote();
+      broadcast('register');
+    }
+    function workerWatchdog(now) {
+      if (lastWatchdogAt && (now - lastWatchdogAt) > wakeJumpMs) { lastQueenSeenAt = now; claimState = null; lastWatchdogAt = now; return Promise.resolve(); }
+      lastWatchdogAt = now;
+      if (!lease) return Promise.resolve();
+      if (claimState && claimState.phase === 'claimed') {
+        if (now < claimState.dueAt) return Promise.resolve();
+        var myNonce = claimState.nonce; claimState = null;
+        return Promise.resolve(lease.get()).then(function (l) {
+          if (l && l.id === tabId && l.nonce === myNonce) promoteSelf();
+          else lastQueenSeenAt = now;   // lost the race — give the winner a full window
+        });
+      }
+      if (now - lastQueenSeenAt < queenDeadAfterMs) { if (claimState) claimState = null; return Promise.resolve(); }
+      if (!claimState) { claimState = { phase: 'waiting', dueAt: now + rankDelay() }; return Promise.resolve(); }
+      if (claimState.phase === 'waiting' && now >= claimState.dueAt) {
+        return Promise.resolve(lease.get()).then(function (l) {
+          if (l && (now - (l.at || 0)) < queenDeadAfterMs) { claimState = null; lastQueenSeenAt = now; return; }   // a live queen renews this
+          var nonce = tabId + ':' + now + ':' + (++seq);
+          claimState = { phase: 'claimed', dueAt: now + claimSettleMs, nonce: nonce };
+          return lease.set({ id: tabId, at: now, nonce: nonce });
+        });
+      }
+      return Promise.resolve();
+    }
+    function queenLeaseTick(now) {
+      if (!lease) return Promise.resolve();
+      if (now - lastLeaseAt < leaseRenewMs) return Promise.resolve();
+      lastLeaseAt = now;
+      return Promise.resolve(lease.set({ id: tabId, at: now, nonce: 'reign:' + tabId }));
+    }
+    function queenConflict(otherId) {
+      if (!lease) { if (tabId > otherId) demoteSelf(); return Promise.resolve(); }
+      return Promise.resolve(lease.get()).then(function (l) {
+        if (l && l.id === tabId) return;                 // we hold the lease; the other will demote
+        if (l && l.id === otherId) { demoteSelf(); return; }
+        if (tabId < otherId) return Promise.resolve(lease.set({ id: tabId, at: clock.now(), nonce: 'tiebreak:' + tabId }));
+        demoteSelf();
+      });
+    }
+
     function envelope(to, type, payload, re) {
       return { b: 'chloe-bus', v: 1, tok: token, from: tabId, to: to || '*', type: type, id: tabId + ':' + (++seq), re: re || null, payload: payload == null ? null : payload, ts: clock.now() };
     }
@@ -1343,15 +1417,22 @@
         if (fresh && typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
         return;
       }
-      if (env.type === 'pong') { if (workers[env.from]) workers[env.from].lastSeen = clock.now(); return; }
+      if (env.type === 'ping') { queenConflict(env.from); return; }   // another queen exists — resolve via the lease
+      if (env.type === 'pong') {
+        if (workers[env.from]) { workers[env.from].lastSeen = clock.now(); return; }
+        workers[env.from] = { status: 'idle', lastSeen: clock.now() };   // a surviving worker adopted after promotion
+        log('[bridge] adopted worker ' + env.from);
+        if (typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
+        return;
+      }
       if (env.type === 'bye') { if (workers[env.from]) { delete workers[env.from]; rejectPendingFor(env.from, 'worker left'); log('[bridge] worker ' + env.from + ' left'); if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(env.from, 'bye'); } return; }
       if (env.type === 'result') { settle(env.re, true, env.payload); return; }
       if (env.type === 'error') { settle(env.re, false, env.payload); return; }
     }
 
     function handleAsWorker(env) {
-      if (env.type === 'registered') { queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; return; }
-      if (env.type === 'ping') { queenId = env.from; sendTo(env.from, 'pong'); return; }
+      if (env.type === 'registered') { queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; lastQueenSeenAt = clock.now(); claimState = null; return; }
+      if (env.type === 'ping') { queenId = env.from; lastQueenSeenAt = clock.now(); claimState = null; sendTo(env.from, 'pong'); return; }
       if (env.type === 'shutdown') {
         log('[bridge] shutdown received');
         broadcast('bye');
@@ -1360,6 +1441,7 @@
         return;
       }
       if (env.type === 'job') {
+        lastQueenSeenAt = clock.now();
         var jobType = env.payload && env.payload.jobType;
         var fn = jobHandlers[jobType];
         if (!fn) { sendTo(env.from, 'error', 'no handler for job type "' + jobType + '"', env.id); return; }
@@ -1381,8 +1463,9 @@
 
     // host calls this on its own interval (queen tab = foreground tab = reliable timers)
     function tick() {
-      if (!running) return;
+      if (!running) return Promise.resolve();
       var now = clock.now();
+      var duty = Promise.resolve();
       if (role === 'queen') {
         if (now - lastPingAt >= pingIntervalMs) { lastPingAt = now; broadcast('ping'); }
         Object.keys(workers).forEach(function (id) {
@@ -1393,23 +1476,29 @@
             if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(id, 'timeout');
           }
         });
+        duty = queenLeaseTick(now);
+      } else {
+        duty = workerWatchdog(now);
       }
       Object.keys(pending).forEach(function (id) {
         if (now > pending[id].deadline) settle(id, false, 'request timed out');
       });
+      return duty;
     }
 
     function start() {
       if (running) return;
       running = true;
       bus.onMessage(onBusMessage);
+      lastQueenSeenAt = clock.now(); lastWatchdogAt = 0;
       if (role === 'worker') broadcast('register');
       log('[bridge] started as ' + role + ' (' + tabId + ')');
     }
     function stop() { running = false; }
 
     return {
-      role: role,
+      role: role,                                     // role at creation (legacy)
+      getRole: function () { return role; },          // live role (changes on promote/demote)
       tabId: tabId,
       start: start,
       stop: stop,
@@ -1442,7 +1531,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.25.0';
+  var VERSION = '0.26.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -1902,8 +1991,8 @@
         return Promise.resolve({ ok: true, value: traceRing.slice() });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
-      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
-      case 'stop':            eachEngine(function (e) { e.stop(); }); return Promise.resolve({ ok: true, value: statusSnapshot() });
+      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); cfgSet('autoResume', true); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
+      case 'stop':            eachEngine(function (e) { e.stop(); }); cfgSet('autoResume', false); return Promise.resolve({ ok: true, value: statusSnapshot() });
       case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
       case 'roster.get':      { var e3 = engineFor(args && args.channelId); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
       case 'ring.get':        { var e4 = engineFor(args && args.channelId); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
@@ -1998,23 +2087,43 @@
   if (!busToken) { busToken = Math.random().toString(36).slice(2) + Date.now().toString(36); GM_setValue(NS + 'bus:token', busToken); }
   var tabBus = makeBroadcastBus() || makeGmBus();
   var tabBridge = null;
+  // D6: the queen lease — the single source of truth for "who is queen" during failover.
+  var queenLease = {
+    get: function () { var v = GM_getValue(NS + 'queen:lease', null); if (v == null) return Promise.resolve(null); try { return Promise.resolve(JSON.parse(v)); } catch (e) { return Promise.resolve(null); } },
+    set: function (v) { GM_setValue(NS + 'queen:lease', JSON.stringify(v)); return Promise.resolve(true); }
+  };
   if (tabBus && typeof ChloeTabBridge !== 'undefined') {
     tabBridge = ChloeTabBridge.createTabBridge({
       role: TAB_ROLE, token: busToken, bus: tabBus,
+      lease: queenLease,
+      queenDeadAfterMs: cfgGet('queenDeadAfterMs', 90000),
       log: function (m) { trace('bridge', m); },
       onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
       onWorkerLost: function (id, why) { trace('bridge', 'worker lost: ' + id + ' (' + why + ')'); },
-      onShutdown: function () { try { window.close(); } catch (e) { trace('bridge', 'self-close blocked'); } }
+      onShutdown: function () { try { window.close(); } catch (e) { trace('bridge', 'self-close blocked'); } },
+      // D6: this tab won the election after the queen tab died.
+      onPromote: function () {
+        TAB_ROLE = 'queen';
+        try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+        trace('bridge', 'PROMOTED to queen' + (cfgGet('autoResume', false) ? ' \u2014 resuming the engine(s)' : ''));
+        console.log('[chloe-bridge] this tab was promoted to QUEEN (the previous queen tab went silent).');
+        if (cfgGet('autoResume', false)) { try { ensureEngines().forEach(function (e) { e.start(); }); } catch (e) { trace('bridge', 'auto-resume failed: ' + (e && e.message)); } }
+      },
+      // D6: a lease conflict said another tab is queen — stand down completely.
+      onDemote: function () {
+        TAB_ROLE = 'worker';
+        eachEngine(function (e) { e.stop(); });
+        try { if (location.hash.indexOf('chloe-worker') < 0) location.hash = 'chloe-worker'; } catch (e) {}
+        trace('bridge', 'demoted to worker (another queen holds the lease); engines stopped');
+      }
     });
-    if (TAB_ROLE === 'worker') {
-      tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
-      // The worker's whole point: this tab's panel brain, served over the bus. D2 adds the
-      // queen-side scheduler that routes respond/judge/paint here when workers are available.
-      tabBridge.onJob('brain', function (p) {
-        p = p || {};
-        return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
-      });
-    }
+    // Every tab registers job handlers: a worker serves them now; a queen may be demoted later
+    // (sleep/wake revival) and must be able to serve them then.
+    tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
+    tabBridge.onJob('brain', function (p) {
+      p = p || {};
+      return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
+    });
     tabBridge.start();
     setInterval(function () { tabBridge.tick(); }, 5000);   // host-driven time; the queen tab is the foreground tab
   } else {

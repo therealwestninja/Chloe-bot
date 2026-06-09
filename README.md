@@ -27,6 +27,8 @@ Since v0.24.0 Chloe is **multi-tab**: the tab you set up is the *queen* (it owns
 
 In the panel's Mods card, **Spawn worker tab** opens a second copy of the generator marked as a worker. Workers register with the queen within ~15 seconds and from then on AI and image jobs are scheduled onto whichever worker is idle (falling back to the queen's own tab automatically — including mid-job, if you close a worker while it's generating). Workers are disposable: close them whenever, shut them down from the panel, spawn more when the channel is busy. Only the queen talks to Discord; if the spawn does nothing, allow pop-ups for perchance.org.
 
+**Failover:** if the queen tab dies (closed by accident, crashed, discarded), the worker tabs notice within a couple of minutes, elect exactly one of themselves as the new queen, and — if Chloe was running — resume her automatically. Closing your laptop lid is fine too: a machine waking from sleep is detected and does *not* trigger a false election. So with one worker tab open, "keep this exact tab alive" relaxes to "keep any one tab alive".
+
 ## Talking to Chloe
 
 Mention her or use her name — both work:

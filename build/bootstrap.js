@@ -13,7 +13,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.25.0';
+  var VERSION = '0.26.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -473,8 +473,8 @@
         return Promise.resolve({ ok: true, value: traceRing.slice() });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
-      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
-      case 'stop':            eachEngine(function (e) { e.stop(); }); return Promise.resolve({ ok: true, value: statusSnapshot() });
+      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); cfgSet('autoResume', true); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
+      case 'stop':            eachEngine(function (e) { e.stop(); }); cfgSet('autoResume', false); return Promise.resolve({ ok: true, value: statusSnapshot() });
       case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
       case 'roster.get':      { var e3 = engineFor(args && args.channelId); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
       case 'ring.get':        { var e4 = engineFor(args && args.channelId); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
@@ -569,23 +569,43 @@
   if (!busToken) { busToken = Math.random().toString(36).slice(2) + Date.now().toString(36); GM_setValue(NS + 'bus:token', busToken); }
   var tabBus = makeBroadcastBus() || makeGmBus();
   var tabBridge = null;
+  // D6: the queen lease — the single source of truth for "who is queen" during failover.
+  var queenLease = {
+    get: function () { var v = GM_getValue(NS + 'queen:lease', null); if (v == null) return Promise.resolve(null); try { return Promise.resolve(JSON.parse(v)); } catch (e) { return Promise.resolve(null); } },
+    set: function (v) { GM_setValue(NS + 'queen:lease', JSON.stringify(v)); return Promise.resolve(true); }
+  };
   if (tabBus && typeof ChloeTabBridge !== 'undefined') {
     tabBridge = ChloeTabBridge.createTabBridge({
       role: TAB_ROLE, token: busToken, bus: tabBus,
+      lease: queenLease,
+      queenDeadAfterMs: cfgGet('queenDeadAfterMs', 90000),
       log: function (m) { trace('bridge', m); },
       onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
       onWorkerLost: function (id, why) { trace('bridge', 'worker lost: ' + id + ' (' + why + ')'); },
-      onShutdown: function () { try { window.close(); } catch (e) { trace('bridge', 'self-close blocked'); } }
+      onShutdown: function () { try { window.close(); } catch (e) { trace('bridge', 'self-close blocked'); } },
+      // D6: this tab won the election after the queen tab died.
+      onPromote: function () {
+        TAB_ROLE = 'queen';
+        try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+        trace('bridge', 'PROMOTED to queen' + (cfgGet('autoResume', false) ? ' \u2014 resuming the engine(s)' : ''));
+        console.log('[chloe-bridge] this tab was promoted to QUEEN (the previous queen tab went silent).');
+        if (cfgGet('autoResume', false)) { try { ensureEngines().forEach(function (e) { e.start(); }); } catch (e) { trace('bridge', 'auto-resume failed: ' + (e && e.message)); } }
+      },
+      // D6: a lease conflict said another tab is queen — stand down completely.
+      onDemote: function () {
+        TAB_ROLE = 'worker';
+        eachEngine(function (e) { e.stop(); });
+        try { if (location.hash.indexOf('chloe-worker') < 0) location.hash = 'chloe-worker'; } catch (e) {}
+        trace('bridge', 'demoted to worker (another queen holds the lease); engines stopped');
+      }
     });
-    if (TAB_ROLE === 'worker') {
-      tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
-      // The worker's whole point: this tab's panel brain, served over the bus. D2 adds the
-      // queen-side scheduler that routes respond/judge/paint here when workers are available.
-      tabBridge.onJob('brain', function (p) {
-        p = p || {};
-        return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
-      });
-    }
+    // Every tab registers job handlers: a worker serves them now; a queen may be demoted later
+    // (sleep/wake revival) and must be able to serve them then.
+    tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
+    tabBridge.onJob('brain', function (p) {
+      p = p || {};
+      return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
+    });
     tabBridge.start();
     setInterval(function () { tabBridge.tick(); }, 5000);   // host-driven time; the queen tab is the foreground tab
   } else {
