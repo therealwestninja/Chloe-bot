@@ -80,6 +80,11 @@
       <button class="ghost" id="setChannelBtn">Set channel</button>
     </div>
     <div class="row" style="margin-top:8px">
+      <input class="grow" id="extraChannelsInput" placeholder="Extra channel IDs, comma-separated (multi-channel, optional)">
+      <button class="ghost" id="setExtraChannelsBtn">Set channels</button>
+      <select id="viewChannelSel" title="channel for the roster, mod log, and mode below" style="display:none"></select>
+    </div>
+    <div class="row" style="margin-top:8px">
       <button class="ghost" id="setTokenBtn">Set bot token&hellip;</button>
       <button id="validateBtn">Validate token</button>
       <span class="note">Token is entered in the userscript and never sent to this page.</span>
@@ -567,7 +572,7 @@
     if (action === 'permaban') {
       var pr = window.prompt('Reason for permabanning ' + person.name + ' (recorded in the mod log):', 'Chloe permaban');
       if (pr == null) return;  // cancelled here; the userscript will also ask for a final confirm
-      call('mod.permaban', { id: person.id, name: person.name, reason: pr }).then(function (res) {
+      call('mod.permaban', { id: person.id, name: person.name, reason: pr, channelId: selChannel() }).then(function (res) {
         if (res.ok) { log('permaban -> ' + person.name + ': banned + purge verified'); refresh(); }
         else log('permaban -> ' + (res.reason || 'failed'));
       });
@@ -585,19 +590,30 @@
     } else {
       var r = window.prompt('Reason (optional) for ' + action + ' on ' + person.name + ':', ''); if (r) args.reason = r;
     }
-    call('mod.action', args).then(function (res) {
+    call('mod.action', Object.assign({ channelId: selChannel() }, args)).then(function (res) {
       if (res.ok) { log(action + ' -> ' + (res.value && res.value.ack ? res.value.ack : 'ok')); refresh(); }
       else log(action + ' -> ' + (res.reason || 'failed'));
     });
   }
 
   // ---- polling loop -----------------------------------------------------------------
+  function selChannel() { var el = byId('viewChannelSel'); return (el && el.value) ? el.value : null; }
+  function renderChannelSel(st) {
+    var el = byId('viewChannelSel');
+    var chans = (st && st.channels) || [];
+    var cur = el.value;
+    while (el.firstChild) el.removeChild(el.firstChild);
+    chans.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; el.appendChild(o); });
+    if (cur && chans.indexOf(cur) >= 0) el.value = cur;
+    el.style.display = chans.length > 1 ? '' : 'none';
+  }
   function refresh() {
     return call('status').then(function (res) {
       if (!res.ok) { setLink(false); return; }
       setLink(true);
       applyStatus(res.value);
-      return call('roster.get').then(function (r) { if (r.ok) renderRoster(r.value || []); });
+      renderChannelSel(res.value);
+      return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r.ok) renderRoster(r.value || []); });
     });
   }
   function setLink(alive) {
@@ -616,6 +632,14 @@
   }
 
   // ---- buttons ----------------------------------------------------------------------
+  byId('setExtraChannelsBtn').addEventListener('click', function () {
+    var arr = byId('extraChannelsInput').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    call('config.setChannels', { channels: arr }).then(function (res) {
+      if (res && res.ok) { log('channels: ' + (res.value.channels || []).join(', ')); refresh(); }
+      else log('set channels failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  byId('viewChannelSel').addEventListener('change', function () { refresh(); });
   byId('setChannelBtn').addEventListener('click', function () {
     var v = byId('channelInput').value.trim();
     if (!v) { log('enter a channel ID first'); return; }
@@ -642,7 +666,7 @@
   });
   byId('pollBtn').addEventListener('click', function () {
     log('polling once ...');
-    call('poll.once', null, 20000).then(function (res) {
+    call('poll.once', { channelId: selChannel() }, 20000).then(function (res) {
       if (res.ok) log('poll: ' + res.value.fetched + ' fetched, ' + res.value.ingested + ' ingested, ' + res.value.newUsers.length + ' new');
       else log('poll failed: ' + res.reason);
       refresh();
@@ -686,7 +710,7 @@
       if (!confirm('A transparency notice is already pinned. Post and pin a new one?')) return;
       args.force = true;
     }
-    call('mod.pinNotice', args).then(function (res) {
+    call('mod.pinNotice', Object.assign({ channelId: selChannel() }, args)).then(function (res) {
       if (res.ok && res.value && res.value.already) log('transparency notice already pinned');
       else if (res.ok) log('transparency notice posted and pinned');
       else log('pin notice failed: ' + res.reason);
@@ -701,7 +725,7 @@
     });
   });
   byId('engageModeSel').addEventListener('change', function () {
-    call('config.setEngageMode', { mode: byId('engageModeSel').value }).then(function (res) {
+    call('config.setEngageMode', { mode: byId('engageModeSel').value, channelId: selChannel() }).then(function (res) {
       log(res.ok ? ('engagement mode: ' + res.value.engageMode) : ('failed: ' + res.reason));
     });
   });
@@ -809,7 +833,7 @@
   });
   refreshWorkers();
   byId('modLogBtn').addEventListener('click', function () {
-    call('mod.modlog').then(function (res) {
+    call('mod.modlog', { channelId: selChannel() }).then(function (res) {
       var l = (res && res.value) || [];
       if (!l.length) { log('mod log is empty'); return; }
       log('--- mod log (' + l.length + ') ---');

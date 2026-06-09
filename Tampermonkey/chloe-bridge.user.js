@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.24.0
+// @version      0.25.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1442,7 +1442,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.24.0';
+  var VERSION = '0.25.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -1465,13 +1465,30 @@
   function hasToken() { return !tokenShape(cfgGet('token', '')).placeholder; }
 
   // ---- GM store adapter (KV + maintained roster index) --------------------------------
-  var store = {
-    get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { return null; } }); },
-    set: function (k, v) { GM_setValue(NS + k, JSON.stringify(v)); return Promise.resolve(true); },
-    del: function (k) { GM_deleteValue(NS + k); return Promise.resolve(true); },
-    listIndex: function () { return store.get('roster:index').then(function (a) { return a || []; }); },
-    setIndex: function (arr) { return store.set('roster:index', arr); }
-  };
+  // D3: per-channel namespacing. The PRIMARY channel keeps the legacy un-prefixed namespace so an
+  // existing install keeps its memory; every additional channel lives under 'ch:{id}:'.
+  function makeStore(pfx) {
+    var s = {
+      get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + pfx + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { return null; } }); },
+      set: function (k, v) { GM_setValue(NS + pfx + k, JSON.stringify(v)); return Promise.resolve(true); },
+      del: function (k) { GM_deleteValue(NS + pfx + k); return Promise.resolve(true); },
+      listIndex: function () { return s.get('roster:index').then(function (a) { return a || []; }); },
+      setIndex: function (arr) { return s.set('roster:index', arr); }
+    };
+    return s;
+  }
+  var store = makeStore('');
+  function primaryChannel() { return String(cfgGet('channelId', '') || '').trim(); }
+  function channelList() {
+    var seen = {}, out = [];
+    [primaryChannel()].concat(cfgGet('channels', []) || []).forEach(function (c) {
+      c = String(c || '').trim();
+      if (c && !seen[c]) { seen[c] = 1; out.push(c); }
+    });
+    return out;
+  }
+  function prefixFor(chId) { return chId === primaryChannel() ? '' : ('ch:' + chId + ':'); }
+  function chKeyOf(args) { var c = String((args && args.channelId) || '').trim(); var list = channelList(); return (c && list.indexOf(c) >= 0) ? c : (list[0] || ''); }
 
   // ---- Discord transport (anonymous + bot UA + 429 honor) -----------------------------
   function dataUrlToBlob(dataUrl) {
@@ -1619,13 +1636,13 @@
   }
 
   // ---- engine wiring ------------------------------------------------------------------
-  var engine = null;
+  var engines = {};   // D3: channelId -> engine (each with its own namespaced store)
   var lastPoll = null;
-  function buildEngine() {
-    var channelId = cfgGet('channelId', '');
+  function buildEngine(chId) {
+    var channelId = String(chId || primaryChannel() || '').trim();
     if (!channelId) return null;
-    engine = ChloeT0.createEngine({
-      transport: transport, store: store,
+    var eng = ChloeT0.createEngine({
+      transport: transport, store: makeStore(prefixFor(channelId)),
       config: {
         channelId: channelId,
         botUserId: cfgGet('botUserId', ''),
@@ -1647,7 +1664,7 @@
           { action: 'softban' }
         ]),
         strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
-        engageMode: cfgGet('engageMode', 'normal'),
+        engageMode: cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal')),
         beats: cfgGet('beats', []),
         beatFn: function (b) { return brainCall('beat', b, 30000); },
         greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
@@ -1672,39 +1689,41 @@
           if (summary && (summary.ingested || summary.replied || summary.imageJob || summary.greeted || summary.volunteered || summary.commands)) {
             trace('poll', 'in ' + (summary.ingested || 0) + (summary.replied ? ' reply' : '') + (summary.imageJob ? ' image' : '') + (summary.greeted ? ' greet' : '') + (summary.volunteered ? ' vol' : '') + (summary.commands ? ' cmd' : '') + ' [' + (summary.engageMode || 'normal') + ']');
           }
-          if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode', 'normal')) cfgSet('engageMode', summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
-          return presenceMaintenance();
+          if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal'))) cfgSet('engageMode:' + channelId, summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
+          return presenceMaintenance(channelId);
         }
       },
       log: function () { console.log.apply(console, arguments); }
     });
-    return engine;
+    engines[channelId] = eng;
+    return eng;
   }
 
   // T5: transport-backed maintenance, run after each poll. Backfill walks history one bounded page
   // at a time; the departure sweep 404-checks a bounded, prioritized set on a slow cadence.
   var maintTick = 0;
-  function presenceMaintenance() {
-    if (!engine) return Promise.resolve();
+  function presenceMaintenance(chId) {
+    var eng = engines[chId];
+    if (!eng) return Promise.resolve();
     var jobs = Promise.resolve();
-    if (cfgGet('backfill', false)) {
+    if (cfgGet('backfill', false) && !cfgGet('backfillDone:' + chId, false)) {
       jobs = jobs.then(function () {
-        return engine.backfillStep(function (before, limit) { return transport.getMessagesBefore(cfgGet('channelId', ''), before, limit); })
-          .then(function (r) { if (r) { if (!r.done) pushEvent('backfill', r); else { cfgSet('backfill', false); console.log('[chloe.T5] backfill complete: ' + r.ingested + ' msgs over ' + r.pages + ' page(s)'); pushEvent('backfill', r); } } }, function () {});
+        return eng.backfillStep(function (before, limit) { return transport.getMessagesBefore(chId, before, limit); })
+          .then(function (r) { if (r) { if (!r.done) pushEvent('backfill', r); else { cfgSet('backfillDone:' + chId, true); var allDone = channelList().every(function (c) { return cfgGet('backfillDone:' + c, false); }); if (allDone) cfgSet('backfill', false); console.log('[chloe.T5] backfill complete (' + chId + '): ' + r.ingested + ' msgs over ' + r.pages + ' page(s)'); pushEvent('backfill', r); } } }, function () {});
       });
     }
     maintTick++;
     if (cfgGet('memberCheck', false) && (maintTick % 10 === 0)) {
       jobs = jobs.then(function () {
-        return resolveGuildId().then(function (gid) {
+        return resolveGuildId(chId).then(function (gid) {
           if (!gid) return;
-          return engine.dueForMemberCheck(5).then(function (due) {
+          return eng.dueForMemberCheck(5).then(function (due) {
             var c = Promise.resolve();
             due.forEach(function (d) {
               c = c.then(function () {
                 return transport.getMember(gid, d.id).then(
-                  function () { return engine.noteMemberPresent(d.id); },
-                  function (err) { if (err && err.status === 404) { console.log('[chloe.T5] ' + d.name + ' is no longer a member; marking departed'); return engine.markDeparted(d.id); } return engine.noteMemberPresent(d.id); }
+                  function () { return eng.noteMemberPresent(d.id); },
+                  function (err) { if (err && err.status === 404) { console.log('[chloe.T5] ' + d.name + ' is no longer a member; marking departed'); return eng.markDeparted(d.id); } return eng.noteMemberPresent(d.id); }
                 );
               });
             });
@@ -1715,25 +1734,28 @@
     }
     return jobs;
   }
-  function ensureEngine() { return engine || buildEngine(); }
+  function ensureEngines() { return channelList().map(function (c) { return engines[c] || buildEngine(c); }).filter(Boolean); }
+  function engineFor(chId) { var c = chKeyOf({ channelId: chId }); if (!c) return null; return engines[c] || buildEngine(c); }
+  function ensureEngine() { return engineFor(''); }
+  function eachEngine(fn) { Object.keys(engines).forEach(function (c) { try { fn(engines[c], c); } catch (e) {} }); }
 
-  var cachedGuildId = null;
-  function resolveGuildId() {
-    if (cachedGuildId) return Promise.resolve(cachedGuildId);
-    var cid = cfgGet('channelId', '');
+  var guildIdCache = {};
+  function resolveGuildId(chId) {
+    var cid = String(chId || primaryChannel() || '').trim();
     if (!cid) return Promise.resolve(null);
+    if (guildIdCache[cid]) return Promise.resolve(guildIdCache[cid]);
     return transport.getChannel(cid).then(function (ch) {
-      cachedGuildId = (ch && ch.guild_id) || null;
-      return cachedGuildId;
+      guildIdCache[cid] = (ch && ch.guild_id) || null;
+      return guildIdCache[cid];
     }, function () { return null; });
   }
   // config changes must not run on a stale instance: stop, rebuild, and restart if it was live
   function applyConfigChange() {
-    var wasRunning = !!(engine && engine.isRunning && engine.isRunning());
-    if (engine) engine.stop();
-    engine = null;
-    cachedGuildId = null;
-    if (wasRunning) { var e = buildEngine(); if (e) e.start(); }
+    var wasRunning = Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); });
+    eachEngine(function (e) { e.stop(); });
+    engines = {};
+    guildIdCache = {};
+    if (wasRunning) ensureEngines().forEach(function (e) { e.start(); });
   }
 
   function validate() {
@@ -1752,12 +1774,15 @@
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
-      engageMode: cfgGet('engageMode', 'normal'),
+      engageMode: cfgGet('engageMode:' + primaryChannel(), cfgGet('engageMode', 'normal')),
+      channels: channelList(),
+      engageModes: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('engageMode:' + c, cfgGet('engageMode', 'normal')); }); return m; })(),
+      runningByChannel: (function () { var m = {}; channelList().forEach(function (c) { m[c] = !!(engines[c] && engines[c].isRunning && engines[c].isRunning()); }); return m; })(),
       beats: cfgGet('beats', []),
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       pageLinked: !!pageSource,
-      running: !!(engine && engine.isRunning && engine.isRunning()),
+      running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
       lastPoll: lastPoll
     };
   }
@@ -1796,7 +1821,7 @@
       case 'mod.pinNotice': {
         var force = !!(args && args.force);
         if (cfgGet('noticePinned', false) && !force) return Promise.resolve({ ok: true, value: { already: true } });
-        var nch = cfgGet('channelId', '');
+        var nch = chKeyOf(args);
         if (!nch) return Promise.resolve({ ok: false, reason: 'no channel set' });
         var ntext = (args && args.text) ? String(args.text) : 'Heads up: Chloe is a roleplay bot character, not a real person. She reads this channel and remembers regulars so she can chat in character. Mods can adjust or pause her at any time.';
         return transport.sendMessage(nch, ntext).then(function (m) {
@@ -1826,11 +1851,21 @@
         cfgSet('beats', cleanB); applyConfigChange();
         return Promise.resolve({ ok: true, value: { count: cleanB.length, beats: cleanB } });
       }
+      case 'config.setChannels': {
+        var rawC = (args && args.channels);
+        if (!Array.isArray(rawC)) return Promise.resolve({ ok: false, reason: 'channels must be an array of channel ids' });
+        var cleanC = [], seenC = {};
+        rawC.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && c !== primaryChannel() && !seenC[c]) { seenC[c] = 1; cleanC.push(c); } });
+        cfgSet('channels', cleanC); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { channels: channelList() } });
+      }
       case 'config.setEngageMode': {
         var mode = (args && args.mode);
         if (mode !== 'locked' && mode !== 'normal' && mode !== 'open') return Promise.resolve({ ok: false, reason: 'mode must be locked|normal|open' });
-        cfgSet('engageMode', mode); applyConfigChange();
-        return Promise.resolve({ ok: true, value: { engageMode: mode } });
+        var emCh = chKeyOf(args);
+        if (!emCh) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        cfgSet('engageMode:' + emCh, mode); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { engageMode: mode, channelId: emCh } });
       }
       case 'config.setImageQueue': {
         var n = Math.max(1, Math.min(20, parseInt((args && args.max), 10) || 8));
@@ -1867,17 +1902,17 @@
         return Promise.resolve({ ok: true, value: traceRing.slice() });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
-      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var e1 = ensureEngine(); if (!e1) return Promise.resolve({ ok: false, reason: 'no channel set' }); e1.start(); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
-      case 'stop':            if (engine) engine.stop(); return Promise.resolve({ ok: true, value: statusSnapshot() });
-      case 'poll.once':       { var e2 = ensureEngine(); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
-      case 'roster.get':      { var e3 = ensureEngine(); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
-      case 'ring.get':        { var e4 = ensureEngine(); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
+      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
+      case 'stop':            eachEngine(function (e) { e.stop(); }); return Promise.resolve({ ok: true, value: statusSnapshot() });
+      case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
+      case 'roster.get':      { var e3 = engineFor(args && args.channelId); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
+      case 'ring.get':        { var e4 = engineFor(args && args.channelId); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
       case 'reset':           return resetState(true).then(function () { return { ok: true }; });
       // ---- T3 moderation: trusted (panel) actions + mod-list management ----
       case 'mod.action': {
         var act = String((args && args.action) || '');
         if (act === 'permaban') return Promise.resolve({ ok: false, reason: 'unimplemented (T4; irreversible purge requires a confirm in the trusted surface)' });
-        var e5 = ensureEngine(); if (!e5) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var e5 = engineFor(args && args.channelId); if (!e5) return Promise.resolve({ ok: false, reason: 'no channel set' });
         return e5.applyModAction(act, String((args && args.id) || ''), { durationMs: args && args.durationMs, reason: args && args.reason, byModId: 'panel' });
       }
       case 'mod.listMods': return Promise.resolve({ ok: true, value: cfgGet('modList', []) });
@@ -1892,7 +1927,7 @@
         return Promise.resolve({ ok: true, value: listR });
       }
       case 'mod.modlog': {
-        var e6 = ensureEngine(); if (!e6) return Promise.resolve({ ok: true, value: [] });
+        var e6 = engineFor(args && args.channelId); if (!e6) return Promise.resolve({ ok: true, value: [] });
         return e6.getModLog().then(function (l) { return { ok: true, value: l }; });
       }
       // T4 irreversible: the authoritative confirm lives HERE, in the trusted surface (top frame).
@@ -1902,11 +1937,11 @@
         var pname = String((args && args.name) || pid);
         var preason = (args && args.reason) || 'Chloe permaban';
         if (!pid) return Promise.resolve({ ok: false, reason: 'no target' });
-        var e7 = ensureEngine(); if (!e7) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var e7 = engineFor(args && args.channelId); if (!e7) return Promise.resolve({ ok: false, reason: 'no channel set' });
         var sure = false;
         try { sure = window.confirm('PERMABAN + PURGE "' + pname + '"?\n\nThis bans them from the Discord server AND permanently deletes everything Chloe remembers about them. This cannot be undone.'); } catch (e) { sure = false; }
         if (!sure) { log('[chloe.T4] permaban of ' + pname + ' cancelled at confirm'); return Promise.resolve({ ok: false, reason: 'cancelled' }); }
-        return resolveGuildId().then(function (gid) {
+        return resolveGuildId(chKeyOf(args)).then(function (gid) {
           if (!gid) return { ok: false, reason: 'could not resolve guild id from channel' };
           log('[chloe.T4] banning ' + pname + ' (' + pid + ') ...');
           return transport.banUser(gid, pid, preason).then(function () {
@@ -2002,13 +2037,19 @@
     if (s.placeholder || s.parts !== 3) console.log('[chloe] warning: does not look like a bot token (expect ~70+ chars, 3 dot-parts).');
   }
   function resetState(silent) {
-    if (!silent && !confirm('Reset T0 state (cursor, roster, ring)? Token is NOT touched.')) return Promise.resolve();
-    var ch = cfgGet('channelId', '');
-    return store.listIndex().then(function (ids) {
-      (ids || []).forEach(function (id) { GM_deleteValue(NS + 'u:' + id); });
-      ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'modlog', 'backfill:' + ch].forEach(function (k) { GM_deleteValue(NS + k); });
-      engine = null; lastPoll = null; console.log('[chloe] T0 state reset.');
+    if (!silent && !confirm('Reset state (cursor, roster, ring) for ALL channels? Token is NOT touched.')) return Promise.resolve();
+    var chain = Promise.resolve();
+    channelList().forEach(function (ch) {
+      var pfx = prefixFor(ch), st = makeStore(pfx);
+      chain = chain.then(function () {
+        return st.listIndex().then(function (ids) {
+          (ids || []).forEach(function (id) { GM_deleteValue(NS + pfx + 'u:' + id); });
+          ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'modlog', 'backfill:' + ch].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
+          GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
+        });
+      });
     });
+    return chain.then(function () { eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null; console.log('[chloe] state reset for all channels.'); });
   }
   GM_registerMenuCommand('Set bot token', promptToken);
   GM_registerMenuCommand('Reset T0 state (keeps token)', function () { resetState(false); });
