@@ -39,6 +39,8 @@ Mention her or use her name — both work:
 
 She also volunteers into conversations she can help with (configurable), greets people proportionally to how well she knows them, and can post scheduled in-character "beats" when the room is active.
 
+**Personality:** the panel has six dials (kindness, sarcasm, curiosity, playfulness, formality, verbosity) that shape her tone — 50 is neutral and silent. Mods can also anchor a style note straight from Discord: react &#128204; to any message (e.g. "Chloe should be more playful today") and, within a few polls, that message becomes her current style guidance for the channel. The newest mod-anchored message wins; `!chloe persona` shows it and `!chloe persona clear` removes it. Notes are sanitized, length-capped, and treated strictly as tone guidance — they can't change her rules or moderation.
+
 ## Moderator commands
 
 Mods (managed from the panel) can use `!chloe <verb>` in-channel — or the `!c` short prefix, or emoji aliases:

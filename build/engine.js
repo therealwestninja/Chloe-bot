@@ -89,6 +89,10 @@
         { action: 'softban' }
       ],
       strikeDecayMs: 86400000,  // one strike forgiven per ~24h of good behaviour
+      // D4 persona anchoring: a mod reacting with anchorEmoji to a message makes that message the
+      // channel's style note (newest mod-anchored message wins; sanitized + capped before use).
+      anchorEmoji: '\ud83d\udccc',
+      personaNoteMaxLen: 200,
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -352,6 +356,53 @@
       });
     }
 
+    // ---- D4: per-channel persona note (mod-anchored style guidance) ----------------------
+    var PERSONA_KEY = 'persona:note';
+    function sanitizePersonaNote(text) {
+      var t = scrubDiscordTokens(String(text || ''));
+      t = t.replace(/<a?:\w+:\d+>/g, '').replace(/<[@#][!&]?\d+>/g, '').replace(/\s+/g, ' ').trim();
+      var max = cfg.personaNoteMaxLen || 200;
+      if (t.length > max) t = t.slice(0, max);
+      return t;
+    }
+    // Sweep recent messages (REST gives reaction COUNTS inline; WHO reacted needs a second fetch)
+    // for the newest message a moderator has anchored. getRecent() -> newest-first messages;
+    // getReactors(msgId, emoji) -> users who reacted.
+    function anchorSweep(getRecent, getReactors) {
+      var emoji = cfg.anchorEmoji || '\ud83d\udccc';
+      return Promise.resolve(getRecent()).then(function (msgs) {
+        var candidates = (msgs || []).filter(function (m) {
+          return m && m.author && !m.author.bot && (m.reactions || []).some(function (r) {
+            return r && r.emoji && r.emoji.name === emoji && r.count > 0;
+          });
+        });
+        var chain = Promise.resolve(null);
+        candidates.forEach(function (m) {        // newest-first: the first mod-anchored hit wins
+          chain = chain.then(function (found) {
+            if (found) return found;
+            return Promise.resolve(getReactors(m.id, emoji)).then(function (users) {
+              return (users || []).some(function (u) { return u && isMod(u.id); }) ? m : null;
+            }, function () { return null; });
+          });
+        });
+        return chain;
+      }).then(function (m) {
+        if (!m) return { changed: false };
+        return Promise.resolve(store.get(PERSONA_KEY)).then(function (cur) {
+          if (cur && cur.msgId === m.id) return { changed: false, note: cur.text };
+          var note = sanitizePersonaNote(m.content);
+          if (!note) return { changed: false };
+          var rec = { msgId: m.id, text: note, by: (m.author && m.author.username) || '', at: clock.now() };
+          return Promise.resolve(store.set(PERSONA_KEY, rec)).then(function () {
+            log('[chloe.persona] anchored style note from ' + rec.by + ': "' + note.slice(0, 60) + '"');
+            return { changed: true, note: note };
+          });
+        });
+      });
+    }
+    function getPersonaNote() { return Promise.resolve(store.get(PERSONA_KEY)).then(function (v) { return v || null; }); }
+    function clearPersonaNote() { return Promise.resolve(store.del(PERSONA_KEY)); }
+
     function removeFromIndex(id) {
       return Promise.resolve(store.listIndex()).then(function (ids) {
         var next = (ids || []).filter(function (x) { return x !== id; });
@@ -497,6 +548,12 @@
             if (!p) return { ack: 'I have no record of that user' };
             var n = p.strikes || 0;
             return { ack: (p.name || c.targetId) + ': ' + n + ' strike' + (n === 1 ? '' : 's') + (p.state && p.state !== 'active' ? ' \u2014 currently ' + p.state : '') };
+          });
+        } },
+      { verb: 'persona',   modOnly: true, help: 'persona [clear]', handler: function (modId, c) {
+          if (/^clear\b/i.test(c.reason || '')) return clearPersonaNote().then(function () { return { ack: 'persona note cleared' }; });
+          return getPersonaNote().then(function (pn) {
+            return { ack: (pn && pn.text) ? ('current persona note (anchored by ' + (pn.by || 'a mod') + '): ' + pn.text) : ('no persona note anchored \u2014 a mod can react ' + (cfg.anchorEmoji || '\ud83d\udccc') + ' to a message to set one') };
           });
         } },
       { verb: 'recap',     modOnly: true, cooldownMs: 20000, aliases: ['\ud83d\udcdc'], help: 'recap', handler: function (modId) {
@@ -1128,7 +1185,7 @@
         lines.sort(function (a, b) { return a.ts - b.ts; });
         if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);
         var addressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
-        return {
+        var base = {
           you: { name: cfg.botName || 'Chloe' },
           addressedBy: { id: p.authorId, name: p.authorName },
           addressedMessage: scrubDiscordTokens(p.content),
@@ -1136,6 +1193,10 @@
           userSummary: (addressed && addressed.summary) ? addressed.summary : null,
           familiarity: addressed ? (addressed.interactionCount || 0) : 0
         };
+        return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
+          if (pn && pn.text) base.personaNote = pn.text;
+          return base;
+        });
       });
     }
 
@@ -1203,6 +1264,9 @@
       getSpeakerRing: getSpeakerRing,
       applyModAction: applyModAction,
       applyStrike: applyStrike,
+      anchorSweep: anchorSweep,
+      getPersonaNote: getPersonaNote,
+      clearPersonaNote: clearPersonaNote,
       purge: purge,
       getModLog: getModLog,
       appendModLog: appendModLog,

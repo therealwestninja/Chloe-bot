@@ -13,7 +13,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.26.0';
+  var VERSION = '0.27.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -127,6 +127,7 @@
     },
     startTyping: function (channelId) { return requestJSON('POST', '/channels/' + channelId + '/typing', { json: true, body: {} }); },
     getChannel: function (channelId) { return requestJSON('GET', '/channels/' + channelId, {}); },
+    getReactions: function (channelId, messageId, emoji) { return requestJSON('GET', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '?limit=10', {}); },
     getMember: function (guildId, userId) { return requestJSON('GET', '/guilds/' + guildId + '/members/' + userId, {}); },
     getMessagesBefore: function (channelId, beforeId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 100) + (beforeId ? '&before=' + beforeId : ''));
@@ -199,6 +200,10 @@
   // never knows the difference: same promise, same {ok, value} shape.
   function brainCall(kind, args, timeoutMs) {
     timeoutMs = timeoutMs || 40000;
+    if (kind !== 'paint') {
+      var dials = cfgGet('personality', null);
+      if (dials) args = Object.assign({}, args || {}, { personality: dials });
+    }
     function local() { return callPage(kind, args, timeoutMs); }
     if (tabBridge && TAB_ROLE === 'queen') {
       return tabBridge.dispatchJob('brain', { kind: kind, args: args, timeoutMs: timeoutMs }, timeoutMs + 5000, local);
@@ -303,6 +308,14 @@
         }).catch(function () {});
       });
     }
+    if (cfgGet('personaAnchor', false) && (maintTick % 10 === 3)) {
+      jobs = jobs.then(function () {
+        return eng.anchorSweep(
+          function () { return transport.getMessagesAfter(chId, null, 20); },
+          function (mid, emoji) { return transport.getReactions(chId, mid, emoji); }
+        ).then(function (r) { if (r && r.changed) { trace('persona', 'new anchored note (' + chId + ')'); pushEvent('persona', r); } }, function () {});
+      });
+    }
     return jobs;
   }
   function ensureEngines() { return channelList().map(function (c) { return engines[c] || buildEngine(c); }).filter(Boolean); }
@@ -352,6 +365,7 @@
       beats: cfgGet('beats', []),
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
+      personality: cfgGet('personality', null), personaAnchor: !!cfgGet('personaAnchor', false),
       pageLinked: !!pageSource,
       running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
       lastPoll: lastPoll
@@ -421,6 +435,26 @@
         });
         cfgSet('beats', cleanB); applyConfigChange();
         return Promise.resolve({ ok: true, value: { count: cleanB.length, beats: cleanB } });
+      }
+      case 'config.setPersonality': {
+        var rawP = (args && args.personality);
+        if (rawP == null) { cfgSet('personality', null); return Promise.resolve({ ok: true, value: { personality: null } }); }
+        if (typeof rawP !== 'object') return Promise.resolve({ ok: false, reason: 'personality must be an object of 0..1 dials' });
+        var DIALS = ['kindness', 'sarcasm', 'curiosity', 'playfulness', 'formality', 'verbosity'];
+        var cleanP = {};
+        DIALS.forEach(function (k) { if (rawP[k] != null && isFinite(rawP[k])) cleanP[k] = Math.max(0, Math.min(1, Number(rawP[k]))); });
+        cfgSet('personality', cleanP);
+        return Promise.resolve({ ok: true, value: { personality: cleanP } });
+      }
+      case 'config.setPersonaAnchor':
+        { var paOn = !!(args && args.on); cfgSet('personaAnchor', paOn); return Promise.resolve({ ok: true, value: { personaAnchor: paOn } }); }
+      case 'persona.get': {
+        var eP = engineFor(args && args.channelId); if (!eP) return Promise.resolve({ ok: true, value: null });
+        return eP.getPersonaNote().then(function (n) { return { ok: true, value: n }; });
+      }
+      case 'persona.clear': {
+        var eC = engineFor(args && args.channelId); if (!eC) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        return eC.clearPersonaNote().then(function () { return { ok: true, value: { cleared: true } }; });
       }
       case 'config.setChannels': {
         var rawC = (args && args.channels);
