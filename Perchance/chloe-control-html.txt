@@ -501,7 +501,7 @@
       tr.appendChild(cell(p.id));
       tr.appendChild(cell(fmtTime(p.lastSeen)));
       tr.appendChild(cell(p.recent ? p.recent.length : 0));
-      tr.appendChild(cell(p.state || 'active'));
+      tr.appendChild(cell((p.state || 'active') + (p.strikes ? ' (' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') + ')' : '')));
       var act = document.createElement('td');
       act.className = 'actions';
       act.appendChild(mkBtn('ignore', 'ghost', function () { modAct('ignore', p); }));

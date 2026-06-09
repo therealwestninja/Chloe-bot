@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.22.0
+// @version      0.23.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -11,6 +11,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @grant        unsafeWindow
+// @grant        GM_openInTab
+// @grant        GM_addValueChangeListener
 // @connect      discord.com
 // @run-at       document-idle
 // ==/UserScript==
@@ -96,7 +98,16 @@
       imageQueueMax: 8,       // global image queue depth (adjustable); extra requests are dropped with a note
       // ---- auto-moderation (off unless autoMod + rules supplied) ----
       autoMod: false,         // apply rule-based moderation with no mod present
-      autoModRules: [],       // [{ pattern, type:'text'|'regex'|'confusables', action:'ignore'|'timeout'|'softban', durationMs?, reason? }]
+      autoModRules: [],       // [{ pattern, type:'text'|'regex'|'confusables'|'link', action:'ignore'|'timeout'|'softban'|'warn', durationMs?, reason? }]
+      // C1: strike ladder. A 'warn' action (rule or !chloe warn) increments a per-user strike count
+      // that walks this reversible ladder by index (capped at the last step); strikes decay over time.
+      strikeLadder: [
+        { action: 'ignore' },
+        { action: 'timeout', durationMs: 600000 },
+        { action: 'timeout', durationMs: 3600000 },
+        { action: 'softban' }
+      ],
+      strikeDecayMs: 86400000,  // one strike forgiven per ~24h of good behaviour
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -318,7 +329,7 @@
         if (action === 'ignore') { p.state = 'ignored'; p.until = null; ack = 'ignoring ' + (p.name || targetId); }
         else if (action === 'timeout') { var dms = opts.durationMs || 3600000; p.state = 'timeout'; p.until = now + dms; ack = 'timed out ' + (p.name || targetId) + ' for ' + fmtDur(dms); }
         else if (action === 'softban') { p.state = 'soft-ban'; p.until = null; ack = 'soft-banned ' + (p.name || targetId); }
-        else if (action === 'clear') { p.state = 'active'; p.until = null; ack = 'cleared state for ' + (p.name || targetId); }
+        else if (action === 'clear') { p.state = 'active'; p.until = null; p.strikes = 0; p.lastStrikeAt = null; ack = 'cleared state for ' + (p.name || targetId); }
         else if (action === 'note') { ack = 'noted ' + (p.name || targetId); }
         else return { ok: false, reason: 'unknown action: ' + action };
         if (opts.reason) p.modNote = String(opts.reason);
@@ -331,6 +342,30 @@
             return appendModLog({ action: action, targetId: targetId, name: p.name || targetId, byModId: opts.byModId || null, reason: opts.reason || null, at: now, state: p.state, context: context }).then(function () {
               return { ok: true, value: { action: action, targetId: targetId, state: p.state, until: p.until, ack: ack } };
             });
+          });
+        });
+      });
+    }
+
+    // C1: a strike bumps a per-user counter (decayed first by elapsed good behaviour) and applies the
+    // ladder step for the new level — escalating but always reversible (never an auto-permaban).
+    function applyStrike(targetId, opts) {
+      opts = opts || {};
+      if (!targetId) return Promise.resolve({ ok: false, reason: 'no target user' });
+      return Promise.resolve(store.get(partKey(targetId))).then(function (p) {
+        var now = clock.now();
+        if (!p) p = { id: targetId, name: opts.targetName || targetId, firstSeen: now, lastSeen: now, interactionCount: 0, state: 'active', recent: [] };
+        var decayMs = cfg.strikeDecayMs || 0, prev = p.strikes || 0;
+        if (decayMs > 0 && p.lastStrikeAt) { var forgiven = Math.floor((now - p.lastStrikeAt) / decayMs); if (forgiven > 0) prev = Math.max(0, prev - forgiven); }
+        p.strikes = prev + 1; p.lastStrikeAt = now;
+        return store.set(partKey(targetId), p).then(function () {
+          var ladder = (cfg.strikeLadder && cfg.strikeLadder.length) ? cfg.strikeLadder : [{ action: 'ignore' }];
+          var step = ladder[Math.min(p.strikes - 1, ladder.length - 1)] || { action: 'ignore' };
+          var act = REVERSIBLE_ACTIONS[step.action] ? step.action : 'ignore';   // strikes never permaban (F1)
+          var reason = (opts.reason ? opts.reason + ' ' : '') + '(strike ' + p.strikes + ')';
+          return applyModAction(act, targetId, { durationMs: step.durationMs, reason: reason, byModId: opts.byModId || null }).then(function (res) {
+            if (res && res.ok && res.value) res.value.strikes = p.strikes;
+            return res;
           });
         });
       });
@@ -474,6 +509,15 @@
       { verb: 'unsoftban', modOnly: true, needsTarget: true, action: 'clear' },
       { verb: 'clear',     modOnly: true, needsTarget: true, action: 'clear',   help: 'clear @u' },
       { verb: 'note',      modOnly: true, needsTarget: true, action: 'note',    help: 'note @u <text>' },
+      { verb: 'warn',      modOnly: true, needsTarget: true, action: 'warn',    aliases: ['\u26a0\ufe0f'], help: 'warn @u [reason]' },
+      { verb: 'warns',     modOnly: true, needsTarget: true, help: 'warns @u', handler: function (modId, c) {
+          if (!c.targetId) return Promise.resolve({ ack: 'warns needs an @mention of the user' });
+          return Promise.resolve(store.get(partKey(c.targetId))).then(function (p) {
+            if (!p) return { ack: 'I have no record of that user' };
+            var n = p.strikes || 0;
+            return { ack: (p.name || c.targetId) + ': ' + n + ' strike' + (n === 1 ? '' : 's') + (p.state && p.state !== 'active' ? ' \u2014 currently ' + p.state : '') };
+          });
+        } },
       { verb: 'recap',     modOnly: true, cooldownMs: 20000, aliases: ['\ud83d\udcdc'], help: 'recap', handler: function (modId) {
           if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'recap is not available right now' });
           return assembleContext({ authorId: modId, authorName: '' }).then(function (ctx) {
@@ -582,6 +626,8 @@
       if (typeof entry.handler === 'function') return Promise.resolve(entry.handler(modId, c));
       if (entry.action) {
         if (entry.needsTarget && !c.targetId) return Promise.resolve({ ack: c.cmd + ' needs an @mention of the user' });
+        if (entry.action === 'warn') return applyStrike(c.targetId, { reason: c.reason, byModId: modId })
+          .then(function (r) { return { ack: r.ok ? (r.value.ack + ' (strike ' + r.value.strikes + ')') : ('failed: ' + r.reason) }; });
         return applyModAction(entry.action, c.targetId, { durationMs: c.durationMs, reason: c.reason, byModId: modId })
           .then(function (r) { return { ack: r.ok ? r.value.ack : ('failed: ' + r.reason) }; });
       }
@@ -633,16 +679,23 @@
               return;
             }
             if (looksLikeCommand(m.content)) log('[chloe.T3] "' + String(m.content || '').slice(0, 40) + '" starts with ' + cfg.commandPrefix + ' but is not a known command \u2014 treating as normal chat');
-            if (stateById[m.author.id] && stateById[m.author.id] !== 'active') return; // suppressed: invisible
-            if (autoModEnabled() && !isMod(m.author.id)) {
+            // Auto-mod watches everyone except mods, BEFORE the engagement-suppression gate, so a
+            // repeat offender who is already ignored/timed-out still escalates up the strike ladder.
+            // Skip only the terminal soft-ban (already maximally handled reversibly — re-moderating is moot).
+            if (autoModEnabled() && !isMod(m.author.id) && stateById[m.author.id] !== 'soft-ban') {
               var rule = matchAutoMod(m.content);
               if (rule) {
-                var act = REVERSIBLE_ACTIONS[rule.action] ? rule.action : 'ignore';   // never auto-permaban (F1)
                 commandAuthors[m.author.id] = true;   // handled — don't also reply/greet this person this batch
+                if (rule.action === 'warn') {   // C1: escalate along the strike ladder
+                  log('[chloe.automod] rule "' + String(rule.pattern).slice(0, 30) + '" (' + (rule.type || 'text') + ') matched ' + (m.author.username || m.author.id) + ' \u2192 warn');
+                  return applyStrike(m.author.id, { reason: rule.reason || ('auto-mod: ' + rule.pattern), byModId: 'auto' });
+                }
+                var act = REVERSIBLE_ACTIONS[rule.action] ? rule.action : 'ignore';   // never auto-permaban (F1)
                 log('[chloe.automod] rule "' + String(rule.pattern).slice(0, 30) + '" (' + (rule.type || 'text') + ') matched ' + (m.author.username || m.author.id) + ' \u2192 ' + act);
                 return applyModAction(act, m.author.id, { durationMs: rule.durationMs, reason: rule.reason || ('auto-mod: ' + rule.pattern), byModId: 'auto' });
               }
             }
+            if (stateById[m.author.id] && stateById[m.author.id] !== 'active') return; // suppressed: invisible to engagement
             if (engageMode === 'locked' && !isMod(m.author.id)) return;   // raid lockdown: only mods get engagement (auto-mod above still ran)
             var addressed = isAddressed(m.content) || (engageMode === 'open');
             if (imageEnabled() && addressed) {
@@ -1168,6 +1221,7 @@
       getRoster: getRoster,
       getSpeakerRing: getSpeakerRing,
       applyModAction: applyModAction,
+      applyStrike: applyStrike,
       purge: purge,
       getModLog: getModLog,
       appendModLog: appendModLog,
@@ -1186,6 +1240,169 @@
 
   return { createEngine: createEngine, _snowflakeCmp: snowflakeCmp };
 });
+/* chloe-bridge — tab bridge (D1, pure logic).
+ *
+ * Queen/worker messaging over an injected same-origin bus (BroadcastChannel in production,
+ * a GM value-change adapter as fallback, an in-memory hub in tests). Like engine.js this file
+ * is deliberately free of GM_*, DOM, and network code: it takes a `bus` and a `clock`, so it
+ * runs identically under Node and inside the userscript.
+ *
+ * Design decisions (from the distributed-tab spec review):
+ *  - EVENT-DRIVEN heartbeat: the queen pings, workers pong in the message handler. Workers own
+ *    NO timers — background tabs get their timers clamped to ~1/min by Chrome's intensive
+ *    throttling, so a worker-initiated 10s heartbeat would falsely die the moment the tab is
+ *    backgrounded. Message *delivery* is not throttled, so reply-on-ping survives backgrounding.
+ *  - The host drives time: call tick() periodically (queen tab is the foreground tab, so its
+ *    interval is reliable). tick() sends due pings, reaps silent workers, expires requests.
+ *  - Token-authenticated envelopes: the bus token lives in GM storage (script-scoped — page
+ *    code on perchance.org cannot read it), so only our userscript instances can speak on the
+ *    channel. Envelopes with a missing/wrong token are dropped silently.
+ *  - Workers are stateless; all durable state stays with the queen (single-writer GM rule).
+ */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; // Node / harness
+  root.ChloeTabBridge = api;                                                 // userscript / window
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  function createTabBridge(opts) {
+    opts = opts || {};
+    var role = opts.role === 'worker' ? 'worker' : 'queen';
+    var tabId = String(opts.tabId || ('tab-' + Math.random().toString(36).slice(2, 10)));
+    var token = String(opts.token || '');
+    var bus = opts.bus;                      // { post(env), onMessage(fn) }
+    var clock = opts.clock || { now: function () { return Date.now(); } };
+    var log = typeof opts.log === 'function' ? opts.log : function () {};
+    var pingIntervalMs = opts.pingIntervalMs || 15000;
+    var deadAfterMs = opts.deadAfterMs || 45000;
+    var requestTimeoutMs = opts.requestTimeoutMs || 30000;
+
+    var running = false;
+    var workers = {};        // queen: id -> { status, lastSeen, jobs }
+    var pending = {};        // request id -> { resolve, reject, deadline, to }
+    var jobHandlers = {};    // worker: jobType -> fn(args) -> Promise
+    var queenId = null;      // worker: learned from the queen's 'registered' ack / pings
+    var lastPingAt = 0;
+    var seq = 0;
+
+    function envelope(to, type, payload, re) {
+      return { b: 'chloe-bus', v: 1, tok: token, from: tabId, to: to || '*', type: type, id: tabId + ':' + (++seq), re: re || null, payload: payload == null ? null : payload, ts: clock.now() };
+    }
+    function post(env) { try { bus.post(env); } catch (e) { log('[bridge] post failed: ' + (e && e.message)); } }
+    function broadcast(type, payload) { post(envelope('*', type, payload)); }
+    function sendTo(to, type, payload, re) { post(envelope(to, type, payload, re)); }
+
+    // queen: promise-based RPC. request(workerId, jobType, args) -> Promise(result)
+    function request(to, jobType, args, timeoutMs) {
+      var env = envelope(to, 'job', { jobType: jobType, args: args == null ? null : args });
+      return new Promise(function (resolve, reject) {
+        pending[env.id] = { resolve: resolve, reject: reject, to: to, deadline: clock.now() + (timeoutMs || requestTimeoutMs) };
+        if (workers[to]) workers[to].status = 'busy';
+        post(env);
+      });
+    }
+
+    function settle(re, ok, value) {
+      var p = pending[re];
+      if (!p) return;
+      delete pending[re];
+      if (workers[p.to]) workers[p.to].status = 'idle';
+      if (ok) p.resolve(value); else p.reject(new Error(String(value || 'job failed')));
+    }
+
+    function handleAsQueen(env) {
+      if (env.type === 'register') {
+        var fresh = !workers[env.from];
+        workers[env.from] = { status: 'idle', lastSeen: clock.now() };
+        sendTo(env.from, 'registered', { queenId: tabId });
+        log('[bridge] worker ' + env.from + (fresh ? ' joined' : ' re-registered'));
+        if (fresh && typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
+        return;
+      }
+      if (env.type === 'pong') { if (workers[env.from]) workers[env.from].lastSeen = clock.now(); return; }
+      if (env.type === 'bye') { if (workers[env.from]) { delete workers[env.from]; log('[bridge] worker ' + env.from + ' left'); if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(env.from, 'bye'); } return; }
+      if (env.type === 'result') { settle(env.re, true, env.payload); return; }
+      if (env.type === 'error') { settle(env.re, false, env.payload); return; }
+    }
+
+    function handleAsWorker(env) {
+      if (env.type === 'registered') { queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; return; }
+      if (env.type === 'ping') { queenId = env.from; sendTo(env.from, 'pong'); return; }
+      if (env.type === 'shutdown') {
+        log('[bridge] shutdown received');
+        broadcast('bye');
+        running = false;
+        if (typeof opts.onShutdown === 'function') opts.onShutdown();
+        return;
+      }
+      if (env.type === 'job') {
+        var jobType = env.payload && env.payload.jobType;
+        var fn = jobHandlers[jobType];
+        if (!fn) { sendTo(env.from, 'error', 'no handler for job type "' + jobType + '"', env.id); return; }
+        Promise.resolve().then(function () { return fn(env.payload.args); }).then(
+          function (res) { sendTo(env.from, 'result', res == null ? null : res, env.id); },
+          function (err) { sendTo(env.from, 'error', (err && err.message) || String(err), env.id); }
+        );
+        return;
+      }
+    }
+
+    function onBusMessage(env) {
+      if (!running || !env || env.b !== 'chloe-bus') return;
+      if (env.tok !== token) { log('[bridge] dropped envelope with bad token from ' + env.from); return; }
+      if (env.from === tabId) return;                          // own echo (GM fallback path)
+      if (env.to !== '*' && env.to !== tabId) return;          // not for us
+      if (role === 'queen') handleAsQueen(env); else handleAsWorker(env);
+    }
+
+    // host calls this on its own interval (queen tab = foreground tab = reliable timers)
+    function tick() {
+      if (!running) return;
+      var now = clock.now();
+      if (role === 'queen') {
+        if (now - lastPingAt >= pingIntervalMs) { lastPingAt = now; broadcast('ping'); }
+        Object.keys(workers).forEach(function (id) {
+          if (now - workers[id].lastSeen > deadAfterMs) {
+            delete workers[id];
+            log('[bridge] worker ' + id + ' presumed dead (no pong in ' + deadAfterMs + 'ms)');
+            if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(id, 'timeout');
+          }
+        });
+      }
+      Object.keys(pending).forEach(function (id) {
+        if (now > pending[id].deadline) settle(id, false, 'request timed out');
+      });
+    }
+
+    function start() {
+      if (running) return;
+      running = true;
+      bus.onMessage(onBusMessage);
+      if (role === 'worker') broadcast('register');
+      log('[bridge] started as ' + role + ' (' + tabId + ')');
+    }
+    function stop() { running = false; }
+
+    return {
+      role: role,
+      tabId: tabId,
+      start: start,
+      stop: stop,
+      tick: tick,
+      broadcast: broadcast,
+      sendTo: sendTo,
+      request: request,
+      onJob: function (jobType, fn) { jobHandlers[jobType] = fn; },
+      workers: function () { var out = {}; Object.keys(workers).forEach(function (k) { out[k] = { status: workers[k].status, lastSeen: workers[k].lastSeen }; }); return out; },
+      shutdownWorker: function (id) { sendTo(id, 'shutdown'); },
+      isRunning: function () { return running; }
+    };
+  }
+
+  return { createTabBridge: createTabBridge };
+});
 // ===================================================================================
 // chloe-bridge — GM transport + store adapters, control link, and menu (T0).
 // Appended AFTER the verified engine.js (which defines `ChloeT0`).
@@ -1201,7 +1418,11 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.22.0';
+  var VERSION = '0.23.0';
+  // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
+  // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
+  // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
+  var TAB_ROLE = (typeof location !== 'undefined' && /chloe-worker/.test(location.hash || '')) ? 'worker' : 'queen';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -1381,6 +1602,13 @@
         imageCooldownMs: cfgGet('imageCooldownMs', 2000),
         autoMod: !!cfgGet('autoMod', false),
         autoModRules: cfgGet('autoModRules', []),
+        strikeLadder: cfgGet('strikeLadder', [
+          { action: 'ignore' },
+          { action: 'timeout', durationMs: 600000 },
+          { action: 'timeout', durationMs: 3600000 },
+          { action: 'softban' }
+        ]),
+        strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
         engageMode: cfgGet('engageMode', 'normal'),
         beats: cfgGet('beats', []),
         beatFn: function (b) { return callPage('beat', b, 30000); },
@@ -1580,7 +1808,7 @@
         rules.forEach(function (r) {
           if (!r || !r.pattern) return;
           var type = (r.type === 'regex' || r.type === 'confusables' || r.type === 'link') ? r.type : 'text';
-          var action = (r.action === 'timeout' || r.action === 'softban' || r.action === 'clear') ? r.action : 'ignore';  // reversible only
+          var action = (r.action === 'timeout' || r.action === 'softban' || r.action === 'clear' || r.action === 'warn') ? r.action : 'ignore';  // reversible only ('warn' = escalate)
           var o = { pattern: String(r.pattern), type: type, action: action };
           if (r.durationMs) o.durationMs = Number(r.durationMs) || undefined;
           if (r.reason) o.reason = String(r.reason);
@@ -1589,13 +1817,19 @@
         cfgSet('autoModRules', clean); applyConfigChange();
         return Promise.resolve({ ok: true, value: { count: clean.length, rules: clean } });
       }
+      case 'bridge.status':
+        return Promise.resolve({ ok: true, value: { role: TAB_ROLE, tabId: tabBridge ? tabBridge.tabId : null, bus: !!tabBus, workers: (tabBridge && TAB_ROLE === 'queen') ? tabBridge.workers() : {} } });
+      case 'bridge.spawn':
+        { if (TAB_ROLE !== 'queen') return Promise.resolve({ ok: false, reason: 'only the queen spawns workers' }); return Promise.resolve(spawnWorker()); }
+      case 'bridge.shutdown':
+        { if (!tabBridge || TAB_ROLE !== 'queen') return Promise.resolve({ ok: false, reason: 'no bridge / not the queen' }); tabBridge.shutdownWorker(String((args && args.id) || '')); return Promise.resolve({ ok: true, value: { id: (args && args.id) || null } }); }
       case 'diag':
         { var snap = statusSnapshot(); console.log('[chloe] diag', snap); return Promise.resolve({ ok: true, value: snap }); }
       case 'diag.trace':
         return Promise.resolve({ ok: true, value: traceRing.slice() });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
-      case 'start':           { var e1 = ensureEngine(); if (!e1) return Promise.resolve({ ok: false, reason: 'no channel set' }); e1.start(); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
+      case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var e1 = ensureEngine(); if (!e1) return Promise.resolve({ ok: false, reason: 'no channel set' }); e1.start(); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
       case 'stop':            if (engine) engine.stop(); return Promise.resolve({ ok: true, value: statusSnapshot() });
       case 'poll.once':       { var e2 = ensureEngine(); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
       case 'roster.get':      { var e3 = ensureEngine(); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
@@ -1670,6 +1904,58 @@
       .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, replyTarget(origin)); } catch (e) {} });
   });
 
+  // ---- D1: tab bridge (queen/worker) ---------------------------------------------------
+  // Same-origin BroadcastChannel between userscript instances; GM value-change events as the
+  // fallback bus (script-scoped, so it also survives exotic sandboxing). The bus token lives in
+  // GM storage — page code on perchance.org cannot read it, so only our tabs can speak.
+  function makeBroadcastBus() {
+    if (typeof BroadcastChannel === 'undefined') return null;
+    try {
+      var ch = new BroadcastChannel('chloe_bridge_v1');
+      return { post: function (e) { ch.postMessage(e); }, onMessage: function (fn) { ch.onmessage = function (ev) { fn(ev.data); }; } };
+    } catch (e) { return null; }
+  }
+  function makeGmBus() {
+    if (typeof GM_addValueChangeListener !== 'function') return null;
+    var KEY = NS + 'bus:frame', fn = null;
+    GM_addValueChangeListener(KEY, function (name, oldV, newV, remote) { if (remote && newV && newV.env && fn) fn(newV.env); });
+    return { post: function (e) { GM_setValue(KEY, { n: Date.now() + Math.random(), env: e }); }, onMessage: function (f) { fn = f; } };
+  }
+  var busToken = GM_getValue(NS + 'bus:token', null);
+  if (!busToken) { busToken = Math.random().toString(36).slice(2) + Date.now().toString(36); GM_setValue(NS + 'bus:token', busToken); }
+  var tabBus = makeBroadcastBus() || makeGmBus();
+  var tabBridge = null;
+  if (tabBus && typeof ChloeTabBridge !== 'undefined') {
+    tabBridge = ChloeTabBridge.createTabBridge({
+      role: TAB_ROLE, token: busToken, bus: tabBus,
+      log: function (m) { trace('bridge', m); },
+      onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
+      onWorkerLost: function (id, why) { trace('bridge', 'worker lost: ' + id + ' (' + why + ')'); },
+      onShutdown: function () { try { window.close(); } catch (e) { trace('bridge', 'self-close blocked'); } }
+    });
+    if (TAB_ROLE === 'worker') {
+      tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
+      // The worker's whole point: this tab's panel brain, served over the bus. D2 adds the
+      // queen-side scheduler that routes respond/judge/paint here when workers are available.
+      tabBridge.onJob('brain', function (p) {
+        p = p || {};
+        return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
+      });
+    }
+    tabBridge.start();
+    setInterval(function () { tabBridge.tick(); }, 5000);   // host-driven time; the queen tab is the foreground tab
+  } else {
+    trace('bridge', 'no bus available (BroadcastChannel + GM listener both missing) \u2014 single-tab mode');
+  }
+  function spawnWorker() {
+    var url = location.href.split('#')[0] + '#chloe-worker';
+    try { GM_openInTab(url, { active: false, insert: true }); return { ok: true, value: { url: url } }; }
+    catch (e) {
+      try { window.open(url, '_blank'); return { ok: true, value: { url: url, via: 'window.open' } }; }
+      catch (e2) { return { ok: false, reason: 'could not open a tab (popup blocked?)' }; }
+    }
+  }
+
   // ---- menu (fallback / token entry; token must be set in the trusted surface) --------
   function promptToken() {
     var t = prompt('Paste the BOT token (Developer Portal > Bot). Stored in this browser only.');
@@ -1689,6 +1975,6 @@
   GM_registerMenuCommand('Set bot token', promptToken);
   GM_registerMenuCommand('Reset T0 state (keeps token)', function () { resetState(false); });
 
-  console.log('[chloe-bridge ' + VERSION + '] loaded (T0 + control link). token set:', hasToken(),
+  console.log('[chloe-bridge ' + VERSION + '] loaded as ' + TAB_ROLE + '. token set:', hasToken(),
     '| channel set:', !!cfgGet('channelId', ''), '\n  Open your Chloe control generator on this same perchance.org tab to drive it.');
 })();
