@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.18.0
+// @version      0.19.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -457,15 +457,16 @@
           if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'recap is not available right now' });
           return assembleContext({ authorId: modId, authorName: '' }).then(function (ctx) {
             return Promise.resolve(cfg.recapFn({ recent: ctx })).then(function (res) {
-              return { ack: (res && res.ok && res.value) ? String(res.value) : 'not much has happened that I can see' };
+              var v = (res && res.ok && res.value) ? String(res.value) : 'not much has happened that I can see';
+              return { ack: v, embed: embedFor('Recap', v) };
             }, function () { return { ack: 'recap failed' }; });
           });
         } },
-      { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText() }); } },
+      { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText(), embed: statusEmbed() }); } },
       { verb: 'lockdown',  modOnly: true, aliases: ['lock', '\ud83d\udd12'], help: 'lockdown', handler: function () { engageMode = 'locked'; log('[chloe.mode] lockdown (mods only)'); return Promise.resolve({ ack: 'locked down \u2014 I\u2019ll only respond to mods until you ' + cfg.commandPrefix + ' unlock.' }); } },
       { verb: 'unlock',    modOnly: true, aliases: ['\ud83d\udd13'], help: 'unlock', handler: function () { engageMode = 'normal'; log('[chloe.mode] back to normal'); return Promise.resolve({ ack: 'unlocked \u2014 back to normal.' }); } },
       { verb: 'open',      modOnly: true, aliases: ['openchat', '\ud83d\udce2'], help: 'open', handler: function () { engageMode = 'open'; log('[chloe.mode] open (reply to everyone)'); return Promise.resolve({ ack: 'open mode \u2014 I\u2019ll reply to everyone in here. ' + cfg.commandPrefix + ' unlock to stop.' }); } },
-      { verb: 'help',      modOnly: true, cooldownMs: 5000, aliases: ['?', '\ud83c\udd98'], handler: function () { return Promise.resolve({ ack: helpText() }); } },
+      { verb: 'help',      modOnly: true, cooldownMs: 5000, aliases: ['?', '\ud83c\udd98'], handler: function () { return Promise.resolve({ ack: helpText(), embed: helpEmbed() }); } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
     function resolveVerb(word) {
@@ -523,6 +524,32 @@
     function statusText() {
       return 'Chloe here. mode=' + engageMode + ', replies=' + cfg.addressMode + (cfg.volunteer ? ' +volunteer' : '') + '. mods can ' + cfg.commandPrefix + ' help.';
     }
+    // #8: rich embeds for help/status/recap (used when the transport offers sendEmbed; text is the fallback).
+    var EMBED_COLOR = 0x8b5cf6;   // Chloe's accent
+    function embedFor(title, desc, fields) {
+      var e = { title: title, color: EMBED_COLOR, footer: { text: 'Chloe' } };
+      if (desc) e.description = String(desc).slice(0, 4000);
+      if (fields && fields.length) e.fields = fields;
+      return e;
+    }
+    function helpEmbed() {
+      var p = cfg.commandPrefix;
+      var withHelp = COMMANDS.filter(function (c) { return c.help; });
+      var mod = withHelp.filter(function (c) { return c.modOnly; }).map(function (c) { return '`' + p + ' ' + c.help + '`'; });
+      var any = withHelp.filter(function (c) { return !c.modOnly; }).map(function (c) { return '`' + p + ' ' + c.help + '`'; });
+      return embedFor('Chloe \u2014 commands', null, [
+        { name: 'Mods', value: mod.join('\n') || '\u2014' },
+        { name: 'Anyone', value: any.join('\n') || '\u2014' }
+      ]);
+    }
+    function statusEmbed() {
+      return embedFor('Chloe \u2014 status', null, [
+        { name: 'engagement', value: engageMode, inline: true },
+        { name: 'replies', value: String(cfg.addressMode) + (cfg.volunteer ? ' + volunteer' : ''), inline: true },
+        { name: 'images', value: cfg.image ? 'on' : 'off', inline: true },
+        { name: 'auto-mod', value: (cfg.autoMod && (cfg.autoModRules || []).length) ? ((cfg.autoModRules || []).length + ' rule(s)') : 'off', inline: true }
+      ]);
+    }
     function execCommand(modId, c) {
       var entry = c.entry || resolveVerb(c.cmd);
       if (!entry) return Promise.resolve({ ack: 'unknown command "' + c.cmd + '" \u2014 try ' + cfg.commandPrefix + ' help' });
@@ -571,7 +598,8 @@
         var now = clock.now();
         var stateById = {}, commandAuthors = {};
         authorIds.forEach(function (id, i) { var p = parts[i]; if (p) { applyExpiry(p, now); stateById[id] = p.state || 'active'; } else stateById[id] = 'active'; });
-        var acks = [], commandCount = 0, addressedName = null, imageReqName = null;
+        var acks = [], embeds = [], commandCount = 0, addressedName = null, imageReqName = null;
+        var canEmbed = typeof cfg.sendEmbed === 'function';
         var chain = Promise.resolve();
         incoming.forEach(function (m) {
           chain = chain.then(function () {
@@ -579,7 +607,7 @@
             if (c) {
               commandCount++; commandAuthors[m.author.id] = true;
               if (c.cmd === 'forget') return forgetMe(m.author.id, m.author.username);  // anyone, self only
-              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res && res.ack) acks.push(res.ack); });
+              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
             }
@@ -643,9 +671,12 @@
             greetSettleLogged = true;
             log('[chloe.T5] greetings paused for ~' + Math.round(cfg.greetSettleMs / 1000) + 's after start (current speakers treated as already-present, not arrivals)');
           }
-          if (acks.length && typeof cfg.send === 'function' && cfg.ackCommands) {
-            log('[chloe.T3] ran ' + acks.length + ' command(s)');
-            return Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'))).then(function () { return { commands: commandCount }; }, function () { return { commands: commandCount }; });
+          if ((acks.length || embeds.length) && cfg.ackCommands) {
+            log('[chloe.T3] ran ' + commandCount + ' command(s)' + (embeds.length ? (' (' + embeds.length + ' embed)') : ''));
+            var outs = [];
+            if (acks.length && typeof cfg.send === 'function') outs.push(Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'))));
+            embeds.forEach(function (em) { outs.push(Promise.resolve(cfg.sendEmbed(cfg.channelId, em))); });
+            return Promise.all(outs.map(function (p) { return p.then(function () {}, function () {}); })).then(function () { return { commands: commandCount }; });
           }
           return { commands: commandCount };
         });
@@ -1089,7 +1120,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.18.0';
+  var VERSION = '0.19.0';
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -1170,6 +1201,9 @@
     },
     sendMessage: function (channelId, text) {
       return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: String(text || '').slice(0, 1900) } });
+    },
+    sendEmbed: function (channelId, embed) {
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed] } });
     },
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
@@ -1259,6 +1293,7 @@
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
         openDM: function (uid) { return transport.openDM(uid); },
         send: function (cid, text) { return transport.sendMessage(cid, text); },
+        sendEmbed: function (cid, embed) { return transport.sendEmbed(cid, embed); },
         onPoll: function (summary) {
           lastPoll = summary; pushEvent('poll', summary);
           if (summary && (summary.ingested || summary.replied || summary.imageJob || summary.greeted || summary.volunteered || summary.commands)) {
