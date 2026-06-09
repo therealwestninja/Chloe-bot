@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.23.0
+// @version      0.24.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1311,6 +1311,28 @@
       if (workers[p.to]) workers[p.to].status = 'idle';
       if (ok) p.resolve(value); else p.reject(new Error(String(value || 'job failed')));
     }
+    // a worker that died mid-job should fail its requests NOW, not at the request deadline —
+    // the caller's fallback (e.g. run the brain locally) can start immediately.
+    function rejectPendingFor(workerId, why) {
+      Object.keys(pending).forEach(function (rid) { if (pending[rid].to === workerId) settle(rid, false, why); });
+    }
+
+    // D2 scheduler: route a job to an idle worker (round-robin); if there are no idle workers,
+    // or the chosen worker fails/times out/dies mid-job, run the injected fallback instead.
+    var rr = 0;
+    function dispatchJob(jobType, payload, timeoutMs, fallback) {
+      var ids = Object.keys(workers).filter(function (id) { return workers[id].status === 'idle'; });
+      if (role !== 'queen' || !ids.length) {
+        if (fallback) return Promise.resolve().then(fallback);
+        return Promise.reject(new Error('no idle workers and no fallback'));
+      }
+      var id = ids[rr++ % ids.length];
+      return request(id, jobType, payload, timeoutMs).catch(function (err) {
+        log('[bridge] job "' + jobType + '" on ' + id + ' failed (' + ((err && err.message) || err) + ')' + (fallback ? ' \u2014 falling back' : ''));
+        if (fallback) return fallback();
+        throw err;
+      });
+    }
 
     function handleAsQueen(env) {
       if (env.type === 'register') {
@@ -1322,7 +1344,7 @@
         return;
       }
       if (env.type === 'pong') { if (workers[env.from]) workers[env.from].lastSeen = clock.now(); return; }
-      if (env.type === 'bye') { if (workers[env.from]) { delete workers[env.from]; log('[bridge] worker ' + env.from + ' left'); if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(env.from, 'bye'); } return; }
+      if (env.type === 'bye') { if (workers[env.from]) { delete workers[env.from]; rejectPendingFor(env.from, 'worker left'); log('[bridge] worker ' + env.from + ' left'); if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(env.from, 'bye'); } return; }
       if (env.type === 'result') { settle(env.re, true, env.payload); return; }
       if (env.type === 'error') { settle(env.re, false, env.payload); return; }
     }
@@ -1366,6 +1388,7 @@
         Object.keys(workers).forEach(function (id) {
           if (now - workers[id].lastSeen > deadAfterMs) {
             delete workers[id];
+            rejectPendingFor(id, 'worker lost (no heartbeat)');
             log('[bridge] worker ' + id + ' presumed dead (no pong in ' + deadAfterMs + 'ms)');
             if (typeof opts.onWorkerLost === 'function') opts.onWorkerLost(id, 'timeout');
           }
@@ -1394,6 +1417,7 @@
       broadcast: broadcast,
       sendTo: sendTo,
       request: request,
+      dispatchJob: dispatchJob,
       onJob: function (jobType, fn) { jobHandlers[jobType] = fn; },
       workers: function () { var out = {}; Object.keys(workers).forEach(function (k) { out[k] = { status: workers[k].status, lastSeen: workers[k].lastSeen }; }); return out; },
       shutdownWorker: function (id) { sendTo(id, 'shutdown'); },
@@ -1418,7 +1442,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.23.0';
+  var VERSION = '0.24.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -1580,6 +1604,20 @@
   }
   function pushEvent(name, value) { if (!pageSource) return; try { pageSource.postMessage({ __chloe: 1, kind: 'event', name: name, value: value }, replyTarget(pageOrigin)); } catch (e) {} }
 
+  // ---- D2: brain offload --------------------------------------------------------------
+  // Every brain call goes through here: if this is the queen and an idle worker exists, the job
+  // runs on that worker's tab (its own AI/image brokers — the genuinely parallel resource);
+  // otherwise, or on any worker failure/loss mid-job, it runs locally via callPage. The engine
+  // never knows the difference: same promise, same {ok, value} shape.
+  function brainCall(kind, args, timeoutMs) {
+    timeoutMs = timeoutMs || 40000;
+    function local() { return callPage(kind, args, timeoutMs); }
+    if (tabBridge && TAB_ROLE === 'queen') {
+      return tabBridge.dispatchJob('brain', { kind: kind, args: args, timeoutMs: timeoutMs }, timeoutMs + 5000, local);
+    }
+    return local();
+  }
+
   // ---- engine wiring ------------------------------------------------------------------
   var engine = null;
   var lastPoll = null;
@@ -1611,20 +1649,20 @@
         strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
         engageMode: cfgGet('engageMode', 'normal'),
         beats: cfgGet('beats', []),
-        beatFn: function (b) { return callPage('beat', b, 30000); },
-        greetFn: function (ctx) { return callPage('greet', ctx, 40000); },
+        beatFn: function (b) { return brainCall('beat', b, 30000); },
+        greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
         backgroundText: true,
         commandPrefixes: cfgGet('commandPrefixes', []),
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
-        respond: function (ctx) { return callPage('respond', ctx, 40000); },
-        judge: function (ctx) { return callPage('judge', ctx, 40000); },
-        recapFn: function (ctx) { return callPage('recap', ctx, 45000); },
+        respond: function (ctx) { return brainCall('respond', ctx, 40000); },
+        judge: function (ctx) { return brainCall('judge', ctx, 40000); },
+        recapFn: function (ctx) { return brainCall('recap', ctx, 45000); },
         typing: function (cid) { return transport.startTyping(cid); },
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
-        paint: function (req) { return callPage('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
+        paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
         openDM: function (uid) { return transport.openDM(uid); },
         send: function (cid, text) { return transport.sendMessage(cid, text); },

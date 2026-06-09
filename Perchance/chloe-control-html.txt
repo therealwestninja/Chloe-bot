@@ -162,6 +162,12 @@
       <button class="ghost" id="diagBtn">Diagnostics</button>
     </div>
     <div id="modListBox" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:8px">
+      <span class="muted" id="bridgeRole">tabs: ...</span>
+      <button class="ghost" id="spawnWorkerBtn">Spawn worker tab</button>
+      <button class="ghost" id="workersBtn">Workers</button>
+    </div>
+    <div id="workersBox" style="margin-top:8px"></div>
   </div>
 
   <div class="card">
@@ -768,6 +774,40 @@
       try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(lines.join('\n')).then(function () { log('(copied to clipboard)'); }, function () {}); } catch (e) {}
     });
   });
+  function refreshWorkers() {
+    call('bridge.status').then(function (res) {
+      if (!res || !res.ok) { setText('bridgeRole', 'tabs: unavailable'); return; }
+      var v = res.value || {};
+      var ids = Object.keys(v.workers || {});
+      setText('bridgeRole', 'tabs: this tab is the ' + (v.role || '?') + (v.role === 'queen' ? ' \u00b7 ' + ids.length + ' worker' + (ids.length === 1 ? '' : 's') : ''));
+      var box = byId('workersBox');
+      while (box.firstChild) box.removeChild(box.firstChild);
+      ids.forEach(function (id) {
+        var row = document.createElement('div');
+        row.className = 'row';
+        var label = document.createElement('span');
+        label.className = 'muted';
+        label.textContent = id + ' \u2014 ' + ((v.workers[id] && v.workers[id].status) || '?');
+        row.appendChild(label);
+        var btn = document.createElement('button');
+        btn.className = 'ghost';
+        btn.textContent = 'shut down';
+        btn.addEventListener('click', function () {
+          call('bridge.shutdown', { id: id }).then(function () { setTimeout(refreshWorkers, 500); });
+        });
+        row.appendChild(btn);
+        box.appendChild(row);
+      });
+    });
+  }
+  byId('workersBtn').addEventListener('click', refreshWorkers);
+  byId('spawnWorkerBtn').addEventListener('click', function () {
+    call('bridge.spawn').then(function (res) {
+      if (res && res.ok) { log('spawning a worker tab (it joins within ~15s; if nothing opens, allow popups for this site)'); setTimeout(refreshWorkers, 2000); }
+      else log('spawn failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  refreshWorkers();
   byId('modLogBtn').addEventListener('click', function () {
     call('mod.modlog').then(function (res) {
       var l = (res && res.value) || [];
