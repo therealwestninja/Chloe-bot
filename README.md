@@ -1,6 +1,7 @@
 # Chloe-bot
 A free, locally hosted Perchance-based Discord bot (Greasemonkey userscript bridge) which runs in your browser.
 
+
 ## How-to
 
 1) Required:
@@ -9,7 +10,7 @@ A free, locally hosted Perchance-based Discord bot (Greasemonkey userscript brid
 - Userscript running.
 - Have the Perchance generator page open.
 
-2) Set up a new Discord Bot and invite it to your server.
+2) Set up a new Discord bot and invite it to your server.
 
 3) Set up the Bot page:
 
@@ -21,3 +22,22 @@ TIP:
 
 4) Set any additional options, then click Start to run the bot.
 
+
+## Commands
+
+How to invoke the bot:
+`@chloe-bot chloe [YOUR-MESSAGE-HERE]`
+
+`@chloe-bot forget me`
+- prune your conversation history from the bot
+
+
+Some of what the bot can do:
+- Read channel history
+- read messages
+- reply in a channel, thread, DM, with text
+- reply with an image
+
+
+## Coming Soon:
+- Actual documentation
