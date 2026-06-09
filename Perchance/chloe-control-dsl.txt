@@ -1,0 +1,42 @@
+$meta
+  header
+    mode = minimal
+  async dynamic(inputs) =>
+    return {
+      title: "Chloe — Discord bridge control",
+      description: "Control surface for the Chloe Discord bridge: live roster, status, start/stop, and moderation tools. The page is only the UI; the chloe-bridge userscript (installed in this browser) holds the bot token and runs the Discord loop. They talk over an origin-checked postMessage link.",
+    };
+
+// The control UI lives in the HTML panel. It speaks to the chloe-bridge
+// userscript over a private, origin-checked, nonce-matched postMessage link
+// (the same trust shape weld.skybridge uses). The token and the Discord
+// transport stay in the userscript (the trusted surface); the page can only
+// request scoped commands, and the token is never returned to it.
+//
+// T1 brain: these imports make the plugins available to the page. aiTextPlugin runs fine
+// from the HTML panel, but text-to-image must be driven from THIS top-panel scope: the
+// awaited boxed-String result carries .dataUrl as an own property, and that property is only
+// reliably readable inside the scope the plugin was imported into. So the HTML panel calls
+// root.paintImage(args) to trigger generation here; we extract the plain dataUrl string and
+// stash it on a shared-window Map (return values do not cross the DSL->JS bridge, but window
+// side-effects do). The panel polls that Map for the result. Chloe's persona (Tier A) is
+// authored at the top of the HTML panel script and is never written to by user data.
+aiTextPlugin = {import:ai-text-plugin}
+textToImagePlugin = {import:text-to-image-plugin}
+
+// paintImage({reqId, prompt, resolution}) -> stashes { ok, dataUrl } | { ok:false, reason }
+// on window.__chloePaint keyed by reqId. Flat body (no nested blocks) to stay DSL-safe; an
+// empty prompt is never sent to the plugin (it would hang forever).
+async paintImage(args) =>
+  if (!window.__chloePaint) window.__chloePaint = new Map()
+  let reqId = (args && args.reqId) || "x"
+  let prompt = ((args && args.prompt) || "").trim()
+  let resolution = (args && args.resolution) || "768x768"
+  let result = prompt.length < 2 ? null : await textToImagePlugin({ prompt: prompt, resolution: resolution })
+  let dataUrl = (result && result.dataUrl) ? String(result.dataUrl) : ""
+  let okFlag = dataUrl.indexOf("data:") === 0
+  let payload = okFlag ? { ok: true, dataUrl: dataUrl } : { ok: false, reason: prompt.length < 2 ? "empty prompt" : "no image produced" }
+  window.__chloePaint.set(reqId, payload)
+
+output
+  text = ""
