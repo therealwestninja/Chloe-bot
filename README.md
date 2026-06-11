@@ -49,21 +49,109 @@ She also volunteers into conversations she can help with (configurable), greets 
 
 **Personality:** the panel has six dials (kindness, sarcasm, curiosity, playfulness, formality, verbosity) that shape her tone — 50 is neutral and silent. Mods can also anchor a style note straight from Discord: react &#128204; to any message (e.g. "Chloe should be more playful today") and, within a few polls, that message becomes her current style guidance for the channel. The newest mod-anchored message wins; `!chloe persona` shows it and `!chloe persona clear` removes it. Notes are sanitized, length-capped, and treated strictly as tone guidance — they can't change her rules or moderation.
 
-## Moderator commands
+## Full List of Commands
 
-Mods (managed from the panel) can use `!chloe <verb>` in-channel — or the `!c` short prefix, or emoji aliases:
 
-| Verb | What it does |
-| --- | --- |
-| `ignore` / `unignore @u` | She stops/resumes engaging with someone |
-| `timeout @u 1h [reason]` | Temporary ignore with auto-expiry |
-| `softban` / `unsoftban @u` | Persistent ignore |
-| `warn @u [reason]` | Adds a strike (see below); `warns @u` reports the count |
-| `clear @u` | Clean slate — state and strikes reset |
-| `note @u <text>` | Attach a mod note |
-| `recap` / `status` / `help` | Channel summary, engine status, command list |
-| `lockdown` / `unlock` / `open` | Mods-only mode / normal / reply-to-everyone |
-| `permaban @u` | Irreversible: ban + verified memory purge, requires explicit confirmation |
+### [User]
+
+`!chloe help` — Show available commands and usage information.
+
+`!chloe status` — Show Chloe's current status and operating state.
+
+`!chloe recap` — Generate a summary/recap of recent channel activity.
+
+`!chloe persona` — Show the currently active persona note.
+
+`!chloe persona clear` — Clear the active persona note.
+
+`!chloe forget me` — Delete Chloe's stored memory/history about you while preserving moderation records.
+
+Short aliases:
+
+`!c help`
+
+`!c status`
+
+`!c recap`
+
+`!c persona`
+
+`!c persona clear`
+
+`!c forget me`
+
+### [Moderator]
+
+`!chloe ignore @user` — Add a user to the ignore list.
+
+`!chloe unignore @user` — Remove a user from the ignore list.
+
+`!chloe timeout @user <duration>` — Temporarily ignore a user for a specified time.
+
+`!chloe softban @user` — Permanently ignore a user without banning them from Discord.
+
+`!chloe unsoftban @user` — Remove a soft-ban.
+
+`!chloe warn @user` — Add a warning/strike to a user.
+
+`!chloe warn @user <reason>` — Add a warning with a reason.
+
+`!chloe warns @user` — Show a user's warning count.
+
+`!chloe note @user <text>` — Attach a moderator note to a user.
+
+`!chloe clear @user` — Clear Chloe's stored state, notes, and warnings for a user.
+
+`!chloe lockdown` — Restrict interaction to moderators only.
+
+`!chloe unlock` — End lockdown mode and restore normal operation.
+
+`!chloe open` — Put Chloe into open/reply-to-everyone mode.
+
+### Short aliases:
+
+`!c ignore`
+
+`!c unignore`
+
+`!c timeout`
+
+`!c softban`
+
+`!c unsoftban`
+
+`!c warn`
+
+`!c warns`
+
+`!c note`
+
+`!c clear`
+
+`!c lockdown`
+
+`!c unlock`
+
+`!c open`
+
+### [Administrator / High-Privilege]
+
+`!chloe permaban @user` — Permanently ban a user and purge Chloe's stored information about them. Requires confirmation.
+
+Short alias:
+
+`!c permaban @user`
+
+### [Non-Command Interactions]
+
+`@chloe-bot <message>` — Directly address Chloe.
+
+`chloe, <message>` — Address Chloe by name.
+
+`chloe <message>` — Name-triggered interaction.
+
+`📌 react to a message` — Pin a message as the active personality/persona note (moderator feature).
+
 
 ## Auto-moderation and the strike ladder
 
