@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.31.0
+// @version      0.36.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -83,7 +83,15 @@
       cooldownMs: 8000,       // per-AUTHOR reply cooldown (don't spam the same person)
       globalCooldownMs: 2500, // min gap between ANY two of her sends (lets different people be answered promptly)
       debounceMs: 2500,       // wait for a lull before replying (don't reply mid-burst)
-      contextLines: 12,       // recent channel lines handed to the brain (Tier C)
+      contextLines: 12,       // recent channel lines handed to the brain (hard upper bound)
+      requestTokenBudget: 5000,// TOTAL tokens per request to the backend — must cover EVERYTHING:
+                              // persona + instructions + intention + anti-repeat list + addressed
+                              // message + the transcript. The transcript gets whatever's left after
+                              // the rest is measured/reserved.
+      promptOverheadTokens: 320,// fixed reserve for the page's persona block + instruction scaffolding
+                              // (measured: persona ~95 + respond/guidance scaffolding ~200, with margin)
+      minTranscriptTokens: 200,// never starve the transcript below this, even if other parts are large
+      singleParagraph: false, // mod opt-in: cap her replies to one paragraph (off = she writes as long as fits)
       // ---- image generation (off unless image + paint + sendImage supplied) ----
       image: false,           // master toggle: answer image requests
       paint: null,            // async ({prompt, resolution}) -> { ok, value:dataUrl }  (runs in the page; the plugin does the iframe song-and-dance)
@@ -116,6 +124,8 @@
       botLoopGrace: 2,        // bot-loop damper: consecutive bot turns answered at full chance before decay kicks in
       botLoopFloor: 0.05,     // minimum reply chance once decaying (she keeps watching, rarely speaks)
       botLoopHardStop: 12,    // consecutive bot turns after which she goes fully silent until a human speaks (0 = never)
+      intentTtlMs: 1800000,   // a standing intention fades after this long without being reaffirmed (default 30m)
+      intentMaxLen: 120,      // a self-set intention is capped to this many chars
       // D5: declarative job grammar. ONLY these verbs are accepted from chat-submitted JSON;
       // there is NO code path — a job is a validated plain object, never evaluated. Each verb
       // lists its allowed arg keys and which are required; anything else is rejected.
@@ -173,6 +183,10 @@
     var INDEX_KEY = 'roster:index';
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
+    var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
+    // survives across polls and rides in every response context, so she holds a thread of purpose
+    // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
+    // to each message in isolation. The brain may set it; it decays if not reaffirmed.
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
 
@@ -207,6 +221,20 @@
       var keep = cfg.antiRepeatWindow || 5;
       if (recentReplies.length > keep) recentReplies = recentReplies.slice(-keep);
     }
+    // Standing intention: the brain may return `intent` alongside its reply text; we persist it
+    // (capped + timestamped) so it rides in the next context until reaffirmed or it ages out.
+    function setIntent(text) {
+      var t = String(text || '').trim().slice(0, cfg.intentMaxLen);
+      if (!t) return Promise.resolve(null);
+      return Promise.resolve(store.set(INTENT_KEY, { text: t, at: clock.now() })).then(function () { return t; });
+    }
+    function getIntent() {
+      return Promise.resolve(store.get(INTENT_KEY)).then(function (gi) {
+        if (gi && gi.text && (clock.now() - (gi.at || 0) < cfg.intentTtlMs)) return gi;
+        return null;
+      });
+    }
+    function clearIntent() { return Promise.resolve(store.del(INTENT_KEY)); }
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
@@ -256,6 +284,24 @@
     function clearAck(messageId, emoji) {
       if (!cfg.ackReactions || !messageId || typeof cfg.unreact !== 'function') return;
       try { Promise.resolve(cfg.unreact(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
+    }
+    // Place-in-line reactions for the image queue ("your place in line, thanks to Perch for being
+    // the bottleneck"). A queued request gets a keycap-number reaction for its position; as the
+    // queue drains the remaining items ARE re-numbered so the number ticks down; when an item
+    // reaches the front it swaps to the painting emoji. We remember each item's current ack emoji
+    // on the queue object so we always clear the right one.
+    var KEYCAPS = ['1\ufe0f\u20e3', '2\ufe0f\u20e3', '3\ufe0f\u20e3', '4\ufe0f\u20e3', '5\ufe0f\u20e3', '6\ufe0f\u20e3', '7\ufe0f\u20e3', '8\ufe0f\u20e3', '9\ufe0f\u20e3', '\ud83d\udd1f'];
+    function queueEmojiFor(pos1) { return pos1 <= KEYCAPS.length ? KEYCAPS[pos1 - 1] : '\u23f3'; }   // beyond 10 -> hourglass
+    function setQueueAck(item, emoji) {
+      if (!cfg.ackReactions || !item || !item.messageId) return;
+      if (item.ackEmoji === emoji) return;                       // already showing this
+      if (item.ackEmoji) clearAck(item.messageId, item.ackEmoji);
+      item.ackEmoji = emoji;
+      ackWorking(item.messageId, emoji);
+    }
+    function renumberQueue() {
+      // queued items are behind the one currently painting; position 1 = next up
+      for (var i = 0; i < paint.queue.length; i++) setQueueAck(paint.queue[i], queueEmojiFor(i + 1));
     }
     function gateEnabled() { return cfg.volunteer && typeof cfg.judge === 'function' && replyEnabled(); }
     function nameAliases() {
@@ -307,7 +353,60 @@
       if (/\b(landscape|wide.?angle|scenery|panorama|vista)\b/i.test(p)) return '768x512';
       return '768x768';
     }
-    // Returns null, or { prompt, dm, resolution }. An image request is an addressed message whose
+    // JSON image request: `{ "prompt": "...", "resolution": "768x768", "guidanceScale": 9,
+    // "removeBackground": true, "weights": {"detailed":1.4}, "dm": false }`. Only options the SD
+    // backend ACTUALLY honors are exposed (per platform.md §4.3-4.4a, verified R24):
+    //   prompt (required)        - real description text; empty/inline-only prompts hang forever
+    //   resolution               - one of the four valid sizes
+    //   guidanceScale            - 1..30 (default 7), reaches the backend
+    //   removeBackground         - real client-side alpha cut (PNG out)
+    //   weights {term: w}        - emphasis via A1111 PARENS only ((term:w)); [..] is eaten by the DSL
+    //   dm                       - deliver privately
+    // negativePrompt and seed are accepted but flagged: the backend silently drops both, so we don't
+    // pretend they work. Returns { ok, value:{...}, notes:[...] } or { ok:false, reason }.
+    var IMG_RES = { '512x512': 1, '512x768': 1, '768x512': 1, '768x768': 1 };
+    // ---- shared structured-input foundation -------------------------------------------------
+    // The front-end parses structured JSON locally — instantly, with no Perchance round-trip — so
+    // any command we can express as JSON never costs an AI call. One safe parser underpins them all:
+    // strips a ```json fence, rejects prototype-pollution keys, and returns a plain object or a
+    // reason. Roll new JSON commands onto this rather than re-implementing the guards each time.
+    function safeParseJson(text) {
+      var raw = String(text || '').trim();
+      var fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fence) raw = fence[1].trim();
+      if (/"(?:__proto__|constructor|prototype)"\s*:/.test(raw)) return { ok: false, reason: 'illegal key' };
+      var obj;
+      try { obj = JSON.parse(raw); } catch (e) { return { ok: false, reason: 'not valid JSON' }; }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'expected a JSON object' };
+      return { ok: true, value: obj };
+    }
+
+    function parseImageJson(text) {
+      var pj = safeParseJson(text);
+      if (!pj.ok) return { ok: false, reason: pj.reason };
+      var obj = pj.value;
+      var notes = [];
+      var prompt = String(obj.prompt || obj.description || '').trim();
+      // emphasis weights -> A1111 parens syntax appended to the prompt (parens only; [..] is unsafe)
+      if (obj.weights && typeof obj.weights === 'object') {
+        Object.keys(obj.weights).slice(0, 12).forEach(function (term) {
+          var w = Number(obj.weights[term]);
+          var t = String(term).replace(/[()\[\]:]/g, '').trim();
+          if (t && isFinite(w) && w > 0 && w <= 2) prompt += ' (' + t + ':' + (Math.round(w * 100) / 100) + ')';
+        });
+      }
+      prompt = prompt.slice(0, 400).trim();
+      if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return { ok: false, reason: 'a real "prompt" description is required (empty prompts hang the generator forever)' };
+      var out = { prompt: prompt, dm: !!obj.dm };
+      var res = String(obj.resolution || obj.size || '').replace(/\s/g, '').toLowerCase();
+      out.resolution = IMG_RES[res] ? res : pickResolution(prompt);
+      if (obj.guidanceScale != null) { var g = Number(obj.guidanceScale); if (isFinite(g)) out.guidanceScale = Math.max(1, Math.min(30, g)); }
+      if (obj.removeBackground === true) out.removeBackground = true;
+      if (obj.negativePrompt) notes.push('negativePrompt is accepted but the backend silently ignores it \u2014 describe what you DO want instead');
+      if (obj.seed != null) notes.push('seed is not reliably honored by this backend');
+      return { ok: true, value: out, notes: notes };
+    }
+
     // body opens with an image verb ("draw a cat") or names an image noun ("a picture of a cat").
     // Empty prompts hang the plugin forever, so we refuse anything without real description text.
     function parseImageRequest(content) {
@@ -334,6 +433,30 @@
       if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return null;  // no real description -> would hang
       return { prompt: prompt.slice(0, 400), dm: dm, resolution: pickResolution(prompt) };
     }
+    // Local volunteer pre-filter — the front-end decides, instantly and with NO AI call, whether an
+    // unaddressed message is even worth asking the LLM judge about. The judge call costs a multi-
+    // second Perchance round-trip; most ambient chatter is an obvious "stay quiet," so we catch those
+    // here and never spend the call. CONSERVATIVE by design: it only returns a hard "skip" when it's
+    // confident the answer is ignore — anything genuinely ambiguous still goes to the judge.
+    // Returns { skip:true, why } to short-circuit to ignore, or { skip:false } to consult the LLM.
+    function volunteerPrefilter(g, ring) {
+      var text = String((g && g.content) || '').trim();
+      var bare = text.replace(/<a?:\w+:\d+>/g, '').replace(/[\p{Extended_Pictographic}\u200d\ufe0f]/gu, '').trim();
+      // 1. nothing to react to: empty, a lone emoji/sticker, or a bare reaction word
+      if (bare.replace(/[^a-z0-9]/ig, '').length < 2) return { skip: true, why: 'no real text' };
+      if (/^(lol|lmao|haha+|ok|okay|k|yeah?|yep|nope?|nah|ty|thanks|same|this|fr|ong|w|l|\+1)$/i.test(bare)) return { skip: true, why: 'bare filler' };
+      // 2. she's mid bot-loop damping — volunteering would feed the loop
+      if (botLoopReplyChance() < 0.5) return { skip: true, why: 'bot-loop damping' };
+      // 3. a clearly private two-person back-and-forth between OTHER people
+      if (isTwoPersonExchange(ring)) return { skip: true, why: 'two-person exchange' };
+      // 4. nothing that invites entry (no question, no opinion bid, not very long) AND the room is
+      //    quiet — low odds the judge says "reply", so skip the call. Active rooms still go to judge.
+      var invites = /[?]/.test(text) || /\b(anyone|someone|thoughts|opinions|help|how do|what do|should i|recommend|suggest)\b/i.test(text);
+      var emphatic = /!{2,}/.test(text) || /[A-Z]{4,}/.test(text) || /\b(yay|woo|wow|omg|finally|congrats|congratulations|shipped|launched|nailed|done)\b/i.test(text);   // celebratory/emphatic -> react-worthy
+      if (!invites && !emphatic && bare.length < 24) return { skip: true, why: 'low-signal aside' };
+      return { skip: false };
+    }
+
     function isTwoPersonExchange(ring) {
       var distinct = []; (ring || []).forEach(function (id) { if (distinct.indexOf(id) < 0) distinct.push(id); });
       return (ring || []).length >= 3 && distinct.length === 2 && distinct.indexOf(cfg.botUserId) < 0;
@@ -517,15 +640,9 @@
       return null;
     }
     function parseJob(text) {
-      var raw = String(text || '').trim();
-      var m = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (m) raw = m[1].trim();
-      var obj;
-      try { obj = JSON.parse(raw); } catch (e) { return { ok: false, reason: 'not valid JSON' }; }
-      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'a job must be a JSON object' };
-      // Reject dangerous keys outright (defense in depth — we never assign from src into a real
-      // object, but a job that names these is malformed by definition).
-      if (/"(__proto__|constructor|prototype)"\s*:/.test(raw)) return { ok: false, reason: 'illegal key in job object' };
+      var pj = safeParseJson(text);
+      if (!pj.ok) return { ok: false, reason: pj.reason === 'expected a JSON object' ? 'a job must be a JSON object' : pj.reason };
+      var obj = pj.value;
       var verb = String(obj.task || obj.verb || '').toLowerCase();
       var spec = (cfg.jobVerbs || {})[verb];
       if (!spec) return { ok: false, reason: 'unknown task "' + verb + '" (allowed: ' + Object.keys(cfg.jobVerbs || {}).join(', ') + ')' };
@@ -756,6 +873,21 @@
           }
           return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
         } },
+      { verb: 'image',     modOnly: false, help: 'image {json: prompt, resolution, guidanceScale, removeBackground, weights, dm}', handler: function (modId, c) {
+          if (!imageEnabled()) return Promise.resolve({ ack: 'image generation is not available right now' });
+          var parsed = parseImageJson(c.rawArgs || c.reason || '');
+          if (!parsed.ok) return Promise.resolve({ ack: 'image request rejected: ' + parsed.reason });
+          if (paint.queue.length >= cfg.imageQueueMax) return Promise.resolve({ ack: "i've got a full image queue right now \u2014 try again in a moment" });
+          var v = parsed.value, now = clock.now();
+          var qItem = { messageId: c.messageId, authorId: modId, authorName: c.authorName || '', prompt: v.prompt, resolution: v.resolution, dm: v.dm, at: now };
+          if (v.guidanceScale != null) qItem.guidanceScale = v.guidanceScale;
+          if (v.removeBackground) qItem.removeBackground = true;
+          paint.queue.push(qItem);
+          if (paint.painting || paint.queue.length > 1) setQueueAck(qItem, queueEmojiFor(paint.queue.length));
+          var ack = 'queued: "' + v.prompt.slice(0, 60) + '" (' + v.resolution + (v.guidanceScale != null ? ', cfg ' + v.guidanceScale : '') + (v.removeBackground ? ', bg removed' : '') + (v.dm ? ', dm' : '') + ')';
+          if (parsed.notes && parsed.notes.length) ack += ' \u2014 note: ' + parsed.notes.join('; ');
+          return Promise.resolve({ ack: ack });
+        } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
     function resolveVerb(word) {
@@ -790,8 +922,10 @@
       var rest = c.slice(pfx.length).trim();
       if (!rest) return { cmd: 'help', entry: resolveVerb('help'), targetId: null, durationMs: null, reason: '', raw: raw };
       var tokens = rest.split(/\s+/);
-      var entry = resolveVerb(tokens.shift());
+      var verbTok = tokens.shift();
+      var entry = resolveVerb(verbTok);
       if (!entry) return null;   // "!chloe Hi there" is chat, not a command — don't swallow it
+      var rawArgs = rest.slice(verbTok.length).trim();   // everything after the verb, verbatim (JSON-safe)
       var mm = raw.match(/<@!?(\d+)>/);
       var targetId = mm ? mm[1] : null;
       var durationMs = null, reasonTokens = [];
@@ -801,7 +935,7 @@
         if (dm && durationMs == null && entry.takesDuration) { durationMs = durToMs(dm[1], dm[2]); return; }
         reasonTokens.push(t);
       });
-      return { cmd: entry.verb, entry: entry, targetId: targetId, durationMs: durationMs, reason: reasonTokens.join(' ').trim(), raw: raw };
+      return { cmd: entry.verb, entry: entry, targetId: targetId, durationMs: durationMs, reason: reasonTokens.join(' ').trim(), rawArgs: rawArgs, raw: raw };
     }
     function helpText() {
       var p = cfg.commandPrefix;
@@ -896,8 +1030,10 @@
           chain = chain.then(function () {
             var c = parseCommand(m.content);
             if (c) {
+              c.messageId = m.id; c.authorName = m.author.username;   // for queue-ack reaction + caption
               commandCount++; commandAuthors[m.author.id] = true;
               if (c.cmd === 'forget') return forgetMe(m.author.id, m.author.username);  // anyone, self only
+              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });  // open to anyone
               if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
@@ -929,7 +1065,12 @@
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping request from ' + (m.author.username || m.author.id));
                   if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) {} }
                 } else {
-                  paint.queue.push({ messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: imgReq.prompt, resolution: imgReq.resolution, dm: imgReq.dm, at: now });
+                  var qItem = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: imgReq.prompt, resolution: imgReq.resolution, dm: imgReq.dm, at: now };
+                  if (imgReq.guidanceScale != null) qItem.guidanceScale = imgReq.guidanceScale;
+                  if (imgReq.removeBackground) qItem.removeBackground = true;
+                  paint.queue.push(qItem);
+                  // place in line: if something's already painting or ahead, show their number now.
+                  if (paint.painting || paint.queue.length > 1) setQueueAck(qItem, queueEmojiFor(paint.queue.length));
                 }
                 if (reply.queue[m.author.id]) delete reply.queue[m.author.id];   // image supersedes a text reply this turn
                 if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
@@ -1319,9 +1460,13 @@
       indicateTyping();
       ackWorking(p.messageId, cfg.ackWorkingEmoji);   // instant Discord-side ack while the brain generates
       return assembleContext(p)
-        .then(function (ctx) { return cfg.respond(ctx); })
+        .then(function (ctx) {
+          if (ctx && ctx.contextTokens != null) log('[chloe.ctx] packed ' + (ctx.channelRecent ? ctx.channelRecent.length : 0) + ' lines (~' + ctx.contextTokens + ' tok' + (ctx.contextDropped ? ', ' + ctx.contextDropped + ' older dropped' : '') + '); whole request ~' + (ctx.requestTokensEst || ctx.contextTokens) + '/' + (cfg.requestTokenBudget || 5000) + ' tok');
+          return cfg.respond(ctx);
+        })
         .then(function (r) {
           var text = (r && r.ok) ? String(r.value || '').trim() : '';
+          var intent = (r && r.intent) ? r.intent : null;   // standing-intention update from the brain
           if (!text) {
             reply.replying = false;
             clearAck(p.messageId, cfg.ackWorkingEmoji);
@@ -1336,7 +1481,9 @@
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
             log('[chloe.T1] replied to ' + p.authorName);
-            return bumpInteraction(p.authorId).then(function () { return text; });
+            return Promise.resolve(intent ? setIntent(intent) : null).then(function () {
+              return bumpInteraction(p.authorId).then(function () { return text; });
+            });
           });
         })
         .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); return null; });
@@ -1362,10 +1509,15 @@
       if (typeof cfg.canSend === 'function' && !cfg.canSend('image')) return null;   // cross-channel global image budget
       var p = paint.queue.shift(); paint.painting = true;
       if (typeof cfg.noteSend === 'function') cfg.noteSend('image');      // claim the global image slot at start
+      if (p.ackEmoji) { clearAck(p.messageId, p.ackEmoji); p.ackEmoji = null; }   // drop its queue-number
       ackWorking(p.messageId, cfg.ackImageEmoji);                        // instant "painting…" ack on the request
+      renumberQueue();                                                   // the rest of the line ticks down a place
       indicateTyping();
       log('[chloe.img] painting for ' + p.authorName + ' (' + paint.queue.length + ' more queued): "' + p.prompt.slice(0, 60) + '" (' + p.resolution + (p.dm ? ', dm' : '') + ')');
-      var job = Promise.resolve(cfg.paint({ prompt: p.prompt, resolution: p.resolution }))
+      var paintArgs = { prompt: p.prompt, resolution: p.resolution };
+      if (p.guidanceScale != null) paintArgs.guidanceScale = p.guidanceScale;
+      if (p.removeBackground) paintArgs.removeBackground = true;
+      var job = Promise.resolve(cfg.paint(paintArgs))
         .then(function (r) {
           var dataUrl = (r && r.ok) ? String(r.value || '') : '';
           if (dataUrl.indexOf('data:') !== 0) {
@@ -1409,6 +1561,10 @@
       if (now - lastActAt < cfg.volunteerCooldownMs) { gate.pending = null; return Promise.resolve(null); }
       return getSpeakerRing().then(function (ring) {
         if (isTwoPersonExchange(ring)) { gate.pending = null; log('[chloe.T2] two-person exchange — staying out'); return null; }
+        // Local pre-filter: skip the expensive judge LLM call when the front-end can already tell
+        // this isn't worth chiming in on. One voice, fewer Perchance calls.
+        var pf = (typeof cfg.volunteerPrefilter === 'function') ? cfg.volunteerPrefilter(g, ring) : volunteerPrefilter(g, ring);
+        if (pf && pf.skip) { gate.pending = null; log('[chloe.T2] prefilter skip (' + pf.why + ') — no judge call'); return null; }
         gate.pending = null;
         reply.replying = true;     // reuse the single action lock
         var heldCtx = null;
@@ -1443,6 +1599,28 @@
 
     // Tier C: a shared view rebuilt every time, then discarded. Merges recent lines across
     // partitions (the channel flow) + who is addressing. Never persisted as a blob.
+    // Token chunker. The backend's effective context is small, so rather than a flat line cap we
+    // pack the MOST RECENT conversation into a token budget: newest lines first (the exchange she's
+    // actually replying to always survives), kept in chronological order for the prompt. Estimate is
+    // deliberately conservative (~4 chars/token + a little per-line overhead for the speaker label)
+    // so we under-fill rather than overflow the window.
+    function estimateTokens(s) {
+      s = String(s || '');
+      if (!s.length) return 0;
+      if (typeof cfg.countTokens === 'function') { try { var n = cfg.countTokens(s); if (n >= 0) return Math.ceil(n); } catch (e) {} }
+      return Math.ceil(s.length / 4);   // fallback heuristic when the page's countTokens isn't wired
+    }
+    function packByTokens(lines, budget) {
+      var kept = [], used = 0, perLine = 3;   // "who:" label + newline overhead, in tokens
+      for (var i = lines.length - 1; i >= 0; i--) {
+        var cost = estimateTokens(lines[i].who) + estimateTokens(lines[i].text) + perLine;
+        if (kept.length > 0 && used + cost > budget) break;   // always keep at least the newest line
+        kept.push(lines[i]); used += cost;
+      }
+      kept.reverse();
+      return { lines: kept, tokens: used, dropped: lines.length - kept.length };
+    }
+
     function assembleContext(p) {
       return getRoster().then(function (roster) {
         var now = clock.now();
@@ -1452,8 +1630,15 @@
           (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: scrubDiscordTokens(ln.content), ts: ln.ts }); });
         });
         lines.sort(function (a, b) { return a.ts - b.ts; });
-        if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);
+        if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);   // hard ceiling
         var addressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
+        // The transcript gets whatever's left of the request budget (default 5000) after everything
+        // else is accounted for: fixed prompt scaffolding + the variable parts we send (the addressed
+        // message, her recent-reply anti-repeat list, persona note, standing intent).
+        var reserve = (cfg.promptOverheadTokens || 0)
+          + estimateTokens(scrubDiscordTokens(p.content))
+          + estimateTokens((addressed && addressed.summary) || '');
+        recentReplies.forEach(function (t) { reserve += estimateTokens(t) + 2; });
         var base = {
           you: { name: (personaName || cfg.botName || 'Chloe') },
           addressedBy: { id: p.authorId, name: p.authorName },
@@ -1463,10 +1648,21 @@
           familiarity: addressed ? (addressed.interactionCount || 0) : 0
         };
         return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
-          if (pn && pn.text) base.personaNote = pn.text;
+          if (pn && pn.text) { base.personaNote = pn.text; reserve += estimateTokens(pn.text); }
           if (personaName) base.personaName = personaName;
           if (recentReplies.length) base.recentReplies = recentReplies.slice();
-          return base;
+          return Promise.resolve(store.get(INTENT_KEY)).then(function (gi) {
+            if (gi && gi.text && (clock.now() - (gi.at || 0) < cfg.intentTtlMs)) { base.currentIntent = gi.text; reserve += estimateTokens(gi.text) + 12; }
+            // NOW pack the transcript into whatever the request budget has left after the reserve.
+            var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
+            var packed = packByTokens(lines, transcriptBudget);
+            base.channelRecent = packed.lines;
+            base.contextTokens = packed.tokens;
+            base.contextDropped = packed.dropped;
+            base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+            if (cfg.singleParagraph) base.singleParagraph = true;
+            return base;
+          });
         });
       });
     }
@@ -1549,6 +1745,10 @@
       sanitizePromptForCaption: sanitizePromptForCaption,
       botLoopReplyChance: botLoopReplyChance,
       noteAuthorForLoop: noteAuthorForLoop,
+      setIntent: setIntent, getIntent: getIntent, clearIntent: clearIntent,
+      estimateTokens: estimateTokens, packByTokens: packByTokens,
+      parseImageJson: parseImageJson,
+      safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
@@ -1883,7 +2083,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.31.0';
+  var VERSION = '0.36.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -2184,6 +2384,8 @@
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
         ackReactions: cfgGet('ackReactions', true),
+        singleParagraph: cfgGet('singleParagraph', false),
+        requestTokenBudget: cfgGet('requestTokenBudget', 5000),
         ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udc40'),
         ackImageEmoji: cfgGet('ackImageEmoji', '\ud83c\udfa8'),
         paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
@@ -2304,6 +2506,7 @@
       greet: !!cfgGet('greet', false), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
       dmReplies: !!cfgGet('dmReplies', false),
       ackReactions: cfgGet('ackReactions', true),
+      singleParagraph: !!cfgGet('singleParagraph', false),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -2458,6 +2661,8 @@
         { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
       case 'config.setAckReactions':
         { var ar = !!(args && args.on); cfgSet('ackReactions', ar); applyConfigChange(); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
+      case 'config.setSingleParagraph':
+        { var sp = !!(args && args.on); cfgSet('singleParagraph', sp); applyConfigChange(); return Promise.resolve({ ok: true, value: { singleParagraph: sp } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
