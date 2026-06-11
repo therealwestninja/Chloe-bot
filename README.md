@@ -49,113 +49,46 @@ She also volunteers into conversations she can help with (configurable), greets 
 
 **Personality:** the panel has six dials (kindness, sarcasm, curiosity, playfulness, formality, verbosity) that shape her tone — 50 is neutral and silent. Mods can also anchor a style note straight from Discord: react &#128204; to any message (e.g. "Chloe should be more playful today") and, within a few polls, that message becomes her current style guidance for the channel. The newest mod-anchored message wins; `!chloe persona` shows it and `!chloe persona clear` removes it. Notes are sanitized, length-capped, and treated strictly as tone guidance — they can't change her rules or moderation.
 
-## Full List of Commands
+## Moderator commands
 
+Mods (managed from the panel) can use `!chloe <verb>` in-channel — or the `!c` short prefix, or emoji aliases:
 
-### [User]
-
-`!chloe help` — Show available commands and usage information.
-
-`!chloe status` — Show Chloe's current status and operating state.
-
-`!chloe recap` — Generate a summary/recap of recent channel activity.
-
-`!chloe persona` — Show the currently active persona note.
-
-`!chloe persona clear` — Clear the active persona note.
-
-`!chloe forget me` — Delete Chloe's stored memory/history about you while preserving moderation records.
-
-Short aliases:
-
-`!c help`
-
-`!c status`
-
-`!c recap`
-
-`!c persona`
-
-`!c persona clear`
-
-`!c forget me`
-
-### [Moderator]
-
-`!chloe ignore @user` — Add a user to the ignore list.
-
-`!chloe unignore @user` — Remove a user from the ignore list.
-
-`!chloe timeout @user <duration>` — Temporarily ignore a user for a specified time.
-
-`!chloe softban @user` — Permanently ignore a user without banning them from Discord.
-
-`!chloe unsoftban @user` — Remove a soft-ban.
-
-`!chloe warn @user` — Add a warning/strike to a user.
-
-`!chloe warn @user <reason>` — Add a warning with a reason.
-
-`!chloe warns @user` — Show a user's warning count.
-
-`!chloe note @user <text>` — Attach a moderator note to a user.
-
-`!chloe clear @user` — Clear Chloe's stored state, notes, and warnings for a user.
-
-`!chloe lockdown` — Restrict interaction to moderators only.
-
-`!chloe unlock` — End lockdown mode and restore normal operation.
-
-`!chloe open` — Put Chloe into open/reply-to-everyone mode.
-
-### Short aliases:
-
-`!c ignore`
-
-`!c unignore`
-
-`!c timeout`
-
-`!c softban`
-
-`!c unsoftban`
-
-`!c warn`
-
-`!c warns`
-
-`!c note`
-
-`!c clear`
-
-`!c lockdown`
-
-`!c unlock`
-
-`!c open`
-
-### [Administrator / High-Privilege]
-
-`!chloe permaban @user` — Permanently ban a user and purge Chloe's stored information about them. Requires confirmation.
-
-Short alias:
-
-`!c permaban @user`
-
-### [Non-Command Interactions]
-
-`@chloe-bot <message>` — Directly address Chloe.
-
-`chloe, <message>` — Address Chloe by name.
-
-`chloe <message>` — Name-triggered interaction.
-
-`📌 react to a message` — Pin a message as the active personality/persona note (moderator feature).
-
+| Verb | What it does |
+| --- | --- |
+| `ignore` / `unignore @u` | She stops/resumes engaging with someone |
+| `timeout @u 1h [reason]` | Temporary ignore with auto-expiry |
+| `softban` / `unsoftban @u` | Persistent ignore |
+| `warn @u [reason]` | Adds a strike (see below); `warns @u` reports the count |
+| `block @u [reason]` / `unblock @u` | Permanently forget a user: blocked users are never scanned or remembered again, even if they keep talking. Unblock lets memory form again. |
+| `clear @u` | Clean slate — state and strikes reset |
+| `note @u <text>` | Attach a mod note |
+| `recap` / `status` / `help` | Channel summary, engine status, command list |
+| `lockdown` / `unlock` / `open` | Mods-only mode / normal / reply-to-everyone |
+| `permaban @u` | Irreversible: ban + verified memory purge, requires explicit confirmation |
 
 ## Auto-moderation and the strike ladder
 
 Optional rule list (panel-editable): each rule matches by `text`, `regex`, `confusables` (catches homoglyph evasion like "fr\u0435\u0435 nitro"), or `link` (matches inside URLs only), and applies a reversible action — `ignore`, `timeout`, `softban`, or `warn`. A `warn` adds a strike: strikes walk an escalating ladder (default: ignore → 10-minute timeout → 1-hour timeout → soft-ban) and decay with good behavior (default: one strike forgiven per 24h). Auto-moderation never escalates to anything irreversible, mods are exempt, and every action (manual or automatic) is logged with the target's recent lines for audit.
+
+## Output gates
+
+Chloe is gated on what she's allowed to put in a message she sends, with five independent toggles in the Moderation tab (and safe defaults):
+
+- **custom emoji** — `<:name:id>` emoji in her text *(default: allowed)*
+- **pings (@user / @role)** — whether her messages resolve real pings *(default: blocked)*
+- **@everyone / @here** — mass pings, a separate toggle *(default: blocked)*
+- **links (URLs)** — http(s) links, which also prevents link auto-embeds *(default: blocked)*
+- **channel links (#channel)** — `<#id>` channel references *(default: blocked)*
+
+Pings use Discord's own `allowed_mentions` system — the platform itself decides what becomes a real notification, so even if a ping slips into her text it won't fire unless the gate is on. Emoji, links, and channel-links are scrubbed from her message content before it posts. Together these mean a jailbroken or prompt-injected Chloe still can't mass-ping the server, spam links, or @ channels unless a mod has explicitly allowed it.
+
+## DMs
+
+Chloe can hold a two-way DM conversation with anyone she's opened a DM with (`dm.open` from the panel, or any DM she initiates — e.g. a future away/paging feature). Once a DM is open she polls it like any channel and replies to **every** message there (no @-mention needed — a DM is one-to-one), with all the same moderation. Turn this on with the **DM replies** toggle. One Discord limit to know: she can't receive a *cold* DM from someone she's never messaged, because Discord only delivers those through the realtime Gateway, which this REST-polling bridge doesn't use — so DMs work for any conversation Chloe is part of, just not unsolicited inbound ones.
+
+## Personalities
+
+When a mod anchors a persona note (the 📌 reaction, or the Personality card) that names a character — e.g. *"Name: Seraphina, regal and aloof"* or *"you are Marcus the merchant"* — Chloe **becomes** that character: she answers to that name, speaks in first person as them, and won't narrate that she's Chloe playing a role. Clear the note and she's Chloe again.
 
 ## Privacy and transparency
 

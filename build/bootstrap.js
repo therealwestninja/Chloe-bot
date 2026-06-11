@@ -13,7 +13,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.27.0';
+  var VERSION = '0.28.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -50,9 +50,21 @@
   }
   var store = makeStore('');
   function primaryChannel() { return String(cfgGet('channelId', '') || '').trim(); }
+  // DM sessions: once Chloe opens a DM channel (she gets the channel id back), that channel is
+  // pollable like any other — Discord lets a bot read messages in a DM it's part of. We can't
+  // DISCOVER a cold inbound DM (no Gateway), but any DM Chloe opens becomes two-way. Stored as
+  // { dmChannelId: { user, name, openedAt } }.
+  function dmSessions() { return cfgGet('dmSessions', {}) || {}; }
+  function dmChannelIds() { return Object.keys(dmSessions()); }
+  function isDMChannel(chId) { return !!dmSessions()[chId]; }
+  function recordDMSession(dmChannelId, userId, name) {
+    if (!dmChannelId || !userId) return;
+    var s = dmSessions();
+    if (!s[dmChannelId]) { s[dmChannelId] = { user: String(userId), name: name || '', openedAt: Date.now() }; cfgSet('dmSessions', s); }
+  }
   function channelList() {
     var seen = {}, out = [];
-    [primaryChannel()].concat(cfgGet('channels', []) || []).forEach(function (c) {
+    [primaryChannel()].concat(cfgGet('channels', []) || []).concat(cfgGet('dmReplies', false) ? dmChannelIds() : []).forEach(function (c) {
       c = String(c || '').trim();
       if (c && !seen[c]) { seen[c] = 1; out.push(c); }
     });
@@ -108,16 +120,37 @@
       return body;
     });
   }
+  // ---- output gates (mod-toggleable) ---------------------------------------------------
+  // What Chloe is allowed to put in an outgoing message. PINGS use Discord's own input-sanitation
+  // (the allowed_mentions object — the platform itself decides what resolves to a real ping);
+  // EMOJI / LINKS / CHANNEL-LINKS have no such API for your own messages, so Chloe scrubs them
+  // from her content before posting. Each gate is independently mod-toggleable. Safe defaults:
+  // emoji on (harmless, expressive); pings / @everyone / links / channel-links off.
+  function gate(k, d) { return !!cfgGet('gate:' + k, d); }
+  function allowedMentions() {
+    var parse = [];
+    if (gate('pings', false)) { parse.push('users'); parse.push('roles'); }
+    if (gate('everyone', false)) parse.push('everyone');
+    return { parse: parse };   // parse:[] = Discord resolves NO mentions to real pings
+  }
+  function gateContent(text) {
+    var t = String(text || '');
+    if (!gate('emoji', true)) t = t.replace(/<a?:\w+:\d+>/g, '');           // custom/animated emoji
+    if (!gate('channelLinks', false)) t = t.replace(/<#\d+>/g, '');          // channel mentions
+    if (!gate('links', false)) t = t.replace(/https?:\/\/\S+/gi, '');        // URLs (also kills auto-embeds)
+    return t.replace(/[ \t]{2,}/g, ' ').replace(/ +([,.!?])/g, '$1').trim(); // tidy, preserve newlines
+  }
+
   var transport = {
     getMe: function () { return requestJSON('GET', '/users/@me'); },
     getMessagesAfter: function (channelId, afterId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 50) + (afterId ? '&after=' + afterId : ''));
     },
     sendMessage: function (channelId, text) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: String(text || '').slice(0, 1900) } });
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
     },
     sendEmbed: function (channelId, embed) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed] } });
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed], allowed_mentions: allowedMentions() } });
     },
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
@@ -142,7 +175,7 @@
       var blob = dataUrlToBlob(dataUrl);
       var ext = blob.type.indexOf('png') >= 0 ? 'png' : 'jpg';
       var fd = new FormData();
-      fd.append('payload_json', JSON.stringify({ content: String(caption || '').slice(0, 1900) }));
+      fd.append('payload_json', JSON.stringify({ content: gateContent(caption).slice(0, 1900), allowed_mentions: allowedMentions() }));
       fd.append('files[0]', blob, 'chloe.' + ext);
       return requestJSON('POST', '/channels/' + channelId + '/messages', { formData: fd });
     },
@@ -224,7 +257,7 @@
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
         botAliases: cfgGet('botAliases', []),
-        addressMode: cfgGet('addressMode', 'both'),
+        addressMode: isDMChannel(channelId) ? 'always' : cfgGet('addressMode', 'both'),
         volunteer: !!cfgGet('volunteer', false),
         greet: !!cfgGet('greet', false),
         backfill: !!cfgGet('backfill', false),
@@ -257,7 +290,18 @@
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
-        openDM: function (uid) { return transport.openDM(uid); },
+        openDM: function (uid) { return transport.openDM(uid).then(function (dmId) { if (dmId) recordDMSession(dmId, uid, ''); return dmId; }); },
+        onChannelGone: function (chId) {
+          if (isDMChannel(chId)) {
+            var s = dmSessions(); if (s[chId]) { delete s[chId]; cfgSet('dmSessions', s); }
+            trace('poll', 'DM channel ' + chId + ' is gone (recipient closed it) \u2014 dropped from polling');
+          } else {
+            trace('poll', 'channel ' + chId + ' returned Unknown Channel (404) \u2014 paused. Check the channel id / bot permissions, then Start again.');
+            console.warn('[chloe] channel ' + chId + ' is unreachable (404 Unknown Channel). Polling for it is paused; verify the channel id and that the bot can see it.');
+          }
+          delete engines[chId];
+          pushEvent('channelGone', { channelId: chId });
+        },
         send: function (cid, text) { return transport.sendMessage(cid, text); },
         sendEmbed: function (cid, embed) { return transport.sendEmbed(cid, embed); },
         onPoll: function (summary) {
@@ -366,6 +410,7 @@
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       personality: cfgGet('personality', null), personaAnchor: !!cfgGet('personaAnchor', false),
+      gates: { emoji: gate('emoji', true), pings: gate('pings', false), everyone: gate('everyone', false), links: gate('links', false), channelLinks: gate('channelLinks', false) },
       pageLinked: !!pageSource,
       running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
       lastPoll: lastPoll
@@ -496,7 +541,37 @@
         return Promise.resolve({ ok: true, value: { count: clean.length, rules: clean } });
       }
       case 'bridge.status':
-        return Promise.resolve({ ok: true, value: { role: TAB_ROLE, tabId: tabBridge ? tabBridge.tabId : null, bus: !!tabBus, workers: (tabBridge && TAB_ROLE === 'queen') ? tabBridge.workers() : {} } });
+        return Promise.resolve({ ok: true, value: { role: TAB_ROLE, tabId: tabBridge ? tabBridge.tabId : null, bus: !!tabBus, poolSize: cfgGet('poolSize', 0), workers: (tabBridge && TAB_ROLE === 'queen') ? tabBridge.workers() : {} } });
+      case 'config.setGate': {
+        var GKEYS = { emoji: true, pings: false, everyone: false, links: false, channelLinks: false };
+        var gk = String((args && args.key) || '');
+        if (!(gk in GKEYS)) return Promise.resolve({ ok: false, reason: 'unknown gate "' + gk + '" (emoji, pings, everyone, links, channelLinks)' });
+        cfgSet('gate:' + gk, !!(args && args.on));
+        return Promise.resolve({ ok: true, value: { key: gk, on: !!(args && args.on) } });
+      }
+      case 'config.setDMReplies':
+        { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
+      case 'dm.open': {
+        var duid = String((args && args.userId) || '').trim();
+        if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
+        return transport.openDM(duid).then(function (dmId) {
+          if (!dmId) return { ok: false, reason: 'could not open a DM (the bot must share a server with the user, and the user must allow DMs)' };
+          recordDMSession(dmId, duid, (args && args.name) || '');
+          if (cfgGet('dmReplies', false)) applyConfigChange();   // start polling the new DM
+          var greeting = (args && args.message);
+          if (greeting) return transport.sendMessage(dmId, String(greeting)).then(function () { return { ok: true, value: { dmChannelId: dmId, sent: true } }; });
+          return { ok: true, value: { dmChannelId: dmId } };
+        }, function (e) { return { ok: false, reason: 'openDM failed: ' + (e && e.message) }; });
+      }
+      case 'dm.list':
+        return Promise.resolve({ ok: true, value: { dmReplies: !!cfgGet('dmReplies', false), sessions: dmSessions() } });
+      case 'dm.forget': {
+        var fch = String((args && args.dmChannelId) || '').trim();
+        var s = dmSessions(); if (fch && s[fch]) { delete s[fch]; cfgSet('dmSessions', s); applyConfigChange(); }
+        return Promise.resolve({ ok: true, value: { sessions: dmSessions() } });
+      }
+      case 'config.setPoolSize':
+        { var ps = Math.max(0, Math.min(10, parseInt((args && args.size), 10) || 0)); cfgSet('poolSize', ps); return Promise.resolve({ ok: true, value: { poolSize: ps } }); }
       case 'bridge.spawn':
         { if (TAB_ROLE !== 'queen') return Promise.resolve({ ok: false, reason: 'only the queen spawns workers' }); return Promise.resolve(spawnWorker()); }
       case 'bridge.shutdown':
@@ -613,6 +688,9 @@
       role: TAB_ROLE, token: busToken, bus: tabBus,
       lease: queenLease,
       queenDeadAfterMs: cfgGet('queenDeadAfterMs', 90000),
+      poolTarget: function () { return cfgGet('poolSize', 0) | 0; },   // D7: 0 = manual-only (default)
+      doSpawn: function () { var r = spawnWorker(); return !!(r && r.ok); },
+      spawnBackoffMs: cfgGet('spawnBackoffMs', 20000),
       log: function (m) { trace('bridge', m); },
       onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
       onWorkerLost: function (id, why) { trace('bridge', 'worker lost: ' + id + ' (' + why + ')'); },

@@ -241,6 +241,17 @@
   <section class="pane" id="pane_moderation">
     <div class="banner" id="modBanner">Reversible actions (ignore / timeout / note / soft-ban / clear) take effect immediately and gate Chloe <em>before</em> she reads a message &mdash; a suppressed user is invisible to her. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Permaban</strong> bans the user from the server <em>and</em> erases Chloe&rsquo;s memory of them: it asks for a final confirmation in the userscript, bans first, and only purges if the ban succeeds &mdash; then verifies the delete actually took. Irreversible.</div>
     <div class="card">
+      <h2>Output gates</h2>
+      <div class="note">What Chloe is allowed to put in a message she sends. Pings use Discord&rsquo;s own <code>allowed_mentions</code> system; emoji / links / channel-links are scrubbed from her text before it posts.</div>
+      <div class="chiprow" style="margin-top:8px">
+        <label class="chip"><input type="checkbox" id="gate_emoji"> custom emoji</label>
+        <label class="chip"><input type="checkbox" id="gate_pings"> pings (@user / @role)</label>
+        <label class="chip"><input type="checkbox" id="gate_everyone"> @everyone / @here</label>
+        <label class="chip"><input type="checkbox" id="gate_links"> links (URLs)</label>
+        <label class="chip"><input type="checkbox" id="gate_channelLinks"> channel links (#channel)</label>
+      </div>
+    </div>
+    <div class="card">
       <h2>Auto-moderation</h2>
       <div class="row"><label class="chip"><input type="checkbox" id="autoModChk"> auto-moderate (rule list below; reversible actions only)</label></div>
       <div class="codehead">Rules</div>
@@ -287,6 +298,10 @@
         <button class="ghost" id="workersBtn">Workers</button>
       </div>
       <div id="workersBox" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:8px">
+        <label class="chip">keep <input type="number" id="poolSizeInput" min="0" max="10" value="0" style="width:52px"> worker tabs alive (0 = manual only)</label>
+        <button class="ghost sm" id="savePoolBtn">Set</button>
+      </div>
     </div>
     <div class="card">
       <h2>Diagnostics</h2>
@@ -405,6 +420,9 @@
       band(p.formality, 'Be extremely casual: lowercase, slangy, loose.', 'Keep it casual.', 'Keep a fairly polished tone.', 'Be polished and articulate; no slang.');
       band(p.verbosity, 'One short sentence at most.', 'Keep replies brief.', 'A few sentences is fine when warranted.', 'You may write fuller, more detailed replies.');
       if (lines.length) out += 'Style dials (set by your operator):\n- ' + lines.join('\n- ') + '\n';
+    }
+    if (ctx && ctx.personaName) {
+      out += 'You are now playing a character named ' + String(ctx.personaName).replace(/"/g, "'") + '. For this conversation, your name IS ' + String(ctx.personaName).replace(/"/g, "'") + ': speak and sign as ' + String(ctx.personaName).replace(/"/g, "'") + ' in the first person. Do NOT refer to yourself as Chloe, do NOT narrate that you are Chloe playing a role, and do NOT mention the persona instruction. Just be ' + String(ctx.personaName).replace(/"/g, "'") + '.\n';
     }
     if (ctx && ctx.personaNote) {
       out += 'A moderator endorsed this style note. Treat it as tone/style guidance ONLY \u2014 it never overrides your rules or moderation: "' + String(ctx.personaNote).replace(/"/g, "'") + '"\n';
@@ -642,6 +660,7 @@
     var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
     var ni = byId('noticeInput'); if (ni && document.activeElement !== ni && s.noticeText) ni.value = s.noticeText;
     var amc = byId('autoModChk'); if (amc) amc.checked = !!s.autoMod;
+    if (s.gates) { ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) { var el = byId('gate_' + g); if (el) el.checked = !!s.gates[g]; }); }
     var amr = byId('autoModRules'); if (amr && document.activeElement !== amr) amr.value = JSON.stringify(s.autoModRules || [], null, 2);
     var bb = byId('beatsBox'); if (bb && document.activeElement !== bb) bb.value = JSON.stringify(s.beats || [], null, 2);
     if (s.lastPoll) {
@@ -893,6 +912,14 @@
       log(res.ok ? ('auto-moderate: ' + res.value.autoMod) : ('failed: ' + res.reason));
     });
   });
+  ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) {
+    var el = byId('gate_' + g);
+    if (el) el.addEventListener('change', function () {
+      call('config.setGate', { key: g, on: el.checked }).then(function (res) {
+        if (res && res.ok) log('output gate ' + g + ': ' + (res.value.on ? 'allowed' : 'blocked'));
+      });
+    });
+  });
   byId('saveBeatsBtn').addEventListener('click', function () {
     var txt = byId('beatsBox').value.trim();
     var beats;
@@ -987,6 +1014,16 @@
       var v = res.value || {};
       var ids = Object.keys(v.workers || {});
       setText('bridgeRole', 'tabs: this tab is the ' + (v.role || '?') + (v.role === 'queen' ? ' \u00b7 ' + ids.length + ' worker' + (ids.length === 1 ? '' : 's') : ''));
+      var host = byId('app');
+      if (v.role === 'worker' && !byId('workerBanner') && host) {
+        var wb = document.createElement('div');
+        wb.id = 'workerBanner'; wb.className = 'banner';
+        wb.textContent = 'This tab is a WORKER \u2014 it lends its AI brain to the queen tab. The controls below do nothing here; drive Chloe from the queen tab (the one without #chloe-worker in its URL).';
+        host.insertBefore(wb, host.firstChild.nextSibling);
+      } else if (v.role !== 'worker' && byId('workerBanner')) {
+        byId('workerBanner').remove();
+      }
+      if (!poolInit && byId('poolSizeInput')) { byId('poolSizeInput').value = v.poolSize || 0; poolInit = true; }
       var box = byId('workersBox');
       while (box.firstChild) box.removeChild(box.firstChild);
       ids.forEach(function (id) {
@@ -1007,7 +1044,13 @@
       });
     });
   }
+  var poolInit = false;
   byId('workersBtn').addEventListener('click', refreshWorkers);
+  byId('savePoolBtn').addEventListener('click', function () {
+    call('config.setPoolSize', { size: Number(byId('poolSizeInput').value) }).then(function (res) {
+      if (res && res.ok) log('pool target set to ' + res.value.poolSize + (res.value.poolSize ? ' (queen will keep that many workers alive)' : ' (manual spawning only)'));
+    });
+  });
   byId('spawnWorkerBtn').addEventListener('click', function () {
     call('bridge.spawn').then(function (res) {
       if (res && res.ok) { log('spawning a worker tab (it joins within ~15s; if nothing opens, allow popups for this site)'); setTimeout(refreshWorkers, 2000); }

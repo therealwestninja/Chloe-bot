@@ -1,7 +1,17 @@
 # Chloe-on-Discord bridge — roadmap
 
 Adapter A (Tampermonkey userscript ⇄ Perchance generator page over an origin-checked
-postMessage link). Current shipped version: **v0.27.0**.
+postMessage link). Current shipped version: **v0.28.0**.
+
+### Shipped in v0.28.0 (a batch of fixes + safety features from real-session logs)
+- **DM sessions (two-way DMs).** Any DM Chloe opens registers as a pollable channel (`dmReplies` toggle); a DM channel runs with `addressMode:'always'` so she replies to every line without a mention. Cold inbound DMs remain Gateway-blocked (documented, not faked). `harness-dm.js`.
+- **Permanent blocklist / tombstone.** `!chloe block @u` (and `unblock`) tombstones a user by id + username at a partition-independent key, checked at the top of `ingestOne` — a blocked user is never re-scanned or re-rostered again, and survives unrelated purges. Fixes the gap where `forget` left no tombstone. `harness-blocklist.js`.
+- **Output gates (mod-toggleable).** Five independent toggles — emoji / pings / @everyone / links / channel-links — enforced at the single transport chokepoint. Pings use Discord's native `allowed_mentions`; the rest scrub outgoing content. Defaults: emoji on, the rest off. A jailbroken Chloe still can't mass-ping/spam/@channel without mod opt-in. `harness-gates.js`.
+- **Persona NAME, not just style.** A pinned note that names a character makes Chloe answer to that name and speak as them in first person (parser + alias + prompt reframe). `harness-persona-name.js`.
+- **Image prompt travels with the image,** sanitized for caption (mentions/mass-pings/links/markdown stripped, length-capped).
+- **404 Unknown Channel self-heals.** A poll 404 pauses that engine via `onChannelGone` instead of spamming the log forever; dead DM channels auto-drop, guild channels warn. (This was the only Chloe-side error in the logs; the ~6,700 `.style` crashes were weld-companion operating on Chloe's frame — noted for the weld side.)
+- **`allowed_mentions` on every send** (latent bug fix: captions/replies with `@everyone` could previously ping).
+
 
 ## Shipped (live-confirmed)
 - **T0** read-only presence (poll → parse → per-user partitions → speaker ring → rhythm)
