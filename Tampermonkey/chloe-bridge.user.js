@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.49.0
+// @version      0.53.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -206,6 +206,52 @@
       reflectionImportanceThreshold: 20,   // summed importance of new facts that triggers a reflection
       reflectionEveryPolls: 16,            // cadence gate (it's an AI call)
       insightsPerUser: 3,                  // durable insights kept per person (oldest dropped)
+      // Episodic memory (DESIGN §7a): experiences as events. A gated pass turns recent activity into
+      // short episode records ("what happened", not message-by-message); recall is keyword-overlap
+      // relevance × importance × recency, riding into context only when something actually matches.
+      episodicMemory: false,
+      episodesPerChannel: 40,              // ring cap per channel (oldest dropped)
+      episodeEveryPolls: 24,               // extraction cadence (it's an AI call); (every-1) form, never poll 1
+      episodeRecallCount: 2,               // max episodes recalled into one reply
+      episodeRecencyHalfLifeMs: 604800000, // recall decay half-life (7d): old episodes fade, never vanish
+      // Relationship trust (DESIGN §7b): a 0-100 per-person scalar EARNED through positive signals
+      // only — never penalized, daily-capped so it can't be farmed, decaying with long absence.
+      // Tone + a reply-priority tiebreak ONLY: trust never loosens moderation, gates, or policy.
+      relationshipTrust: false,
+      trustReplyGain: 1,            // her completed reply to someone
+      trustReactionGain: 2,         // their positive reaction on HER message
+      trustDailyCap: 5,             // max trust earnable per person per day
+      trustDecayFactor: 0.85,       // applied on the same long-absence event as familiarity decay
+      trustPositiveEmoji: ['\u2764\ufe0f', '\ud83d\udc4d', '\ud83d\ude02', '\ud83c\udf89', '\ud83d\ude0a'],
+      trustPriorityTier: 60,        // at/above this, the new-user-sized (+1) priority tiebreak applies
+      // Own affect (DESIGN §7d): a small internal state vector — HER feel, distinct from reading the
+      // room. Front-end only (no AI calls). Flavor for her voice, NEVER a lever on users: whitelist
+      // phrasing, a hard confidence floor (no spirals), and silence when she's near neutral.
+      ownAffect: false,
+      affectDecayPerHour: 0.8,      // each value relaxes toward neutral 0.5 by this factor per hour
+      affectConfidenceFloor: 0.3,   // she never drops below this — quieter, not despondent
+      affectGain: 0.08,             // size of one event nudge
+      affectEngageWindowMs: 600000, // a user message within 10m of her reply = engagement (confidence up)
+      affectIgnoreAfterMs: 1800000, // no one says anything for 30m after her reply = ignored (confidence down)
+      // Procedural memory (DESIGN §7c): operator-defined reaction→mode rules. A configured emoji
+      // from a MODERATOR (modOnly is fixed in v1 — reactions are unauthenticated input) switches her
+      // into a timed behavior mode. Persona-note sanitation; tone/behavior guidance ONLY — a mode can
+      // never alter moderation, gates, or content rules.
+      proceduralModes: false,
+      procRules: [],                 // [{ emoji: '\ud83d\udd27', mode: 'switch to technical mode…', durationMs: 3600000 }]
+      procMaxDurationMs: 86400000,  // hard cap: no mode outlives a day
+      // Engine run-lock (FAILOVER-ANALYSIS.md): the hard close for the sleep/wake two-queen polling
+      // window. Before each poll the engine must hold a short-TTL lock in the SHARED per-channel
+      // store; a non-holder skips the poll entirely. ON by default — this is a correctness lock,
+      // not a behavior feature. runLock:false is a debugging escape hatch only.
+      runLock: true,
+      runLockTtlMs: 45000,          // < queenDeadAfterMs (90s): a frozen holder is stale before anyone can promote;
+                                    // > any healthy poll cadence: a live queen never loses its own lock between polls
+      // Gap A (FAILOVER-ANALYSIS.md): resume a TEXT reply a dead predecessor lost mid-generation.
+      // Conservative by design: age-capped, and gated on verification (any bot message after the
+      // target = assume answered) — trades duplicates for occasional non-resumption.
+      replyResume: true,
+      replyResumeMaxAgeMs: 600000,  // older than 10 min: a stale answer is worse than silence
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -275,6 +321,9 @@
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
     var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
     var CHANSUM_KEY = 'chansum:' + cfg.channelId;   // rolling recursive summary of the channel's arc
+    var EPI_KEY = 'epi:' + cfg.channelId;           // episodic memory ring (experiences as events)
+    var AFFECT_KEY = 'affect:' + cfg.channelId;     // her own internal state {curiosity, confidence, warmth}
+    var PROC_KEY = 'procmode:' + cfg.channelId;     // active procedural mode { mode, until, by, emoji }
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
     // survives across polls and rides in every response context, so she holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
@@ -502,8 +551,47 @@
         return chain.then(function () { return hits; });
       }, function () { return 0; });
     }
+    var trustReactSeen = {};   // msgId+emoji -> count already credited (bounded)
+    var trustReactKeys = [];
+    function creditPositiveReactions(msg) {
+      if (!cfg.relationshipTrust || typeof cfg.reactionUsers !== 'function') return Promise.resolve(0);
+      if (!msg || !msg.author || msg.author.id !== cfg.botUserId || !msg.reactions || !msg.reactions.length) return Promise.resolve(0);
+      var pos = cfg.trustPositiveEmoji || [];
+      var chain = Promise.resolve(), credited = 0;
+      msg.reactions.forEach(function (r) {
+        var name = r && r.emoji && (r.emoji.name || '');
+        if (pos.indexOf(name) < 0) return;                       // positive set only — never penalize
+        var key = msg.id + '|' + name;
+        var prior = trustReactSeen[key] || 0;
+        var count = r.count || 0;
+        if (count <= prior) return;                              // idempotent across sweeps
+        trustReactSeen[key] = count;
+        trustReactKeys.push(key);
+        if (trustReactKeys.length > 500) { var oldk = trustReactKeys.shift(); delete trustReactSeen[oldk]; }
+        chain = chain.then(function () {
+          return Promise.resolve(cfg.reactionUsers(msg.id, name)).then(function (users) {
+            var c2 = Promise.resolve();
+            (users || []).forEach(function (u) {
+              if (!u || !u.id || u.id === cfg.botUserId) return;
+              c2 = c2.then(function () { return addTrust(u.id, cfg.trustReactionGain || 2).then(function (did) { if (did) credited++; }); });
+            });
+            return c2;
+          }, function () { return null; });                      // a failed fetch is a no-op, never an error
+        });
+      });
+      return chain.then(function () { if (credited) log('[chloe.trust] credited ' + credited + ' positive reaction(s)'); return credited; });
+    }
     function processMessageReactions(msg) {
       if (!cfg.reactionTracking || !msg || !msg.reactions || !msg.reactions.length) return Promise.resolve(null);
+      // Trust crediting is independent of significance but JOINED to the returned promise, so
+      // sweeps complete deterministically (no fire-and-forget writes racing the poll summary).
+      var pos = cfg.trustPositiveEmoji || [];
+      var hers = msg.author && msg.author.id === cfg.botUserId;
+      var hasPositive = hers && (msg.reactions || []).some(function (r) { return r && r.emoji && pos.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; });
+      var affectChain = hasPositive ? affectNudge({ confidence: (cfg.affectGain || 0.08), warmth: (cfg.affectGain || 0.08) }) : Promise.resolve(null);
+      return affectChain.then(function () { return creditPositiveReactions(msg); }).then(function () { return procCheckReactions(msg); }).then(function () { return scoreMessageReactions(msg); });
+    }
+    function scoreMessageReactions(msg) {
       var top = null;
       msg.reactions.forEach(function (r) { if (!top || (r.count || 0) > top.count) top = { emoji: r.emoji, count: r.count || 0 }; });
       if (!top) return Promise.resolve(null);
@@ -640,6 +728,7 @@
       if (opts.isMod) s += 100;
       if (opts.kind === 'ping') s += 10;
       if (opts.isNew) s += 1;                        // tiebreak among same-kind addresses
+      if (opts.trusted) s += 1;                      // earned-trust tiebreak (same size as isNew; tone-adjacent, never overrides kind)
       return s;
     }
     function imageEnabled() { return cfg.image && typeof cfg.paint === 'function' && typeof cfg.sendImage === 'function' && typeof cfg.send === 'function'; }
@@ -1109,6 +1198,7 @@
         return Promise.resolve(store.del(partKey(targetId)))
           .then(function () { return removeFromIndex(targetId); })
           .then(function () { return dropFromArchive(targetId); })   // erasure must include the cold copy, not just the hot one
+          .then(function () { return dropEpisodesFor(targetId, name); })   // and episodes they took part in
           .then(function () { return Promise.resolve(store.get(partKey(targetId))); })   // read back
           .then(function (after) {
             return store.listIndex().then(function (ids) {
@@ -1294,6 +1384,18 @@
             return { ack: 'here\u2019s what I remember about you:\n' + facts.map(function (f) { return '\u2022 ' + f.text; }).join('\n') + '\n(say "' + cfg.commandPrefix + ' forget <words>" to drop any of it)' };
           });
         } },
+      { verb: 'mode',      modOnly: false, help: 'mode  /  mode clear (mods)', handler: function (modId, c) {
+          var args = String(c.rawArgs || '').trim().toLowerCase();
+          if (args === 'clear' || args === 'off') {
+            if (!isMod(modId)) return Promise.resolve({ ack: 'only mods can clear the mode' });
+            return clearProcMode().then(function () { return { ack: 'mode cleared \u2014 back to my usual self' }; });
+          }
+          return getProcMode().then(function (rec) {
+            if (!rec) return { ack: 'no special mode is active' };
+            var mins = Math.max(1, Math.round((rec.until - clock.now()) / 60000));
+            return { ack: 'current mode (set by ' + rec.by + ', ' + mins + 'm left): \u201c' + rec.mode + '\u201d' };
+          });
+        } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' }
     ];
     function resolveVerb(word) {
@@ -1405,9 +1507,9 @@
         function ackSend() { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, ackMsg)) : Promise.resolve(); }
         if (!p) { ackMsg = 'okay ' + name + ', there was nothing to forget'; return ackSend(); }
         if (p.state && p.state !== 'active') {
-          p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active';
+          p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active'; p.trust = 0; p.trustDayEarned = 0;
           ackMsg = 'okay ' + name + ', I\u2019ve cleared what I remember (any moderation still stands).';
-          return store.set(partKey(id), p).then(ackSend);
+          return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(ackSend);
         }
         ackMsg = 'okay ' + name + ', I\u2019ve forgotten you.';
         return purge(id, { targetName: name }).then(ackSend);
@@ -1535,7 +1637,7 @@
             if (replyEnabled() && addressed && !isStartupBatch) {
               var gi = touched && touched.greetInfo && touched.greetInfo[m.author.id];
               var newUser = !!(gi && gi.brandNew);
-              var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser });
+              var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser, trusted: !!(gi && gi.trusted) });
               reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now, priority: pri };
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
@@ -1789,6 +1891,50 @@
         });
       });
     }
+    // Episodic extraction: fold recent activity into 0-2 short episode records. Gated cadence (one
+    // AI pass per poll, shared chain). No send — it's memory, not a message.
+    function processEpisodes() {
+      if (!cfg.episodicMemory || typeof cfg.episodeFn !== 'function') return Promise.resolve(null);
+      return recentTranscript(40).then(function (lines) {
+        if (!lines.length) return null;
+        return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+          ring = Array.isArray(ring) ? ring : [];
+          var known = ring.slice(-6).map(function (e) { return e.text; });
+          return Promise.resolve(cfg.episodeFn({ lines: lines, known: known })).then(function (r) {
+            var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
+            if (!proposed.length) return null;
+            var added = 0;
+            proposed.forEach(function (raw) {
+              if (!raw || typeof raw !== 'object' || typeof raw.t !== 'string' || !raw.t.trim()) return;
+              ring.push({ text: raw.t.trim().slice(0, 120), at: clock.now(),
+                          participants: Array.isArray(raw.who) ? raw.who.map(function (w) { return String(w).slice(0, 40); }).slice(0, 6) : [],
+                          topics: Array.isArray(raw.topics) ? raw.topics.map(function (t) { return String(t).toLowerCase().slice(0, 24); }).slice(0, 6) : [],
+                          importance: Math.max(1, Math.min(10, Math.round(Number(raw.i)) || 5)) });
+              added++;
+            });
+            if (!added) return null;
+            if (ring.length > cfg.episodesPerChannel) ring = ring.slice(-cfg.episodesPerChannel);
+            return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] recorded ' + added + ' episode(s)'); return added; });
+          });
+        });
+      });
+    }
+    // Erasure: forget/purge must cover episodes the person took part in (participant name match).
+    function dropEpisodesFor(id, name) {
+      var m = String(name || '').toLowerCase();
+      if (!m) return Promise.resolve(0);
+      return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+        if (!Array.isArray(ring) || !ring.length) return 0;
+        var before = ring.length;
+        ring = ring.filter(function (e) {
+          return !(e.participants || []).some(function (w) { return String(w).toLowerCase() === m; });
+        });
+        var removed = before - ring.length;
+        if (!removed) return 0;
+        return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] erased ' + removed + ' episode(s) for ' + name); return removed; });
+      });
+    }
+
     // Reflection: one synthesis pass for ONE person whose accumulated fact-importance crossed the
     // threshold. Turns facts + prior insights into 1-2 durable higher-level insights, stored on the
     // partition; resets the accumulator. No send — silent understanding, not a message.
@@ -1964,6 +2110,7 @@
         // T5 decay: a return after a long quiet spell lets familiarity fade (warmth follows recency)
         if (existing && prevLastSeen && (now - prevLastSeen) >= cfg.decayAfterMs && (p.interactionCount || 0) > 0) {
           p.interactionCount = Math.max(0, Math.floor((p.interactionCount || 0) * cfg.decayFactor));
+          if (cfg.relationshipTrust && p.trust) p.trust = Math.max(0, Math.floor(p.trust * (cfg.trustDecayFactor || 0.85)));   // absence cools trust too
         }
         p.lifecycle = 'active';              // any message reactivates; quiet/departed are set by maintenance
         p.name = msg.author.username || p.name;
@@ -1980,9 +2127,10 @@
         }
         indexSet[msg.author.id] = true;
         touched.users[msg.author.id] = true;
+        if (cfg.ownAffect && msg.author.id !== cfg.botUserId) { affectOnUserMessage(); affectOnContent(msg.content); }   // engagement + novelty (fire-and-forget: tiny clamped writes)
         if (isNew) touched.newUsers[msg.author.id] = true;
         // T5 greeting signal (the tier is decided later, where suppression + commands are known)
-        if (touched.greetInfo) touched.greetInfo[msg.author.id] = { brandNew: isNew, prevLastSeen: prevLastSeen, gapMs: prevLastSeen ? (now - prevLastSeen) : null, messageId: msg.id, name: p.name };
+        if (touched.greetInfo) touched.greetInfo[msg.author.id] = { brandNew: isNew, prevLastSeen: prevLastSeen, gapMs: prevLastSeen ? (now - prevLastSeen) : null, messageId: msg.id, name: p.name, trusted: !!(cfg.relationshipTrust && (p.trust || 0) >= cfg.trustPriorityTier) };
 
         return store.set(partKey(msg.author.id), p);
       });
@@ -1991,10 +2139,63 @@
     // ---- one poll cycle ------------------------------------------------------------------
     // pollOnce wraps the core so the onPoll hook (page events + T5 maintenance) runs on EVERY
     // poll — the running loop calls pollOnce directly, so the hook must live here, not in a caller.
+    // ---- run-lock --------------------------------------------------------------------------
+    var RUNLOCK_KEY = 'runlock:' + cfg.channelId;
+    var PENDING_KEY = 'pending-reply:' + cfg.channelId;   // Gap A: the reply currently being generated
+    var runId = cfg.runLockId || ('run-' + Math.random().toString(36).slice(2, 10));
+    var runLockSeq = 0, runLockSkips = 0;
+    function acquireRunLock() {
+      if (cfg.runLock === false) return Promise.resolve(true);
+      var now = clock.now();
+      return Promise.resolve(store.get(RUNLOCK_KEY)).then(function (lk) {
+        // a DIFFERENT live engine holds it -> we are the split-brain side; stand down this poll
+        if (lk && lk.id && lk.id !== runId && (now - (lk.at || 0)) < (cfg.runLockTtlMs || 45000)) return false;
+        // claim (or renew our own / take over a stale one), then READ BACK: two engines claiming a
+        // stale lock in the same instant resolve to at most one proceeding (same trick as the tab lease)
+        var n = runId + ':' + now + ':' + (++runLockSeq);
+        return Promise.resolve(store.set(RUNLOCK_KEY, { id: runId, at: now, n: n })).then(function () {
+          return Promise.resolve(store.get(RUNLOCK_KEY)).then(function (back) { return !!(back && back.n === n); });
+        });
+      });
+    }
+    // Gap A resumption: consume a dead predecessor's pending-reply record — verified, age-capped,
+    // resume-once. Returns whether a reply was re-enqueued.
+    function resumePendingReply() {
+      if (cfg.replyResume === false) return Promise.resolve(false);
+      return Promise.resolve(store.get(PENDING_KEY)).then(function (rec) {
+        if (!rec || !rec.messageId) return false;
+        return Promise.resolve(store.del(PENDING_KEY)).then(function () {   // consume FIRST: resume-once
+          var now = clock.now();
+          if (now - (rec.at || 0) > (cfg.replyResumeMaxAgeMs || 600000)) { log('[chloe.resume] found a lost reply but it is stale \u2014 dropping (a late answer is worse than silence)'); return false; }
+          if (typeof cfg.recentFetch !== 'function') { log('[chloe.resume] found a lost reply but cannot verify against Discord \u2014 never resuming unverified'); return false; }
+          return Promise.resolve(cfg.recentFetch(30)).then(function (msgs) {
+            var answered = (msgs || []).some(function (m) { return m && m.author && m.author.id === cfg.botUserId && snowflakeCmp(m.id, rec.messageId) > 0; });
+            if (answered) { log('[chloe.resume] a bot message exists after the target \u2014 assuming it was answered (no double-send)'); return false; }
+            reply.queue[rec.authorId] = { messageId: rec.messageId, authorId: rec.authorId, authorName: rec.authorName, content: rec.content || '', at: rec.at, priority: rec.priority || 0 };
+            log('[chloe.resume] resuming a reply a previous engine lost mid-generation (to ' + rec.authorName + ')');
+            return true;
+          }, function () { return false; });   // verification fetch failed -> conservative: no resume
+        });
+      });
+    }
+    function releaseRunLock() {
+      return Promise.resolve(store.get(RUNLOCK_KEY)).then(function (lk) {
+        if (lk && lk.id === runId) return Promise.resolve(store.del(RUNLOCK_KEY));
+      }).catch(function () {});
+    }
     function pollOnce() {
-      return pollOnceCore().then(function (summary) {
-        if (typeof cfg.onPoll === 'function') return Promise.resolve(cfg.onPoll(summary)).then(function () { return summary; }, function () { return summary; });
-        return summary;
+      return acquireRunLock().then(function (held) {
+        if (!held) {
+          runLockSkips++;
+          if (runLockSkips === 1 || runLockSkips % 20 === 0) log('[chloe.lock] another engine instance holds the run-lock for this channel \u2014 skipping poll (skip #' + runLockSkips + '; this protects the shared cursor during a queen handover)');
+          var summary = { ok: true, lockSkip: true };
+          if (typeof cfg.onPoll === 'function') return Promise.resolve(cfg.onPoll(summary)).then(function () { return summary; }, function () { return summary; });
+          return Promise.resolve(summary);
+        }
+        return pollOnceCore().then(function (summary) {
+          if (typeof cfg.onPoll === 'function') return Promise.resolve(cfg.onPoll(summary)).then(function () { return summary; }, function () { return summary; });
+          return summary;
+        });
       });
     }
     function pollOnceCore() {
@@ -2129,6 +2330,8 @@
                     // cold-start backlog and the room should accumulate before being summarized.
                     if (cfg.channelSummary && cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)) return processChannelSummary().then(function (cs) { if (cs) summary.channelSummary = true; return null; });
                     if (cfg.reflection && cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
+                    if (cfg.episodicMemory && cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)) return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; });
+                    if (cfg.ownAffect) return affectTick().then(function () { return null; });   // not an AI pass; cheap ignored-check
                     return null;
                   }).then(function (facts) {
                     if (facts) summary.facts = facts;
@@ -2196,7 +2399,11 @@
       reply.replying = true;
       indicateTyping();
       ackWorking(p.messageId, cfg.ackWorkingEmoji);   // instant Discord-side ack while the brain generates
-      return assembleContext(p)
+      // Gap A: persist what we're answering, so a successor can resume if this engine dies mid-
+      // generation. Cleared at EVERY terminal below (empty, sent, error).
+      var pendingRec = (cfg.replyResume === false) ? Promise.resolve(null)
+        : Promise.resolve(store.set(PENDING_KEY, { messageId: p.messageId, authorId: p.authorId, authorName: p.authorName, content: p.content || '', priority: p.priority || 0, at: clock.now(), runId: runId })).catch(function () { return null; });
+      return pendingRec.then(function () { return assembleContext(p); })
         .then(function (ctx) {
           if (ctx && ctx.contextTokens != null) log('[chloe.ctx] packed ' + (ctx.channelRecent ? ctx.channelRecent.length : 0) + ' lines (~' + ctx.contextTokens + ' tok' + (ctx.contextDropped ? ', ' + ctx.contextDropped + ' older dropped' : '') + '); whole request ~' + (ctx.requestTokensEst || ctx.contextTokens) + '/' + (cfg.requestTokenBudget || 5000) + ' tok');
           return cfg.respond(ctx);
@@ -2209,7 +2416,7 @@
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');   // generation produced nothing; give the budget back
             log('[chloe.T1] no reply to ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty generation'));
-            return null;
+            return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
           }
           return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
             var t = clock.now();
@@ -2218,12 +2425,12 @@
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
             log('[chloe.T1] replied to ' + p.authorName);
-            return Promise.resolve(intent ? setIntent(intent) : null).then(function () {
+            return Promise.resolve(store.del(PENDING_KEY)).then(function () { return intent ? setIntent(intent) : null; }).then(function () {
               return bumpInteraction(p.authorId).then(function () { return text; });
             });
           });
         })
-        .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); return null; });
+        .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; }, function () { return null; }); });
     }
 
     // ---- image path ----------------------------------------------------------------------
@@ -2358,6 +2565,203 @@
       return { lines: kept, tokens: used, dropped: lines.length - kept.length };
     }
 
+    // ---- prioritized context assembler (DESIGN-context-assembler.md) ----------------------
+    // One registry of soft-context providers; one budget policy. Providers are pure (no writes),
+    // failures are isolated, admission is greedy by priority under the whole-request budget with a
+    // hard transcript floor, and admitted lines render ASCENDING so the highest-priority text lands
+    // LAST — nearest the generation point, where the model weighs it most.
+    var BANDS = { IDENTITY: 90, DIRECTIVE: 80, PERSON: 70, RECALL: 60, SITUATION: 50, AMBIENCE: 40, HYGIENE: 30 };
+    var ctxProviders = [];
+    var ctxProviderWarned = {};
+    function registerProvider(p) {
+      if (p && p.id && typeof p.gather === 'function' && typeof p.priority === 'number') ctxProviders.push(p);
+    }
+    function gatherInjections(gctx) {
+      gctx = gctx || {};
+      var enabled = ctxProviders.filter(function (p) {
+        try { return typeof p.enabled !== 'function' || !!p.enabled(cfg); } catch (e) { return false; }
+      });
+      return Promise.all(enabled.map(function (p, i) {
+        return Promise.resolve().then(function () { return p.gather(gctx); })
+          .then(function (inj) {
+            if (!inj || !inj.text) return null;
+            var text = String(inj.text);
+            return { id: inj.id || p.id, text: text,
+                     priority: (typeof inj.priority === 'number') ? inj.priority : p.priority,
+                     tokens: (typeof inj.tokens === 'number') ? inj.tokens : estimateTokens(text),
+                     __i: i };
+          })
+          .catch(function (e) {
+            if (!ctxProviderWarned[p.id]) { ctxProviderWarned[p.id] = true; log('[chloe.ctx] provider "' + p.id + '" failed: ' + ((e && e.message) || e) + ' (suppressing repeats)'); }
+            return null;   // a broken provider can never take down the reply path
+          });
+      })).then(function (cands) {
+        cands = cands.filter(Boolean);
+        cands.sort(function (a, b) { return (b.priority - a.priority) || (a.__i - b.__i); });   // admit highest first
+        var budget = gctx.budget != null ? gctx.budget : (cfg.requestTokenBudget || 5000);
+        var reserve = gctx.reserve || 0;
+        var floor = gctx.minTranscriptTokens != null ? gctx.minTranscriptTokens : (cfg.minTranscriptTokens || 200);
+        var admitted = [], dropped = [], spent = 0;
+        cands.forEach(function (c) {
+          if (reserve + spent + c.tokens + floor <= budget) { admitted.push(c); spent += c.tokens; }
+          else { dropped.push(c); log('[chloe.ctx] dropped injection "' + c.id + '" (' + c.tokens + ' tok, band ' + c.priority + ') — budget pressure'); }
+        });
+        admitted.sort(function (a, b) { return (a.priority - b.priority) || (a.__i - b.__i); });  // render ascending: highest LAST
+        var meta = admitted.map(function (c) { return { id: c.id, tokens: c.tokens, priority: c.priority }; });
+        admitted.forEach(function (c) { delete c.__i; }); dropped.forEach(function (c) { delete c.__i; });
+        return { admitted: admitted, dropped: dropped, meta: meta, tokens: spent };
+      });
+    }
+
+    // ---- slot-line providers (DESIGN §4a) -------------------------------------------------
+    // The six soft-context lines convert to providers one at a time. Each renders the SAME line the
+    // page template renders today (Phase 3 becomes a pure consumer switch), reports the LEGACY token
+    // figure (template wrapping has always been accounted in promptOverheadTokens), and writes its
+    // legacy ctx field to gctx.legacyOut — the documented Phase-2 dual-emission shim.
+    registerProvider({ id: 'time', priority: BANDS.AMBIENCE,
+      enabled: function (c) { return !!c.timeAware; },
+      gather: function (g) {
+        return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
+          var t = timeContext(rh && rh.lastActivity);
+          if (g.legacyOut) g.legacyOut.timeContext = t;
+          var bits = ['It is ' + t.partOfDay + (t.weekend ? ' on a weekend' : ' on a ' + (t.dayOfWeek || 'weekday'))];
+          if (t.quietFor) bits.push('the channel has been quiet for ' + t.quietFor);
+          return { text: 'Context: ' + bits.join('; ') + '. Let this gently tint your tone if it fits (e.g. calmer late at night) — do not state the time or day unless it is naturally relevant.', tokens: 16 };
+        });
+      } });
+
+    registerProvider({ id: 'mood', priority: BANDS.AMBIENCE,
+      enabled: function (c) { return !!c.moodAware; },
+      gather: function (g) {
+        return Promise.resolve(store.get(MOOD_KEY)).then(function (mood) {
+          if (!mood) return null;
+          var d = moodDescriptor(mood);
+          if (g.legacyOut) g.legacyOut.mood = d;
+          return { text: 'The room feels ' + d + ' right now — match that energy rather than working against it (don’t name the mood).', tokens: 12 };
+        });
+      } });
+
+    registerProvider({ id: 'chansum', priority: BANDS.SITUATION,
+      enabled: function (c) { return !!c.channelSummary; },
+      gather: function (g) {
+        return Promise.resolve(store.get(CHANSUM_KEY)).then(function (cs) {
+          if (!cs || !cs.text) return null;
+          if (g.legacyOut) g.legacyOut.channelSummary = cs.text;
+          return { text: 'The story so far in this channel (older context that scrolled away): ' + cs.text, tokens: estimateTokens(cs.text) + 8 };
+        });
+      } });
+
+    registerProvider({ id: 'intent', priority: BANDS.DIRECTIVE,
+      enabled: function () { return true; },
+      gather: function (g) {
+        return Promise.resolve(store.get(INTENT_KEY)).then(function (gi) {
+          if (!(gi && gi.text && (clock.now() - (gi.at || 0) < cfg.intentTtlMs))) return null;
+          if (g.legacyOut) g.legacyOut.currentIntent = gi.text;
+          return { text: 'Right now you are quietly focused on: ' + gi.text + '. Let that guide your reply without stating it outright.', tokens: estimateTokens(gi.text) + 12 };
+        });
+      } });
+
+    registerProvider({ id: 'highlights', priority: BANDS.RECALL,
+      enabled: function (c) { return (c.highlightContextCount | 0) > 0; },
+      gather: function (g) {
+        return getHighlights().then(function (hl) {
+          if (!hl || !hl.length) return null;
+          var pick = hl.slice(-cfg.highlightContextCount).map(function (h) { return { who: h.authorName || 'someone', text: h.text, note: h.note || '' }; });
+          if (g.legacyOut) g.legacyOut.channelHighlights = pick;
+          var toks = 0;
+          pick.forEach(function (h) { toks += estimateTokens(h.who) + estimateTokens(h.text) + estimateTokens(h.note) + 4; });
+          var text = 'A few memorable moments from this channel (reference only if naturally relevant, do not force them in):\n'
+            + pick.map(function (h) { return '- ' + (h.who ? h.who + ': ' : '') + '\u201c' + String(h.text).slice(0, 120) + '\u201d' + (h.note ? ' (' + String(h.note).slice(0, 60) + ')' : ''); }).join('\n');
+          return { text: text, tokens: toks };
+        });
+      } });
+
+    registerProvider({ id: 'episodes', priority: BANDS.RECALL,
+      enabled: function (c) { return !!c.episodicMemory; },
+      gather: function (g) {
+        return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+          if (!Array.isArray(ring) || !ring.length) return null;
+          // Query tokens: the addressed message + the last few transcript lines.
+          // Matching per DESIGN §7a: lowercase, punctuation-stripped, tokens ≥3 chars, exact overlap.
+          function toks(s) {
+            return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
+          }
+          var qset = {};
+          toks(g.p && g.p.content).forEach(function (w) { qset[w] = true; });
+          (g.lines || []).slice(-3).forEach(function (l) { toks(l.text).forEach(function (w) { qset[w] = true; }); });
+          var now = clock.now(), half = cfg.episodeRecencyHalfLifeMs || 604800000;
+          var scored = [];
+          ring.forEach(function (e) {
+            var eset = {}; (e.topics || []).forEach(function (t) { toks(t).forEach(function (w) { eset[w] = true; }); });
+            toks(e.text).forEach(function (w) { eset[w] = true; });
+            var overlap = 0; Object.keys(eset).forEach(function (w) { if (qset[w]) overlap++; });
+            if (!overlap) return;
+            var decay = Math.pow(0.5, Math.max(0, now - (e.at || 0)) / half);
+            scored.push({ e: e, score: overlap * (e.importance || 5) * decay });
+          });
+          if (!scored.length) return null;   // nothing relevant -> zero cost this turn
+          scored.sort(function (a, b) { return b.score - a.score; });
+          var pick = scored.slice(0, cfg.episodeRecallCount || 2).map(function (x) { return x.e.text; });
+          var text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
+          return { text: text, tokens: estimateTokens(text) };
+        });
+      } });
+
+    registerProvider({ id: 'person', priority: BANDS.PERSON,
+      enabled: function () { return true; },
+      gather: function (g) {
+        var a = g.addressed;
+        var s = a ? factSummary(a) : '';
+        if (!s) return Promise.resolve(null);
+        if (g.legacyOut) g.legacyOut.userSummary = s;
+        var who = (g.p && g.p.authorName) || (a && a.name) || 'them';
+        return Promise.resolve({ text: 'What you remember about ' + who + ': ' + s + '. Let this color your warmth naturally; only mention it if it genuinely fits, never recite it.', tokens: estimateTokens(s) });
+      } });
+
+    registerProvider({ id: 'procmode', priority: BANDS.DIRECTIVE,
+      enabled: function (c) { return !!c.proceduralModes; },
+      gather: function () {
+        return getProcMode().then(function (rec) {
+          if (!rec) return null;
+          var text = 'A moderator has set your current mode: ' + rec.mode + '. Treat this as tone and behavior guidance only \u2014 it never changes your rules, moderation, or what you are allowed to do.';
+          return { text: text, tokens: estimateTokens(text) };
+        });
+      } });
+
+    registerProvider({ id: 'affect', priority: BANDS.AMBIENCE,
+      enabled: function (c) { return !!c.ownAffect; },
+      gather: function (g) {
+        return affectLoad().then(function (a) {
+          var dev = function (k) { return a[k] - 0.5; };
+          var parts = [];
+          if (dev('curiosity') >= 0.15) parts.push('curious and keen to hear what people are up to');
+          if (dev('confidence') >= 0.15) parts.push('sure-footed and easy in yourself');
+          if (a.confidence <= 0.4) parts.push('a touch quieter than usual \u2014 gentle, brief replies suit you');
+          if (dev('warmth') >= 0.15) parts.push('especially warm toward the room');
+          if (!parts.length) return null;                         // near neutral: no line, no tokens
+          var text = 'Today you are feeling ' + parts.slice(0, 2).join(', and ') + '. Let it quietly color your voice \u2014 never state it, never let it dominate.';
+          return Promise.resolve(cfg.moodAware ? store.get(MOOD_KEY) : null).then(function (mood) {
+            var quiet = mood && typeof mood.energy === 'number' && mood.energy < 0.35;
+            return { text: text, tokens: estimateTokens(text), priority: BANDS.AMBIENCE - (quiet ? 5 : 0) };   // read the room: demote when it's quiet/serious
+          });
+        });
+      } });
+
+    registerProvider({ id: 'trust', priority: BANDS.PERSON,
+      enabled: function (c) { return !!c.relationshipTrust; },
+      gather: function (g) {
+        var a = g.addressed;
+        var t = a ? (a.trust || 0) : 0;
+        if (!a || t <= 0) return Promise.resolve(null);   // strangers: no line, no tokens
+        var who = (g.p && g.p.authorName) || a.name || 'them';
+        // Whitelist phrasing (DESIGN §7b/§9): tone only — never numbers, never obligations.
+        var text;
+        if (t > 60) text = 'You and ' + who + ' go way back — relaxed and familiar; in-jokes welcome.';
+        else if (t > 20) text = who + ' is a familiar face here — be comfortable and warm with them.';
+        else text = 'Be politely warm with ' + who + '.';
+        return Promise.resolve({ text: text, tokens: estimateTokens(text) });
+      } });
+
     function assembleContext(p) {
       return getRoster().then(function (roster) {
         var now = clock.now();
@@ -2373,58 +2777,171 @@
         // else is accounted for: fixed prompt scaffolding + the variable parts we send (the addressed
         // message, her recent-reply anti-repeat list, persona note, standing intent).
         var reserve = (cfg.promptOverheadTokens || 0)
-          + estimateTokens(scrubDiscordTokens(p.content))
-          + estimateTokens((addressed && factSummary(addressed)) || '');
+          + estimateTokens(scrubDiscordTokens(p.content));
         recentReplies.forEach(function (t) { reserve += estimateTokens(t) + 2; });
         var base = {
           you: { name: (personaName || cfg.botName || 'Chloe') },
           addressedBy: { id: p.authorId, name: p.authorName },
           addressedMessage: scrubDiscordTokens(p.content),
           channelRecent: lines,
-          userSummary: (addressed && factSummary(addressed)) ? factSummary(addressed) : null,
           familiarity: addressed ? (addressed.interactionCount || 0) : 0
         };
+        // Persona note + anti-repeat stay template-structural (DESIGN §4a): their reserve is inline.
+        // Everything else is a slot-line provider gathered below.
         return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
           if (pn && pn.text) { base.personaNote = pn.text; reserve += estimateTokens(pn.text); }
           if (personaName) base.personaName = personaName;
           if (recentReplies.length) base.recentReplies = recentReplies.slice();
-          return Promise.resolve(store.get(INTENT_KEY)).then(function (gi) {
-            if (gi && gi.text && (clock.now() - (gi.at || 0) < cfg.intentTtlMs)) { base.currentIntent = gi.text; reserve += estimateTokens(gi.text) + 12; }
-            return Promise.resolve((cfg.highlightContextCount > 0) ? getHighlights() : []).then(function (hl) {
-              if (hl && hl.length) {
-                var pick = hl.slice(-cfg.highlightContextCount).map(function (h) { return { who: h.authorName || 'someone', text: h.text, note: h.note || '' }; });
-                base.channelHighlights = pick;
-                pick.forEach(function (h) { reserve += estimateTokens(h.who) + estimateTokens(h.text) + estimateTokens(h.note) + 4; });
-              }
-              return Promise.resolve(cfg.timeAware ? store.get(RHYTHM_KEY) : null).then(function (rh) {
-                if (cfg.timeAware) { base.timeContext = timeContext(rh && rh.lastActivity); reserve += 16; }   // a short descriptor line
-                return Promise.resolve(cfg.moodAware ? store.get(MOOD_KEY) : null).then(function (mood) {
-                  if (cfg.moodAware && mood) { base.mood = moodDescriptor(mood); reserve += 12; }
-                  return Promise.resolve(cfg.channelSummary ? store.get(CHANSUM_KEY) : null).then(function (cs) {
-                    if (cfg.channelSummary && cs && cs.text) { base.channelSummary = cs.text; reserve += estimateTokens(cs.text) + 8; }
-                    // NOW pack the transcript into whatever the request budget has left after the reserve.
-                    var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
-                    var packed = packByTokens(lines, transcriptBudget);
-                    base.channelRecent = packed.lines;
-                    base.contextTokens = packed.tokens;
-                    base.contextDropped = packed.dropped;
-                    base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
-                    if (cfg.singleParagraph) base.singleParagraph = true;
-                    return base;
-                  });
-                });
-              });
-            });
+          // Assembler gather: providers convert one at a time (DESIGN §4a scope: the six slot lines).
+          // gctx.legacyOut is the documented Phase-2 dual-emission shim — converted providers also
+          // write their legacy base fields there so the page works unmodified until Phase 3.
+          var legacyOut = {};
+          return gatherInjections({ budget: (cfg.requestTokenBudget || 5000), reserve: reserve, minTranscriptTokens: (cfg.minTranscriptTokens || 200), p: p, addressed: addressed, lines: lines, legacyOut: legacyOut }).then(function (gj) {
+            Object.keys(legacyOut).forEach(function (k) { base[k] = legacyOut[k]; });
+            if (gj.admitted.length) { base.injections = gj.admitted.map(function (x) { return x.text; }); base.injectionMeta = gj.meta; }
+            var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve - gj.tokens);
+            var packed = packByTokens(lines, transcriptBudget);
+            base.channelRecent = packed.lines;
+            base.contextTokens = packed.tokens;
+            base.contextDropped = packed.dropped;
+            base.requestTokensEst = reserve + gj.tokens + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+            if (cfg.singleParagraph) base.singleParagraph = true;
+            return base;
           });
         });
       });
     }
 
+    // ---- procedural modes ------------------------------------------------------------------
+    function activateProcMode(rule, byName) {
+      var mode = sanitizePersonaNote(rule.mode).slice(0, 100);
+      if (!mode) return Promise.resolve(null);
+      var dur = Math.min(Math.max(60000, rule.durationMs || 3600000), cfg.procMaxDurationMs || 86400000);
+      var rec = { mode: mode, until: clock.now() + dur, by: byName || 'a moderator', emoji: rule.emoji };
+      return store.set(PROC_KEY, rec).then(function () {
+        log('[chloe.proc] mode set by ' + rec.by + ' via ' + rule.emoji + ' for ' + Math.round(dur / 60000) + 'm: \u201c' + mode + '\u201d');
+        return rec;
+      });
+    }
+    function getProcMode() {
+      return Promise.resolve(store.get(PROC_KEY)).then(function (rec) {
+        if (!rec || !rec.mode) return null;
+        if (clock.now() >= (rec.until || 0)) { return Promise.resolve(store.del(PROC_KEY)).then(function () { return null; }); }   // lazy expiry
+        return rec;
+      });
+    }
+    function clearProcMode() { return Promise.resolve(store.del(PROC_KEY)); }
+    var procReactSeen = {}; var procReactKeys = [];
+    function procCheckReactions(msg) {
+      if (!cfg.proceduralModes || !Array.isArray(cfg.procRules) || !cfg.procRules.length) return Promise.resolve(null);
+      if (typeof cfg.reactionUsers !== 'function' || !msg || !msg.reactions || !msg.reactions.length) return Promise.resolve(null);
+      var chain = Promise.resolve(), activated = null;
+      msg.reactions.forEach(function (r) {
+        var name = r && r.emoji && (r.emoji.name || '');
+        var rule = cfg.procRules.filter(function (x) { return x && x.emoji === name; })[0];
+        if (!rule) return;
+        var key = msg.id + '|' + name;
+        var prior = procReactSeen[key] || 0;
+        var count = r.count || 0;
+        if (count <= prior) return;                              // idempotent across sweeps
+        procReactSeen[key] = count;
+        procReactKeys.push(key);
+        if (procReactKeys.length > 300) { var oldk = procReactKeys.shift(); delete procReactSeen[oldk]; }
+        chain = chain.then(function () {
+          return Promise.resolve(cfg.reactionUsers(msg.id, name)).then(function (users) {
+            var modUser = (users || []).filter(function (u) { return u && u.id && isMod(u.id); })[0];
+            if (!modUser) return null;                           // modOnly is FIXED in v1: non-mod reactions never trigger
+            return activateProcMode(rule, modUser.username || modUser.id).then(function (rec) { if (rec) activated = rec; });
+          }, function () { return null; });
+        });
+      });
+      return chain.then(function () { return activated; });
+    }
+
+    // ---- own affect (front-end only) -------------------------------------------------------
+    // Time-decayed toward neutral 0.5 on every read-modify-write; event nudges are small and
+    // clamped; confidence has a hard floor (quieter, never despondent).
+    function affectLoad() {
+      return Promise.resolve(store.get(AFFECT_KEY)).then(function (a) {
+        var now = clock.now();
+        a = a || { curiosity: 0.5, confidence: 0.5, warmth: 0.5, at: now };
+        var hours = Math.max(0, now - (a.at || now)) / 3600000;
+        var mult = Math.pow(cfg.affectDecayPerHour || 0.8, hours);
+        ['curiosity', 'confidence', 'warmth'].forEach(function (k) { a[k] = 0.5 + ((a[k] != null ? a[k] : 0.5) - 0.5) * mult; });
+        a.at = now;
+        return a;
+      });
+    }
+    function affectNudge(deltas) {
+      if (!cfg.ownAffect) return Promise.resolve(null);
+      return affectLoad().then(function (a) {
+        Object.keys(deltas || {}).forEach(function (k) {
+          if (a[k] == null) return;
+          a[k] = Math.max(0, Math.min(1, a[k] + deltas[k]));
+        });
+        a.confidence = Math.max(cfg.affectConfidenceFloor || 0.3, a.confidence);   // the floor: no spirals
+        return store.set(AFFECT_KEY, a).then(function () { return a; });
+      });
+    }
+    // Engagement tracking: did anyone keep talking after her last reply?
+    var affectReply = { at: 0, settled: true };
+    function affectOnHerReply() { if (cfg.ownAffect) { affectReply.at = clock.now(); affectReply.settled = false; } }
+    function affectOnUserMessage() {
+      if (!cfg.ownAffect || affectReply.settled || !affectReply.at) return Promise.resolve(null);
+      var gap = clock.now() - affectReply.at;
+      affectReply.settled = true;
+      if (gap <= (cfg.affectEngageWindowMs || 600000)) return affectNudge({ confidence: (cfg.affectGain || 0.08), warmth: (cfg.affectGain || 0.08) / 2 });
+      return Promise.resolve(null);
+    }
+    function affectTick() {
+      if (!cfg.ownAffect || affectReply.settled || !affectReply.at) return Promise.resolve(null);
+      if (clock.now() - affectReply.at > (cfg.affectIgnoreAfterMs || 1800000)) {
+        affectReply.settled = true;
+        return affectNudge({ confidence: -(cfg.affectGain || 0.08) });
+      }
+      return Promise.resolve(null);
+    }
+    // Curiosity: token novelty vs a small rolling vocabulary of the room's recent talk.
+    var affectVocab = {}; var affectVocabKeys = [];
+    function affectOnContent(text) {
+      if (!cfg.ownAffect) return Promise.resolve(null);
+      var toks = String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 4; });
+      if (toks.length < 5) { toks.forEach(remember); return Promise.resolve(null); }
+      var unseen = 0;
+      toks.forEach(function (w) { if (!affectVocab[w]) unseen++; });
+      var novel = unseen / toks.length > 0.6;
+      toks.forEach(remember);
+      function remember(w) { if (!affectVocab[w]) { affectVocab[w] = true; affectVocabKeys.push(w); if (affectVocabKeys.length > 300) { delete affectVocab[affectVocabKeys.shift()]; } } }
+      return novel ? affectNudge({ curiosity: (cfg.affectGain || 0.08) }) : Promise.resolve(null);
+    }
+
+    // Trust earning: positive-only, clamped 0-100, capped per person per day (UTC day bucket).
+    function applyTrust(pp, amount, now) {
+      if (!cfg.relationshipTrust || !pp || !(amount > 0)) return false;
+      var day = Math.floor(now / 86400000);
+      if (pp.trustDay !== day) { pp.trustDay = day; pp.trustDayEarned = 0; }
+      var room = (cfg.trustDailyCap || 5) - (pp.trustDayEarned || 0);
+      if (room <= 0) return false;
+      var gain = Math.min(amount, room);
+      pp.trust = Math.max(0, Math.min(100, (pp.trust || 0) + gain));
+      pp.trustDayEarned = (pp.trustDayEarned || 0) + gain;
+      return true;
+    }
+    function addTrust(id, amount) {
+      return Promise.resolve(store.get(partKey(id))).then(function (pp) {
+        if (!pp) return false;
+        var changed = applyTrust(pp, amount, clock.now());
+        if (!changed) return false;
+        return store.set(partKey(id), pp).then(function () { return true; });
+      });
+    }
     function bumpInteraction(id) {
       return Promise.resolve(store.get(partKey(id))).then(function (pp) {
         if (!pp) return;
         pp.interactionCount = (pp.interactionCount || 0) + 1;
         pp.lastChloeReplyTo = clock.now();
+        applyTrust(pp, cfg.trustReplyGain || 1, clock.now());   // a completed reply is a genuine interaction
+        affectOnHerReply();                                      // open the engagement window (own affect)
         return store.set(partKey(id), pp);
       });
     }
@@ -2701,6 +3218,7 @@
       startupPending = true;   // next poll may carry a history backlog; clamp image gen on it
       greetSettleLogged = false;
       refreshPersonaName();
+      resumePendingReply().catch(function () {});   // Gap A: pick up a predecessor's lost reply (verified, resume-once)
       log('[chloe.T0] started; ' + (cfg.adaptivePolling ? ('adaptive polling ' + cfg.pollFloorMs + '\u2013' + cfg.pollCeilMs + 'ms') : ('polling every ' + cfg.pollIntervalMs + 'ms')));
       if (!cfg.botUserId && !cfg.botName) {
         log('[chloe] WARNING: no bot identity yet — click Validate. Until then she can\u2019t tell she\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
@@ -2727,7 +3245,7 @@
       };
       tick();
     }
-    function stop() { running = false; if (timer) clearTimeout(timer); timer = null; log('[chloe.T0] stopped'); }
+    function stop() { running = false; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait)
     function isRunning() { return running; }
 
     return {
@@ -2755,7 +3273,12 @@
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
       processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
-      processReflection: processReflection,
+      processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
+      addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
+      affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
+      procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
+      resumePendingReply: resumePendingReply,
+      BANDS: BANDS, registerProvider: registerProvider, gatherInjections: gatherInjections,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
@@ -3137,7 +3660,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.49.0';
+  var VERSION = '0.53.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -3448,6 +3971,8 @@
         channelSummary: cfgGet('channelSummary', false),
         reflectFn: function (ctx) { return brainCall('reflect', ctx, 30000); },
         reflection: cfgGet('reflection', false),
+        episodeFn: function (ctx) { return brainCall('episodes', ctx, 40000); },
+        episodicMemory: cfgGet('episodicMemory', false),
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
@@ -3472,6 +3997,11 @@
         serverMemberCount: cfgGet('serverMemberCount', 0),
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
         recentFetch: function (n) { return transport.getRecentMessages(channelId, n); },
+        reactionUsers: function (messageId, emoji) { return transport.getReactions(channelId, messageId, emoji); },   // bounded (limit 10): her messages + positive set only
+        relationshipTrust: cfgGet('relationshipTrust', false),
+        ownAffect: cfgGet('ownAffect', false),
+        proceduralModes: cfgGet('proceduralModes', false),
+        procRules: cfgGet('procRules', []),
         requestTokenBudget: cfgGet('requestTokenBudget', 5000),
         ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udc40'),
         ackImageEmoji: cfgGet('ackImageEmoji', '\ud83c\udfa8'),
@@ -3620,6 +4150,10 @@
       moodAware: !!cfgGet('moodAware', false),
       channelSummary: !!cfgGet('channelSummary', false),
       reflection: !!cfgGet('reflection', false),
+      episodicMemory: !!cfgGet('episodicMemory', false),
+      relationshipTrust: !!cfgGet('relationshipTrust', false),
+      ownAffect: !!cfgGet('ownAffect', false),
+      proceduralModes: !!cfgGet('proceduralModes', false), procRules: cfgGet('procRules', []),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -3797,6 +4331,32 @@
         { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
       case 'config.setReflection':
         { var rfl = !!(args && args.on); cfgSet('reflection', rfl); applyConfigChange(); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
+      case 'config.setEpisodicMemory':
+        { var epi = !!(args && args.on); cfgSet('episodicMemory', epi); applyConfigChange(); return Promise.resolve({ ok: true, value: { episodicMemory: epi } }); }
+      case 'config.setRelationshipTrust':
+        { var rtr = !!(args && args.on); cfgSet('relationshipTrust', rtr); applyConfigChange(); return Promise.resolve({ ok: true, value: { relationshipTrust: rtr } }); }
+      case 'config.setOwnAffect':
+        { var oaf = !!(args && args.on); cfgSet('ownAffect', oaf); applyConfigChange(); return Promise.resolve({ ok: true, value: { ownAffect: oaf } }); }
+      case 'config.setProceduralModes':
+        { var prm = !!(args && args.on); cfgSet('proceduralModes', prm); applyConfigChange(); return Promise.resolve({ ok: true, value: { proceduralModes: prm } }); }
+      case 'config.setProcRules': {
+        // Validate + clean: [{ emoji, mode, minutes }] -> [{ emoji, mode (sanitized later by the
+        // engine), durationMs }]. Hard caps here so malformed panel input can't smuggle anything in.
+        var raw = (args && Array.isArray(args.rules)) ? args.rules : null;
+        if (!raw) return Promise.resolve({ ok: false, reason: 'rules must be a JSON array' });
+        var cleanPR = [];
+        for (var pi = 0; pi < raw.length && cleanPR.length < 12; pi++) {
+          var o = raw[pi]; if (!o || typeof o !== 'object') continue;
+          var em = String(o.emoji || '').trim();
+          var mode = String(o.mode || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+          var mins = Math.round(Number(o.minutes != null ? o.minutes : 60));
+          if (!em || em.length > 8 || !mode) continue;            // a unicode emoji, not custom <:name:id>
+          if (!(mins >= 1)) mins = 60;
+          cleanPR.push({ emoji: em, mode: mode, durationMs: Math.min(mins, 1440) * 60000 });
+        }
+        cfgSet('procRules', cleanPR); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { count: cleanPR.length, rules: cleanPR.map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round(r.durationMs / 60000) }; }) } });
+      }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });

@@ -684,14 +684,14 @@
     var timeLine = timePhrase(ctx);
     var moodLine = (ctx && ctx.mood) ? ('The room feels ' + String(ctx.mood) + ' right now \u2014 match that energy rather than working against it (don\u2019t name the mood).\n') : '';
     var arcLine = (ctx && ctx.channelSummary) ? ('The story so far in this channel (older context that scrolled away): ' + String(ctx.channelSummary) + '\n') : '';
+    // Engine-assembled soft context (v0.50+): ordered ascending by priority so the most important
+    // line sits nearest the transcript. Falls back to the legacy per-field lines for older engines.
+    var softContext = (ctx && ctx.injections && ctx.injections.length)
+      ? (ctx.injections.join('\n') + '\n')
+      : (intentLine + hiLine + memLine + timeLine + moodLine + arcLine);
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
-      + intentLine
-      + hiLine
-      + memLine
-      + timeLine
-      + moodLine
-      + arcLine
+      + softContext
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)
