@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.46.0
+// @version      0.46.3
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -244,6 +244,12 @@
       decayFactor: 0.5,              // interactionCount *= this on a decayed return (never below 0)
       backfill: false,               // one-time: walk history backward to seed the roster
       backfillPageSize: 100, backfillMaxPages: 8,  // bounded + checkpointed; ingest only, never greets/replies
+      // On a cold start / after Reset State the cursor is empty, so the first poll pulls a chunk of
+      // recent history. Without a clamp, EVERY image request in that backlog fires at once. So on the
+      // startup batch, image generation is limited to the few most-recent user messages; normal image
+      // handling resumes on every poll after.
+      startupImageMax: 5,            // most-recent user messages eligible for image gen on the startup batch
+      startupBacklogThreshold: 8,    // a cold-start first poll bigger than this is treated as a history backlog (observe-only)
       maintenanceEveryPolls: 10      // run the quiet-sweep (active->quiet) every Nth poll, not every poll
     }, deps.config || {});
 
@@ -282,6 +288,7 @@
     var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
+    var afkNoticedKeys = [];             // insertion order, to bound afkNoticed (prevent a slow leak over a long session)
     var lastSawHumanAt = 0;              // when a human last spoke here (observation, always updated)
     function noteAuthorForLoop(isBot) {
       if (isBot) consecutiveBotTurns++;
@@ -465,6 +472,7 @@
     // it and (optionally) auto-highlight the message. Deduped per message id so re-seeing the same
     // message (e.g. a reaction sweep) doesn't double-count or re-highlight. Returns a small summary.
     var reactionSeen = {};   // messageId -> highest significant count already handled
+    var reactionSeenKeys = [];   // insertion order, to bound reactionSeen (prevent a slow leak over a long session)
     // Reaction sweep: reactions are often added AFTER a message scrolls past the poll cursor, so we
     // can't see them on the normal ?after= fetch. Periodically re-fetch a recent window (no cursor)
     // and re-score — processMessageReactions only acts on an INCREASED count, so this is idempotent.
@@ -487,6 +495,8 @@
       var prior = reactionSeen[msg.id] || 0;
       if (top.count <= prior) return Promise.resolve(null);   // already handled this (or a higher) count
       reactionSeen[msg.id] = top.count;
+      reactionSeenKeys.push(msg.id);
+      if (reactionSeenKeys.length > 500) { var old = reactionSeenKeys.shift(); delete reactionSeen[old]; }   // bound the in-memory dedup map
       var delta = top.count - prior;
       log('[chloe.react] significant reaction ' + emojiLabel(top.emoji) + ' x' + top.count + ' (threshold ' + sig.threshold + ') on ' + msg.id);
       return bumpReactionTally(top.emoji, delta).then(function () {
@@ -506,6 +516,7 @@
     var lastCmdAt = {};                  // per-command last-run clock (for entry.cooldownMs)
     var lastActAt = 0;                   // global last-action clock (light global gap + volunteer cooldown)
     var startedAt = 0;                   // when the loop started (drives the greeting settle window)
+    var startupPending = true;           // the first poll after start handles a history backlog specially (image clamp)
     var pollCount = 0;                   // drives the periodic quiet-sweep cadence
     var warnedEmpty = false;             // one-time empty-content (Message Content Intent) notice
     var greetSettleLogged = false;       // one-time "suppressing greetings (just started)" notice
@@ -535,6 +546,12 @@
     function replyEnabled() { return typeof cfg.respond === 'function' && typeof cfg.send === 'function'; }
     function hasPendingReply() { return Object.keys(reply.queue).length > 0; }
     function inGreetSettle(now) { return cfg.greetSettleMs > 0 && startedAt && (now - startedAt) < cfg.greetSettleMs; }
+    // The proactive lane (lull filler, favorite check-ins, scheduled beats) reads timestamps that
+    // PERSIST across restarts — lastActivity, last-checkin, beat schedules. Right after start those
+    // reflect the pre-restart world, so without a guard the very first poll could fire a lull ("it got
+    // quiet…") or a check-in when the only thing that changed is the bot coming online. Reuse the same
+    // brief settle window greetings use: observe one cycle before acting proactively.
+    function inProactiveSettle(now) { return inGreetSettle(now); }
     function indicateTyping() { if (typeof cfg.typing === 'function') { try { Promise.resolve(cfg.typing(cfg.channelId)).catch(function () {}); } catch (e) {} } }
     // Fast-ack: the Discord side is instant even while the Perchance brain is slow (up to ~60s with
     // cooldowns). At the moment she COMMITS to a reply/image we react to the triggering message with
@@ -1366,7 +1383,15 @@
 
     // Process commands and select reply/volunteer/greeting candidates from the messages that are
     // NOT commands and NOT from suppressed users. State gates BEFORE judgment runs.
-    function processCommandsAndSelect(incoming, touched) {
+    function processCommandsAndSelect(incoming, touched, imageEligible, isStartupBatch) {
+      // imageEligible: null = normal (any message may trigger image gen); an object {id:true} = startup
+      // clamp, only those message ids may trigger image gen (the rest are ingested but never painted).
+      // isStartupBatch: true on the first poll after a COLD start / Reset State (no cursor), where
+      // `incoming` is a slice of history, not live messages. We seed state from it but must NOT replay
+      // historical ACTIONS — no re-running old commands, no re-moderating old messages, no replying to
+      // a stale mention. (Greetings are already settled separately; images use the 5-recent clamp.)
+      // A WARM restart (cursor present) is genuine catch-up and is never treated as a startup batch.
+      function mayPaint(m) { return !imageEligible || !!imageEligible[m.id]; }
       var authorIds = [];
       incoming.forEach(function (m) { if (authorIds.indexOf(m.author.id) < 0) authorIds.push(m.author.id); });
       return Promise.all(authorIds.map(function (id) { return Promise.resolve(store.get(partKey(id))); })).then(function (parts) {
@@ -1380,9 +1405,13 @@
           chain = chain.then(function () {
             var c = parseCommand(m.content);
             if (c) {
+              // Cold-start backlog: don't replay historical commands. EXCEPTION: the image command
+              // follows the 5-most-recent image clamp instead (the user wants recent images on startup).
+              if (isStartupBatch && c.cmd !== 'image') { log('[chloe.T3] startup: not replaying a backlog command (' + c.cmd + ')'); return; }
               c.messageId = m.id; c.authorName = m.author.username;   // for queue-ack reaction + caption
               if (m.referenced_message) c.referenced = { text: m.referenced_message.content || '', authorName: (m.referenced_message.author && m.referenced_message.author.username) || '' };
               commandCount++; commandAuthors[m.author.id] = true;
+              if (c.cmd === 'image' && !mayPaint(m)) { log('[chloe.img] startup: skipping a backlog image command'); return; }   // startup clamp
               if (c.cmd === 'forget') {
                 var fa = String(c.rawArgs || '').trim();
                 if (fa && !/^me$/i.test(fa) && cfg.factMemory) {   // "forget <a thing>" drops matching facts, keeps the person
@@ -1417,6 +1446,7 @@
                     if (!a) return;
                     var key = id;
                     if (now - (afkNoticed[key] || 0) < cfg.afkNoticeCooldownMs) return;   // don't spam the same notice
+                    if (!(key in afkNoticed)) { afkNoticedKeys.push(key); if (afkNoticedKeys.length > 500) { var oldK = afkNoticedKeys.shift(); delete afkNoticed[oldK]; } }
                     afkNoticed[key] = now;
                     notices.push((a.name || 'they') + ' is away' + (a.reason ? ' (' + a.reason.slice(0, 80) + ')' : '') + ' \u2014 since ' + humanGap(now - a.since) + ' ago');
                   });
@@ -1427,7 +1457,7 @@
             // Auto-mod watches everyone except mods, BEFORE the engagement-suppression gate, so a
             // repeat offender who is already ignored/timed-out still escalates up the strike ladder.
             // Skip only the terminal soft-ban (already maximally handled reversibly — re-moderating is moot).
-            if (autoModEnabled() && !isMod(m.author.id) && stateById[m.author.id] !== 'soft-ban') {
+            if (autoModEnabled() && !isStartupBatch && !isMod(m.author.id) && stateById[m.author.id] !== 'soft-ban') {
               var rule = matchAutoMod(m.content);
               if (rule) {
                 commandAuthors[m.author.id] = true;   // handled — don't also reply/greet this person this batch
@@ -1443,7 +1473,7 @@
             if (stateById[m.author.id] && stateById[m.author.id] !== 'active') return; // suppressed: invisible to engagement
             if (engageMode === 'locked' && !isMod(m.author.id)) return;   // raid lockdown: only mods get engagement (auto-mod above still ran)
             var addressed = isAddressed(m.content) || (engageMode === 'open');
-            if (imageEnabled() && addressed) {
+            if (imageEnabled() && addressed && mayPaint(m)) {
               var imgReq = parseImageRequest(m.content);
               if (imgReq) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
@@ -1463,11 +1493,11 @@
                 return;
               }
             }
-            if (replyEnabled() && addressed) {
+            if (replyEnabled() && addressed && !isStartupBatch) {
               reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
-            } else if (gateEnabled() && engageMode === 'normal') {
+            } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
               gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
             }
             });   // end afkChain.then wrapper
@@ -1552,6 +1582,7 @@
     }
     function processBeats() {
       if (!beatsEnabled() || engageMode === 'locked' || reply.replying || paint.painting) return Promise.resolve(null);
+      if (inProactiveSettle(clock.now())) return Promise.resolve(null);   // don't fire a scheduled beat on the first poll after start
       var now = clock.now();
       return Promise.resolve(store.get(BEATS_KEY)).then(function (state) {
         state = state || {};
@@ -1598,6 +1629,7 @@
     function processLull() {
       if (!cfg.lullFiller || typeof cfg.lullFn !== 'function') return Promise.resolve(null);
       if (engageMode === 'locked' || reply.replying || paint.painting || hasPendingReply()) return Promise.resolve(null);
+      if (inProactiveSettle(clock.now())) return Promise.resolve(null);   // don't fill a "lull" that's really just startup
       if (botLoopReplyChance() < 1) return Promise.resolve(null);        // not into a bot-only loop
       if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);
       var now = clock.now();
@@ -1637,6 +1669,7 @@
       if (!cfg.checkins || typeof cfg.checkinFn !== 'function') return Promise.resolve(null);
       if (engageMode !== 'normal' || reply.replying || paint.painting || hasPendingReply()) return Promise.resolve(null);
       if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);
+      if (inProactiveSettle(clock.now())) return Promise.resolve(null);   // observe before pinging an "absent" favorite on startup
       var now = clock.now();
       return Promise.resolve(store.get(CHECKIN_KEY)).then(function (ci) {
         ci = (ci && typeof ci === 'object') ? ci : { __last: 0, byUser: {} };
@@ -1855,7 +1888,22 @@
           var withText = 0; incoming.forEach(function (m) { if (String(m.content || '').trim()) withText++; });
           if (withText === 0) { warnedEmpty = true; log('[chloe] NOTE: ingested ' + incoming.length + ' message(s) with EMPTY content. If those messages had text, enable the Message Content Intent (Discord Dev Portal \u2192 Bot \u2192 Privileged Gateway Intents). Without it she can\u2019t read non-mention messages.'); }
         }
-        // (candidate selection happens after ingest, so it can be gated by mod state — see below)
+        // Startup backlog handling: on the first poll after start with no cursor (cold start / Reset
+        // State), `incoming` can be a chunk of HISTORY. We must not replay historical actions from it.
+        // But a fresh channel's first poll might just be a few genuinely-live messages — those should
+        // be handled normally. So "backlog" = the batch is large enough to clearly be history, not a
+        // live exchange. Below the threshold, treat it as normal live traffic.
+        var imageEligible = null;
+        var bigBacklog = incoming.length > (cfg.startupBacklogThreshold || 8);
+        var isStartupBatch = startupPending && !ctx.cursor && bigBacklog;
+        if (isStartupBatch) {
+          var humans = incoming.filter(function (m) { return m.author && !m.author.bot && String(m.content || '').trim(); });
+          var keep = humans.slice(-(cfg.startupImageMax || 5));
+          imageEligible = {};
+          keep.forEach(function (m) { imageEligible[m.id] = true; });
+          if (incoming.length > keep.length) log('[chloe.img] startup: image gen limited to the ' + keep.length + ' most-recent message(s) of a ' + incoming.length + '-message backlog');
+        }
+        startupPending = false;   // only the first poll after start gets the clamp
         return Promise.all([
           Promise.resolve(store.get(RING_KEY)),
           Promise.resolve(store.listIndex())
@@ -1873,7 +1921,7 @@
             // even for messages she won't reply to — she keeps watching the room either way.
             noteAuthorForLoop(!!(m.author && m.author.bot));
             chain = chain.then(function () { return ingestOne(m, ring, indexSet, touched); });
-            chain = chain.then(function () { return processMessageReactions(m); });   // size-relative reaction significance
+            if (!isStartupBatch) chain = chain.then(function () { return processMessageReactions(m); });   // size-relative reaction significance (not on the history backlog)
           });
 
           return chain.then(function () {
@@ -1919,7 +1967,7 @@
                 };
                 log('[chloe.T0] poll', summary.fetched + ' fetched, ' + summary.ingested +
                   ' ingested, ' + summary.newUsers.length + ' new, cursor=' + summary.cursor);
-                return processCommandsAndSelect(incoming, touched).then(function (t3) {
+                return processCommandsAndSelect(incoming, touched, imageEligible, isStartupBatch).then(function (t3) {
                   if (t3 && t3.commands) summary.commands = t3.commands;
                   var imageJob = kickImage();   // fire-and-forget: image broker threads with text; never blocks the loop
                   if (imageJob) summary.imageJob = imageJob;
@@ -2452,6 +2500,7 @@
       if (!cfg.channelId) throw new Error('[chloe.T0] no channelId configured');
       running = true;
       startedAt = clock.now();
+      startupPending = true;   // next poll may carry a history backlog; clamp image gen on it
       greetSettleLogged = false;
       refreshPersonaName();
       log('[chloe.T0] started; ' + (cfg.adaptivePolling ? ('adaptive polling ' + cfg.pollFloorMs + '\u2013' + cfg.pollCeilMs + 'ms') : ('polling every ' + cfg.pollIntervalMs + 'ms')));
@@ -2842,7 +2891,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.46.0';
+  var VERSION = '0.46.3';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -3291,6 +3340,7 @@
 
   function validate() {
     return transport.getMe().then(function (me) {
+      if (!me || !me.id) return { ok: false, reason: 'no identity returned (check the token)' };
       cfgSet('botUserId', me.id); cfgSet('botName', me.username || '');
       applyConfigChange();  // rebuild (and restart if live) with the fresh identity
       maybeDetectMemberCount();   // fire-and-forget: scale reaction significance to the server
@@ -3587,10 +3637,11 @@
     if (d.kind !== 'req') return;
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
     // The page now fans a request out to several candidate frames so it reaches us regardless of
-    // embed topology; if more than one reaches this listener, only handle the first (replies are
-    // nonce-matched on the page, but a config command must not double-apply).
+    // embed topology. If more than one copy reaches this listener, handle the FIRST and drop the
+    // rest SILENTLY — sending a second (e.g. {ok:true,value:null}) reply could win the race on the
+    // page and clobber the real result (this broke Validate Token: res.value was null).
     if (nonce) {
-      if (seenReqNonces.has(nonce)) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: true, value: null, dup: true }, replyTarget(origin)); } catch (e) {} return; }
+      if (seenReqNonces.has(nonce)) return;   // duplicate fan-out copy: ignore, the first copy replies
       seenReqNonces.add(nonce);
       if (seenReqNonces.size > 400) { var it = seenReqNonces.values().next(); if (!it.done) seenReqNonces.delete(it.value); }
     }
@@ -3689,7 +3740,14 @@
       chain = chain.then(function () {
         return st.listIndex().then(function (ids) {
           (ids || []).forEach(function (id) { GM_deleteValue(NS + pfx + 'u:' + id); });
-          ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'modlog', 'backfill:' + ch].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
+          // clear archived ("historical friend") users too, via their index
+          var archIdx = []; try { archIdx = JSON.parse(GM_getValue(NS + pfx + 'arch:index:' + ch, '[]')) || []; } catch (e) {}
+          archIdx.forEach(function (id) { GM_deleteValue(NS + pfx + 'arch:' + ch + ':u:' + id); });
+          // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
+          ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
+           'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
+           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'arch:index:' + ch,
+           'modlog', 'backfill:' + ch].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
       });

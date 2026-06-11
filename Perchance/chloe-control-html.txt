@@ -1139,7 +1139,8 @@
   byId('validateBtn').addEventListener('click', function () {
     log('validating token via /users/@me ...');
     call('token.validate', null, 15000).then(function (res) {
-      if (res.ok) log('token OK -> ' + res.value.username + ' (' + res.value.id + '), bot=' + res.value.bot);
+      if (res.ok && res.value) log('token OK -> ' + res.value.username + ' (' + res.value.id + '), bot=' + res.value.bot);
+      else if (res.ok) log('token validated, but the userscript returned no identity (try again)');
       else log('token validation failed: ' + (res.reason || 'error') + (res.body ? ' ' + JSON.stringify(res.body) : ''));
       refresh();
     });
