@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.36.0
+// @version      0.37.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -136,6 +136,9 @@
         remindme:  { args: { minutes: 'int', text: 'str' }, required: ['minutes', 'text'] }
       },
       jobMaxReminderMin: 1440,   // 24h cap on remindme
+      reminderMaxPerUser: 5,     // how many pending reminders one person may hold
+      reminderMaxTotal: 50,      // global pending-reminder cap per channel
+      reminderTextMax: 280,      // reminder text length cap
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -187,6 +190,9 @@
     // survives across polls and rides in every response context, so she holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
     // to each message in isolation. The brain may set it; it decays if not reaffirmed.
+    var REMIND_KEY = 'reminders:' + cfg.channelId;   // poll-driven scheduled reminders (front-end only,
+    // no AI call). Checked each poll rather than via setTimeout, because background tabs throttle
+    // timers to ~1/min — a poll-driven check fires reliably on the first poll after the due time.
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
 
@@ -235,6 +241,63 @@
       });
     }
     function clearIntent() { return Promise.resolve(store.del(INTENT_KEY)); }
+
+    // ---- reminders (poll-driven, front-end only, no AI call) --------------------------------
+    function getReminders() { return Promise.resolve(store.get(REMIND_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
+    function scheduleReminder(opts) {
+      var minutes = Number(opts && opts.minutes);
+      if (!isFinite(minutes) || minutes < 1) return Promise.resolve({ ok: false, reason: 'minutes must be at least 1' });
+      if (minutes > (cfg.jobMaxReminderMin || 1440)) return Promise.resolve({ ok: false, reason: 'reminders are capped at ' + (cfg.jobMaxReminderMin || 1440) + ' minutes' });
+      var text = String((opts && opts.text) || '').trim().slice(0, cfg.reminderTextMax);
+      if (!text) return Promise.resolve({ ok: false, reason: 'a reminder needs some text' });
+      return getReminders().then(function (list) {
+        if (list.length >= cfg.reminderMaxTotal) return { ok: false, reason: "i'm holding too many reminders right now \u2014 try again later" };
+        var mine = list.filter(function (r) { return r.authorId === opts.authorId; });
+        if (mine.length >= cfg.reminderMaxPerUser) return { ok: false, reason: "you've already got " + mine.length + ' reminders pending with me \u2014 that\u2019s my limit per person' };
+        var fireAt = clock.now() + minutes * 60000;
+        var rem = { id: 'r' + clock.now() + '_' + Math.floor(Math.random() * 1e6), authorId: opts.authorId, authorName: opts.authorName || '', text: text, fireAt: fireAt, dm: !!opts.dm, setAt: clock.now() };
+        list.push(rem);
+        return Promise.resolve(store.set(REMIND_KEY, list)).then(function () { return { ok: true, value: rem }; });
+      });
+    }
+    function listReminders(authorId) {
+      return getReminders().then(function (list) { return authorId ? list.filter(function (r) { return r.authorId === authorId; }) : list; });
+    }
+    function clearReminders(authorId) {
+      return getReminders().then(function (list) {
+        var kept = authorId ? list.filter(function (r) { return r.authorId !== authorId; }) : [];
+        var removed = list.length - kept.length;
+        return Promise.resolve(store.set(REMIND_KEY, kept)).then(function () { return removed; });
+      });
+    }
+    // Called each poll. Fires any reminder whose time has come, delivers it (channel or DM), and
+    // removes it. Delivery is a plain send — it doesn't consume the reply budget or judge path,
+    // because the person explicitly asked for it at this time; it's a utility, not her "voice".
+    function processReminders() {
+      if (typeof cfg.send !== 'function') return Promise.resolve(null);
+      return getReminders().then(function (list) {
+        if (!list.length) return null;
+        var now = clock.now(), due = [], keep = [];
+        list.forEach(function (r) { (r.fireAt <= now ? due : keep).push(r); });
+        if (!due.length) return null;
+        return Promise.resolve(store.set(REMIND_KEY, keep)).then(function () {
+          var chain = Promise.resolve(), fired = [];
+          due.forEach(function (r) {
+            chain = chain.then(function () {
+              var who = r.authorName || 'you';
+              var body = '\u23f0 ' + (r.authorId ? '<@' + r.authorId + '> ' : '') + 'reminder: ' + r.text;
+              var target = Promise.resolve(cfg.channelId);
+              if (r.dm && typeof cfg.openDM === 'function') target = Promise.resolve(cfg.openDM(r.authorId)).then(function (id) { return id || cfg.channelId; }, function () { return cfg.channelId; });
+              return target.then(function (chId) {
+                return Promise.resolve(cfg.send(chId, body)).then(function () { fired.push(r.id); log('[chloe.remind] fired for ' + who + (r.dm ? ' (dm)' : '') + ': ' + r.text.slice(0, 40)); }, function () {});
+              });
+            });
+          });
+          return chain.then(function () { return { fired: fired.length }; });
+        });
+      });
+    }
+
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
@@ -869,7 +932,10 @@
             });
           }
           if (task === 'remindme') {
-            return Promise.resolve({ ack: 'reminders are coming soon (validated: ' + a.minutes + 'm \\u2014 "' + a.text + '")' });
+            return scheduleReminder({ minutes: a.minutes, text: a.text, authorId: modId, authorName: '', dm: !!a.dm }).then(function (res) {
+              if (!res.ok) return { ack: 'could not set that reminder: ' + res.reason };
+              return { ack: "ok \u2014 i'll remind you in " + a.minutes + 'm: \u201c' + String(a.text).slice(0, 60) + '\u201d' };
+            });
           }
           return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
         } },
@@ -887,6 +953,32 @@
           var ack = 'queued: "' + v.prompt.slice(0, 60) + '" (' + v.resolution + (v.guidanceScale != null ? ', cfg ' + v.guidanceScale : '') + (v.removeBackground ? ', bg removed' : '') + (v.dm ? ', dm' : '') + ')';
           if (parsed.notes && parsed.notes.length) ack += ' \u2014 note: ' + parsed.notes.join('; ');
           return Promise.resolve({ ack: ack });
+        } },
+      { verb: 'remind',    modOnly: false, help: 'remind <10m|2h|1d> <what>', handler: function (modId, c) {
+          var args = String(c.rawArgs || '').trim();
+          var m = args.match(/^(?:me\s+)?(?:in\s+)?(\d+)\s*([smhd])\b[\s,:-]*(.+)$/i) || args.match(/^(?:me\s+)?(.+?)\s+in\s+(\d+)\s*([smhd])\b$/i);
+          if (!m) return Promise.resolve({ ack: 'usage: ' + cfg.commandPrefix + ' remind 10m take the pizza out (or 2h / 1d)' });
+          var minutes, text;
+          if (m.length === 4 && /^\d+$/.test(m[1])) { minutes = Math.round(durToMs(m[1], m[2]) / 60000); text = m[3]; }
+          else { minutes = Math.round(durToMs(m[2], m[3]) / 60000); text = m[1]; }
+          if (minutes < 1) minutes = 1;
+          var dm = /\b(dm|privately|in private)\b/i.test(args);
+          if (dm) text = text.replace(/\b(in (a|my) )?(dm|privately|in private)\b/ig, '').trim();
+          return scheduleReminder({ minutes: minutes, text: text, authorId: modId, authorName: c.authorName || '', dm: dm }).then(function (res) {
+            if (!res.ok) return { ack: res.reason };
+            var when = minutes >= 1440 ? (Math.round(minutes / 1440) + 'd') : minutes >= 60 ? (Math.round(minutes / 60) + 'h') : (minutes + 'm');
+            return { ack: "got it \u2014 i'll remind you in " + when + (dm ? ' (via dm)' : '') + ': \u201c' + text.slice(0, 80) + '\u201d' };
+          });
+        } },
+      { verb: 'reminders', modOnly: false, help: 'reminders (list yours) / reminders clear', handler: function (modId, c) {
+          var arg = String(c.rawArgs || '').trim().toLowerCase();
+          if (arg === 'clear' || arg === 'cancel') return clearReminders(modId).then(function (n) { return { ack: n ? ('cleared ' + n + ' reminder' + (n === 1 ? '' : 's')) : 'you had no reminders pending' }; });
+          return listReminders(modId).then(function (list) {
+            if (!list.length) return { ack: 'you have no reminders pending' };
+            var now = clock.now();
+            var lines = list.slice(0, 10).map(function (r) { var mins = Math.max(0, Math.round((r.fireAt - now) / 60000)); return '\u2022 in ' + (mins >= 60 ? (Math.round(mins / 60) + 'h') : (mins + 'm')) + ': ' + r.text.slice(0, 60); });
+            return { ack: 'your reminders:\n' + lines.join('\n') };
+          });
         } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
@@ -1391,11 +1483,14 @@
                   var imageJob = kickImage();   // fire-and-forget: image broker threads with text; never blocks the loop
                   if (imageJob) summary.imageJob = imageJob;
                   summary.engageMode = engageMode;
+                  // Due reminders fire first — they're front-end-only and time-critical, so they
+                  // shouldn't wait behind a slow generation. (Promise resolves fast; AI-free.)
+                  var reminderJob = processReminders().then(function (rr) { if (rr && rr.fired) summary.reminders = rr.fired; });
                   // The text lane (reply -> volunteer -> greet -> beat) is one promise. By default it's
                   // awaited so the poll resolves only once it's done (every harness relies on this). With
                   // backgroundText on, it's fire-and-forget (exposed as summary.textJob) so a long
                   // generation never stalls the poll loop — the per-lane locks still prevent overlap.
-                  var textLane = processReply().then(function (replied) {
+                  var textLane = reminderJob.then(function () { return processReply(); }).then(function (replied) {
                     if (replied) summary.replied = replied;
                     return processGate();
                   }).then(function (acted) {
@@ -1749,6 +1844,7 @@
       estimateTokens: estimateTokens, packByTokens: packByTokens,
       parseImageJson: parseImageJson,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
+      scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
@@ -2083,7 +2179,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.36.0';
+  var VERSION = '0.37.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.

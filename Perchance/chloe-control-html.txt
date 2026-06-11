@@ -209,6 +209,7 @@
         <label class="chip"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
         <label class="chip"><input type="checkbox" id="dmChk"> reply in DMs she's opened</label>
         <label class="chip"><input type="checkbox" id="ackChk"> instant status reactions (while she generates)</label>
+        <label class="chip"><input type="checkbox" id="spChk"> limit her to one paragraph per message</label>
       </div>
     </div>
     <div class="card">
@@ -348,6 +349,36 @@
       <div class="note">
         In the Behavior tab, <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> has her introduce herself to newcomers and welcome people back, warmer the better she knows them &mdash; an auto-setup for new users. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets her judge when she can helpfully join a thread she wasn&rsquo;t directly addressed in. Both honor moderation, lockdown mode, and the output gates.
       </div>
+    </div>
+    <div class="card">
+      <h2>Power command: <code>!chloe image {json}</code></h2>
+      <div class="note">
+        Anyone can request an image in plain language (&ldquo;chloe draw a red dragon over a city&rdquo;), but for precise control over the generator&rsquo;s real knobs, send a JSON object. Only options the Stable&nbsp;Diffusion&nbsp;1.5 backend actually honors are exposed:
+      </div>
+      <div class="codehead">Example</div>
+      <div class="note"><code>!chloe image {"prompt":"a red dragon over a neon city","resolution":"768x512","guidanceScale":11,"removeBackground":false,"weights":{"detailed":1.4,"misty":1.2},"dm":false}</code></div>
+      <div class="codehead">Fields</div>
+      <div class="note">
+        <strong>prompt</strong> (required) &mdash; the description; an empty prompt is refused because it hangs the backend forever.<br>
+        <strong>resolution</strong> &mdash; one of <code>512x512</code>, <code>512x768</code>, <code>768x512</code>, <code>768x768</code> (anything else snaps to a sensible default).<br>
+        <strong>guidanceScale</strong> &mdash; 1&ndash;30 (default 7); how strictly it follows the prompt.<br>
+        <strong>removeBackground</strong> &mdash; <code>true</code> cuts the background client-side and returns a transparent PNG.<br>
+        <strong>weights</strong> &mdash; <code>{"term":1.4}</code> emphasises words via A1111 parentheses <code>(term:1.4)</code>; values 0&ndash;2.<br>
+        <strong>dm</strong> &mdash; <code>true</code> delivers privately.
+      </div>
+      <div class="note">
+        <strong>Honest limits:</strong> <code>negativePrompt</code> and <code>seed</code> are accepted but the backend silently ignores both &mdash; Chloe will say so rather than pretend. For &ldquo;negative&rdquo; effects, describe what you <em>do</em> want instead.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Reminders</h2>
+      <div class="note">
+        Anyone can ask Chloe to remind them later &mdash; it&rsquo;s handled entirely on the front-end (no AI call), and fires on the next poll after it&rsquo;s due, so it works even when the tab is in the background.
+      </div>
+      <div class="codehead">Set one</div>
+      <div class="note"><code>!chloe remind 10m take the pizza out</code> &nbsp;&middot;&nbsp; <code>!chloe remind 2h stretch</code> &nbsp;&middot;&nbsp; <code>!chloe remind 1d renew the cert</code><br>Add <em>privately</em> to get it as a DM: <code>!chloe remind 30m privately call the bank</code>.</div>
+      <div class="codehead">Manage</div>
+      <div class="note"><code>!chloe reminders</code> lists yours; <code>!chloe reminders clear</code> cancels them. Limit is a few pending per person.</div>
     </div>
     <div class="card">
       <h2>Troubleshooting</h2>
@@ -541,15 +572,23 @@
     lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
     var who = (ctx && ctx.addressedBy && ctx.addressedBy.name) ? ctx.addressedBy.name : 'someone';
+    var intentLine = (ctx && ctx.currentIntent) ? ('Right now you are quietly focused on: ' + String(ctx.currentIntent) + '. Let that guide your reply without stating it outright.\n') : '';
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
+      + intentLine
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)
-      + 'Do not prefix your reply with your name.';
-    return Promise.resolve(ai({ instruction: instruction, startWith: '' })).then(function (result) {
-      var text = String(result || '').trim();      // boxed-String unwrap (skill 0.1)
-      return { ok: !!text, value: text };
+      + 'Do not prefix your reply with your name. '
+      + 'If (and only if) your sense of what you are trying to do in this channel has meaningfully changed, you may add ONE final line starting with "INTENT:" naming your current aim in a few words; otherwise omit it.';
+    var stops = ['\n\n[[', '\n[['];                          // AICC turn-marker stops: never speak as the next person
+    if (ctx && ctx.singleParagraph) stops.unshift('\n\n');   // mod opt-in: limit her to one paragraph
+    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: stops })).then(function (result) {
+      var raw = String(result || '').trim();      // boxed-String unwrap (skill 0.1)
+      var intent = null;
+      var mIntent = raw.match(/(^|\n)\s*INTENT:\s*(.+)\s*$/i);
+      if (mIntent) { intent = mIntent[2].trim().slice(0, 120); raw = raw.slice(0, mIntent.index).trim(); }
+      return { ok: !!raw, value: raw, intent: intent };
     }).catch(function (e) { return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
@@ -609,7 +648,10 @@
     try { if (!window.__chloePaint) window.__chloePaint = new Map(); } catch (e) {}
     var reqId = 'p' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
     dlog('paint: requesting top-panel generation', resolution, JSON.stringify(prompt.slice(0, 60)));
-    try { trigger({ reqId: reqId, prompt: prompt, resolution: resolution }); }
+    var trig = { reqId: reqId, prompt: prompt, resolution: resolution };
+    if (args && args.guidanceScale != null) trig.guidanceScale = args.guidanceScale;
+    if (args && args.removeBackground) trig.removeBackground = true;
+    try { trigger(trig); }
     catch (e) { return Promise.resolve({ ok: false, reason: 'paint trigger failed: ' + String((e && e.message) || e) }); }
     return new Promise(function (resolve) {
       var step = 250, waited = 0, max = 110000;
@@ -691,8 +733,8 @@
       + 'Respond with ONLY a JSON object and nothing else, of the form ' + shape + ' '
       + 'where action is "reply", "react", or "ignore", confidence is 0 to 1, '
       + 'and emoji is one emoji when action is "react".';
-    return Promise.resolve(ai({ instruction: instruction, startWith: '' })).then(function (result) {
-      var v = parseJudge(String(result || ''));
+    return Promise.resolve(ai({ instruction: instruction, startWith: '{', hideStartWith: true, stopSequences: ['}'] })).then(function (result) {
+      var v = parseJudge('{' + String(result || '') + '}');
       dlog('judge:', v.action, 'conf=' + v.confidence, v.parsed ? ('(model decision over ' + lines.length + ' lines)') : '(parse failed -> safe ignore)');
       return { ok: true, value: v };
     }).catch(function (e) { dlog('judge: ai call failed -> ignore:', String((e && e.message) || e)); return { ok: true, value: { action: 'ignore', confidence: 0 } }; });
@@ -742,6 +784,7 @@
     var mc = byId('memChk'); if (mc) mc.checked = !!s.memberCheck;
     var dc = byId('dmChk'); if (dc) dc.checked = !!s.dmReplies;
     var ac = byId('ackChk'); if (ac) ac.checked = (s.ackReactions !== false);
+    var sp = byId('spChk'); if (sp) sp.checked = !!s.singleParagraph;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -963,6 +1006,11 @@
   byId('ackChk').addEventListener('change', function () {
     call('config.setAckReactions', { on: byId('ackChk').checked }).then(function (res) {
       log(res && res.ok ? ('status reactions: ' + res.value.ackReactions) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('spChk').addEventListener('change', function () {
+    call('config.setSingleParagraph', { on: byId('spChk').checked }).then(function (res) {
+      log(res && res.ok ? ('one-paragraph replies: ' + res.value.singleParagraph) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('backfillChk').addEventListener('change', function () {
