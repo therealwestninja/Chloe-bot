@@ -210,6 +210,8 @@
         <label class="chip"><input type="checkbox" id="dmChk"> reply in DMs she's opened</label>
         <label class="chip"><input type="checkbox" id="ackChk"> instant status reactions (while she generates)</label>
         <label class="chip"><input type="checkbox" id="spChk"> limit her to one paragraph per message</label>
+        <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
+        <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
       </div>
     </div>
     <div class="card">
@@ -393,6 +395,24 @@
       </div>
     </div>
     <div class="card">
+      <h2>Reactions she notices</h2>
+      <div class="note">
+        Chloe watches the emoji reactions on messages (Star, fire, heart, pin, whatever your room uses) and weighs them <em>relative to server size</em> &mdash; 1&ndash;2 reactions matter a lot in a 50-person server but are noise in one with thousands. When a message&rsquo;s reactions cross that size-scaled line she tallies the emoji and auto-saves the message as a Highlight. <code>!chloe reactions</code> shows the reactions this room values most. Member count is detected automatically (or set it manually if you&rsquo;d rather). Because reactions often land after a message scrolls by, she also re-scans a recent window periodically to catch late ones. All front-end &mdash; no AI call.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Proactive presence (Discord-paced)</h2>
+      <div class="note">
+        With the real polling loop in place, Chloe can act when <em>nothing</em> is happening &mdash; but on Discord time, not Twitch time. A small community moves slowly, so these triggers are measured in <strong>days</strong>, not seconds. <strong>Break the silence:</strong> if a room was chatting and then goes quiet for about a day (and was active within the past week), she may post a light opener tied to what was being discussed &mdash; never in a long-dead channel. <strong>Favorite check-ins:</strong> if someone she talks with often hasn&rsquo;t been seen in a few days, she can post a warm &ldquo;haven&rsquo;t seen you in a while,&rdquo; @mentioning them only if pings are enabled in Moderation. Both are opt-in (Behavior tab), heavily throttled (at most one a day; the same person no more than once every couple of weeks), and respect the global send budget. They&rsquo;re the one place she&rsquo;ll @ping proactively, so they stay deliberately rare.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Historical friends (data tiering)</h2>
+      <div class="note">
+        To keep the active roster fast, people who&rsquo;ve been gone a very long time &mdash; or who never answered her check-ins &mdash; are quietly moved to a separate &ldquo;historical friends&rdquo; archive rather than cluttering the live store. The longer she&rsquo;s interacted with someone, the longer they&rsquo;re kept active first (favorites get more patience). Nothing is lost: the moment an archived friend speaks again they&rsquo;re restored with their history intact &mdash; recognized as an old friend, though a long absence gently softens the familiarity, the way it would for anyone.
+      </div>
+    </div>
+    <div class="card">
       <h2>Troubleshooting</h2>
       <div class="codehead">The app won&rsquo;t connect</div>
       <div class="note">
@@ -475,6 +495,8 @@
       else if (d.method === 'recap') handler = recap;
       else if (d.method === 'paint') handler = paint;
       else if (d.method === 'beat') handler = beat;
+      else if (d.method === 'lull') handler = lull;
+      else if (d.method === 'checkin') handler = checkin;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
@@ -612,6 +634,43 @@
 
   // beat(ctx) -> { ok, value:text }  (#12 generated beats). Turns a scheduled beat's prompt into a
   // short, natural in-character line. The engine only calls this for beats that carry a `prompt`.
+  // lull(ctx) -> { ok, value:text }. The room went quiet after being active; she gently re-opens
+  // it. Uses the recent transcript she already has so the opener connects to what was happening,
+  // rather than a non-sequitur. One short, natural message.
+  function lull(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
+    var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
+    var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
+    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + 'You are ' + myName + '. The channel was chatting and has now gone quiet for a bit.\n'
+      + (transcript ? ('Recent conversation:\n' + transcript + '\n') : '')
+      + 'Say one short, natural thing to gently re-open the conversation \u2014 a light follow-up to what was just said, a small observation, or an easy question. Do NOT announce that it went quiet or that this is automated. Just speak as you naturally would. One or two sentences, no name prefix.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[[', '\n[['] })).then(function (result) {
+      var text = String(result || '').trim();
+      return { ok: !!text, value: text };
+    }).catch(function (e) { dlog('lull: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // checkin(ctx) -> { ok, value:text }. A favorite user has been absent for days; she posts a warm,
+  // brief "missed you" addressed to them by name. The engine prepends the @mention; she just writes
+  // the message body. Light and genuine, never guilt-trippy.
+  function checkin(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var name = (ctx && ctx.name) ? String(ctx.name) : 'friend';
+    var days = (ctx && ctx.absentMs) ? Math.max(1, Math.round(ctx.absentMs / 86400000)) : null;
+    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + 'You are Chloe. ' + name + ' is someone you talk with a lot, and they have not been around for ' + (days ? (days + ' days') : 'a while') + '.\n'
+      + (ctx && ctx.summary ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')
+      + 'Write a short, warm check-in addressed to them \u2014 happy and light, like noticing a friend has been quiet. Do NOT include their name (it is added for you). Do NOT guilt-trip or be clingy. One sentence, maybe two. No name prefix.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[[', '\n[['] })).then(function (result) {
+      var text = String(result || '').trim();
+      return { ok: !!text, value: text };
+    }).catch(function (e) { dlog('checkin: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   function beat(ctx) {
     var ai = grabAiText();
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
@@ -803,6 +862,8 @@
     var dc = byId('dmChk'); if (dc) dc.checked = !!s.dmReplies;
     var ac = byId('ackChk'); if (ac) ac.checked = (s.ackReactions !== false);
     var sp = byId('spChk'); if (sp) sp.checked = !!s.singleParagraph;
+    var lull = byId('lullChk'); if (lull) lull.checked = !!s.lullFiller;
+    var cki = byId('checkinChk'); if (cki) cki.checked = !!s.checkins;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -1029,6 +1090,16 @@
   byId('spChk').addEventListener('change', function () {
     call('config.setSingleParagraph', { on: byId('spChk').checked }).then(function (res) {
       log(res && res.ok ? ('one-paragraph replies: ' + res.value.singleParagraph) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('lullChk').addEventListener('change', function () {
+    call('config.setLullFiller', { on: byId('lullChk').checked }).then(function (res) {
+      log(res && res.ok ? ('break-the-silence: ' + res.value.lullFiller) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('checkinChk').addEventListener('change', function () {
+    call('config.setCheckins', { on: byId('checkinChk').checked }).then(function (res) {
+      log(res && res.ok ? ('favorite check-ins: ' + res.value.checkins) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('backfillChk').addEventListener('change', function () {

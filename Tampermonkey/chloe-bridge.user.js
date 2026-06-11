@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.39.0
+// @version      0.43.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -143,6 +143,16 @@
       highlightMax: 50,          // how many highlights a channel keeps (oldest dropped past this)
       highlightContextCount: 3,  // how many recent highlights ride in the response context
       highlightTextMax: 300,     // per-highlight stored text length cap
+      // --- reaction significance (size-relative) ---
+      reactionTracking: true,    // watch emoji reactions on messages and tally / score them
+      serverMemberCount: 0,      // members in this server (0 = unknown -> floor threshold only). Set by
+                                 // the userscript from the guild, or configured manually.
+      reactionMinUsers: 2,       // a reaction needs at least this many distinct users to count at all
+      reactionFraction: 0.01,    // significance threshold scales as this fraction of the member count,
+                                 // so 1-2 reactions matter in a 100-person server but are noise in a 5000-person one
+      reactionAutoHighlight: true,// a message whose top reaction crosses the significance line auto-highlights
+      reactionTallyMax: 40,      // how many distinct emoji the channel tally keeps
+      reactionSweepEveryPolls: 6, // re-scan a recent window every Nth poll to catch reactions added late
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -154,6 +164,33 @@
       beats: [],
       beatActiveWithinMs: 1800000,  // a beat only fires if someone spoke within this window (30 min)
       beatMinGapMs: 600000,         // minimum gap between any two beats (10 min)
+      // Lull filler (Neuro-sama "PATIENCE" pattern, recalibrated for Discord): a small Discord
+      // community moves FAR slower than a Twitch stream — a 90-second gap is normal, not a lull. So
+      // the thresholds are on the order of DAYS, not seconds. She breaks a silence only when a room
+      // that WAS active has been quiet for ~a day, and was active within the past week. Off by default.
+      lullFiller: false,             // proactively break a silence after a recently-active room goes quiet
+      lullPatienceMs: 86400000,      // ~1 day of silence before she fills it (Discord pace, not Twitch)
+      lullActiveWithinMs: 604800000, // only if the room was active within the past week (don't wake a dead channel)
+      lullMinGapMs: 86400000,        // at most one lull filler per day
+      // Favorite-user check-ins: if a user she's interacted with a lot hasn't been seen in DAYS, she
+      // may post a warm "haven't seen you in a while" — @mentioning them only if pings are enabled
+      // (the output gate decides). Discord pace: absence is measured in days. Off by default.
+      checkins: false,               // proactively check in on favorite users who've been absent
+      checkinMinInteractions: 8,     // interaction count that makes someone a "favorite" worth missing
+      checkinAbsenceMs: 259200000,   // a favorite must be absent ~3 days before a check-in
+      checkinPerUserGapMs: 1209600000,// don't check in on the same person more than once per ~2 weeks
+      checkinGapMs: 86400000,        // at most one check-in (any user) per day
+      checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
+      // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
+      // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
+      // friends" archive (separate per-user keys, never loaded on the hot path). They're restored
+      // automatically the moment they speak again. Favorite-aware: the more she's interacted with
+      // someone, the longer they're kept in the fast store before archival.
+      archiveStale: true,            // move long-cold users out of the hot roster into the archive
+      archiveAbsenceMs: 5184000000,  // base absence before a user is archived (~60 days)
+      archiveFavoriteBonusMs: 2592000000,// each "favorite tier" of interactions adds this much patience (~30d)
+      archiveFavoriteTier: 8,        // interactions per favorite tier (so an 8-interaction user waits +30d)
+      archiveMaxKept: 2000,          // cap on archived users (oldest pruned beyond this)
       beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
       judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
@@ -202,8 +239,13 @@
     var HILITE_KEY = 'highlights:' + cfg.channelId;   // pinned notable messages (front-end only): saved
     // for recall via "!chloe highlights", and a few recent ones ride in context so she can reference
     // the channel's memorable moments — a step toward memory without the full fact-extraction build.
+    var REACTTALLY_KEY = 'reacttally:' + cfg.channelId;   // running per-emoji tally of significant reactions
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
+    var LULL_KEY = 'lull:' + cfg.channelId;   // last time she filled a silence (lull filler throttle)
+    var CHECKIN_KEY = 'checkins:' + cfg.channelId;   // { __last: ts, byUser: { id: {at,count,seenAt} } } — check-in throttle + attempt cap
+    var ARCH_INDEX_KEY = 'arch:index:' + cfg.channelId;   // index of archived ("historical friend") user ids
+    function archKey(id) { return 'arch:' + cfg.channelId + ':u:' + id; }   // per-user cold storage (never on the hot path)
 
     var running = false;
     var timer = null;
@@ -354,6 +396,83 @@
     }
     function listHighlights(n) { return getHighlights().then(function (list) { return n ? list.slice(-n) : list; }); }
     function clearHighlights() { return getHighlights().then(function (list) { var c = list.length; return Promise.resolve(store.set(HILITE_KEY, [])).then(function () { return c; }); }); }
+
+    // ---- reaction significance (size-relative) ----------------------------------------------
+    // A raw reaction count is meaningless without the room size: 2 reactions in a 50-person server is
+    // a strong signal; 2 in a 5000-person server is noise. The threshold scales with member count
+    // (with a floor), so significance is relative. memberCount 0 => unknown => floor only.
+    function reactionThreshold(memberCount) {
+      var floor = cfg.reactionMinUsers || 2;
+      if (!memberCount || memberCount <= 0) return floor;
+      return Math.max(floor, Math.ceil(memberCount * (cfg.reactionFraction || 0.01)));
+    }
+    function reactionSignificance(count, memberCount) {
+      var threshold = reactionThreshold(memberCount);
+      return { significant: count >= threshold, threshold: threshold, score: threshold ? (count / threshold) : 0 };
+    }
+    function emojiKey(emoji) {
+      if (!emoji) return '';
+      return emoji.id ? (String(emoji.name || 'custom') + ':' + emoji.id) : String(emoji.name || '');
+    }
+    function emojiLabel(emoji) { return emoji ? String(emoji.name || 'reaction') : 'reaction'; }
+    // Running per-emoji tally for the channel: how often each reaction shows up on significant
+    // messages, so Chloe knows which reactions this room actually values.
+    function bumpReactionTally(emoji, by) {
+      return Promise.resolve(store.get(REACTTALLY_KEY)).then(function (t) {
+        t = (t && typeof t === 'object') ? t : {};
+        var k = emojiKey(emoji); if (!k) return null;
+        t[k] = { label: emojiLabel(emoji), count: (t[k] ? t[k].count : 0) + (by || 1), last: clock.now() };
+        var keys = Object.keys(t);
+        if (keys.length > cfg.reactionTallyMax) {   // keep the most-used
+          keys.sort(function (a, b) { return t[b].count - t[a].count; }).slice(cfg.reactionTallyMax).forEach(function (k2) { delete t[k2]; });
+        }
+        return store.set(REACTTALLY_KEY, t);
+      });
+    }
+    function topReactions(n) {
+      return Promise.resolve(store.get(REACTTALLY_KEY)).then(function (t) {
+        t = (t && typeof t === 'object') ? t : {};
+        return Object.keys(t).map(function (k) { return { key: k, label: t[k].label, count: t[k].count }; })
+          .sort(function (a, b) { return b.count - a.count; }).slice(0, n || 10);
+      });
+    }
+    // Examine one message's reactions. If the top reaction is significant for this server size, tally
+    // it and (optionally) auto-highlight the message. Deduped per message id so re-seeing the same
+    // message (e.g. a reaction sweep) doesn't double-count or re-highlight. Returns a small summary.
+    var reactionSeen = {};   // messageId -> highest significant count already handled
+    // Reaction sweep: reactions are often added AFTER a message scrolls past the poll cursor, so we
+    // can't see them on the normal ?after= fetch. Periodically re-fetch a recent window (no cursor)
+    // and re-score — processMessageReactions only acts on an INCREASED count, so this is idempotent.
+    function reactionSweep() {
+      if (!cfg.reactionTracking || typeof cfg.recentFetch !== 'function') return Promise.resolve(0);
+      return Promise.resolve(cfg.recentFetch(30)).then(function (msgs) {
+        msgs = (msgs || []).filter(function (m) { return m && m.reactions && m.reactions.length; });
+        var chain = Promise.resolve(), hits = 0;
+        msgs.forEach(function (m) { chain = chain.then(function () { return processMessageReactions(m).then(function (r) { if (r) hits++; }); }); });
+        return chain.then(function () { return hits; });
+      }, function () { return 0; });
+    }
+    function processMessageReactions(msg) {
+      if (!cfg.reactionTracking || !msg || !msg.reactions || !msg.reactions.length) return Promise.resolve(null);
+      var top = null;
+      msg.reactions.forEach(function (r) { if (!top || (r.count || 0) > top.count) top = { emoji: r.emoji, count: r.count || 0 }; });
+      if (!top) return Promise.resolve(null);
+      var sig = reactionSignificance(top.count, cfg.serverMemberCount);
+      if (!sig.significant) return Promise.resolve(null);
+      var prior = reactionSeen[msg.id] || 0;
+      if (top.count <= prior) return Promise.resolve(null);   // already handled this (or a higher) count
+      reactionSeen[msg.id] = top.count;
+      var delta = top.count - prior;
+      log('[chloe.react] significant reaction ' + emojiLabel(top.emoji) + ' x' + top.count + ' (threshold ' + sig.threshold + ') on ' + msg.id);
+      return bumpReactionTally(top.emoji, delta).then(function () {
+        if (!cfg.reactionAutoHighlight || prior > 0) return { emoji: emojiLabel(top.emoji), count: top.count, highlighted: false };
+        var src = { text: msg.content || '', authorName: (msg.author && msg.author.username) || '' };
+        if (!String(src.text).trim()) return { emoji: emojiLabel(top.emoji), count: top.count, highlighted: false };
+        return addHighlight(src, 'reactions', '', emojiLabel(top.emoji) + ' \u00d7' + top.count).then(function () {
+          return { emoji: emojiLabel(top.emoji), count: top.count, highlighted: true };
+        });
+      });
+    }
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
@@ -813,19 +932,24 @@
     function quietSweep() {
       var now = clock.now();
       return Promise.resolve(store.listIndex()).then(function (ids) {
-        var chain = Promise.resolve(), demoted = 0;
+        var chain = Promise.resolve(), demoted = 0, archived = 0;
         (ids || []).forEach(function (id) {
           chain = chain.then(function () {
             return Promise.resolve(store.get(partKey(id))).then(function (p) {
               if (!p || p.lifecycle === 'departed') return;
               if (p.state && p.state !== 'active') return;       // moderation rows are not "quiet"
+              // Data tiering: a long-cold user is moved to the historical-friends archive so the hot
+              // roster stays small. Favorite-aware — more interaction buys more patience before archival.
+              if (cfg.archiveStale && (now - (p.lastSeen || 0)) >= archiveThresholdFor(p)) {
+                archived++; return archiveUser(id, 'long-absent');
+              }
               if ((now - (p.lastSeen || 0)) >= cfg.quietAfterMs && p.lifecycle !== 'quiet') {
                 p.lifecycle = 'quiet'; demoted++; return store.set(partKey(id), p);
               }
             });
           });
         });
-        return chain.then(function () { return demoted; });
+        return chain.then(function () { quietSweep._archived = archived; return demoted; });
       });
     }
     // Bounded, prioritized list of users worth a 404 membership check (transport runs the checks).
@@ -1074,6 +1198,13 @@
             var now = clock.now();
             var lines = list.map(function (h) { return '\u2022 ' + (h.authorName ? h.authorName + ': ' : '') + '\u201c' + h.text.slice(0, 70) + '\u201d' + (h.note ? ' \u2014 ' + h.note.slice(0, 40) : '') + ' (' + humanGap(now - h.at) + ' ago)'; });
             return { ack: 'channel highlights:\n' + lines.join('\n') };
+          });
+        } },
+      { verb: 'reactions',modOnly: false, help: 'reactions (top reactions this room values)', handler: function (modId, c) {
+          return topReactions(10).then(function (top) {
+            if (!top.length) return { ack: "no notable reactions tracked yet" };
+            var mc = cfg.serverMemberCount ? (' \u2014 significance threshold here is ' + reactionThreshold(cfg.serverMemberCount) + '+ on a ' + cfg.serverMemberCount + '-member server') : '';
+            return { ack: 'reactions this room values: ' + top.map(function (r) { return r.label + ' \u00d7' + r.count; }).join(', ') + mc };
           });
         } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
@@ -1422,6 +1553,101 @@
       });
     }
 
+    // Lull filler (Neuro-sama PATIENCE pattern): if the room was recently active and has now gone
+    // quiet for `lullPatienceMs`, she may proactively say something to fill the silence. Unlike beats
+    // (fixed schedule), this is keyed to actual activity — it fires after a real conversation lulls,
+    // not on a clock. Uses the brain (proactive speech needs generation) but is gated hard: only one
+    // per lullMinGapMs, only on a real lull, never mid-action, and it respects the global send budget.
+    function processLull() {
+      if (!cfg.lullFiller || typeof cfg.lullFn !== 'function') return Promise.resolve(null);
+      if (engageMode === 'locked' || reply.replying || paint.painting || hasPendingReply()) return Promise.resolve(null);
+      if (botLoopReplyChance() < 1) return Promise.resolve(null);        // not into a bot-only loop
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);
+      var now = clock.now();
+      return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
+        var lastActivity = rh && rh.lastActivity;
+        if (lastActivity == null) return null;                                   // never active -> nothing to fill
+        var silentFor = now - lastActivity;
+        if (silentFor < cfg.lullPatienceMs) return null;                         // not quiet long enough yet
+        if (silentFor > cfg.lullActiveWithinMs) return null;                     // dead room, not a lull — leave it
+        return Promise.resolve(store.get(LULL_KEY)).then(function (last) {
+          if (last && (now - last) < cfg.lullMinGapMs) return null;              // already filled recently
+          if (now - lastActAt < cfg.lullMinGapMs) return null;                   // she spoke recently anyway
+          reply.replying = true;
+          if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
+          return assembleContext({ authorId: '', authorName: '', content: '' }).then(function (ctx) {
+            ctx.lull = true;   // hint to the brain: the room went quiet, gently re-open it
+            return cfg.lullFn(ctx);
+          }).then(function (r) {
+            var text = (r && r.ok) ? String(r.value || '').trim() : '';
+            if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
+            indicateTyping();
+            return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
+              lastActAt = clock.now(); reply.replying = false; rememberReply(text);
+              log('[chloe.lull] filled a ' + Math.round(silentFor / 1000) + 's silence');
+              return store.set(LULL_KEY, clock.now()).then(function () { return { lull: text }; });
+            }, function () { reply.replying = false; return null; });
+          }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+        });
+      });
+    }
+
+    // Favorite-user check-in: scan the roster for someone she's interacted with a lot who's been
+    // absent for days, and post a warm "haven't seen you" — @mentioning them (the output gate
+    // decides whether that actually pings). Discord-paced: absence in days, throttled per-user (~2wk)
+    // and globally (~1/day). Picks the most-missed candidate: highest interaction, longest absent.
+    function processCheckin() {
+      if (!cfg.checkins || typeof cfg.checkinFn !== 'function') return Promise.resolve(null);
+      if (engageMode !== 'normal' || reply.replying || paint.painting || hasPendingReply()) return Promise.resolve(null);
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);
+      var now = clock.now();
+      return Promise.resolve(store.get(CHECKIN_KEY)).then(function (ci) {
+        ci = (ci && typeof ci === 'object') ? ci : { __last: 0, byUser: {} };
+        if (ci.__last && (now - ci.__last) < cfg.checkinGapMs) return null;     // already checked in recently
+        return getRoster().then(function (roster) {
+          var best = null, toArchive = [];
+          roster.forEach(function (u) {
+            if (!u || !u.id) return;
+            if ((u.interactionCount || 0) < cfg.checkinMinInteractions) return;  // not a favorite
+            if (u.state && u.state !== 'active') return;                         // not suppressed/blocked
+            var absent = now - (u.lastSeen || 0);
+            if (absent < cfg.checkinAbsenceMs) return;                           // not absent long enough
+            var rec = (ci.byUser && ci.byUser[u.id]) || null;
+            // If they've been seen since the last check-in, that cycle is over — treat as a fresh start.
+            var returned = rec && (u.lastSeen || 0) > (rec.seenAt || 0);
+            var count = (rec && !returned) ? (rec.count || 0) : 0;
+            if (count >= cfg.checkinMaxAttempts) { toArchive.push({ id: u.id, name: u.name }); return; }  // gave up: archive, don't ping
+            if (rec && !returned && (now - (rec.at || 0)) < cfg.checkinPerUserGapMs) return;  // cooling down
+            // most-missed = most interaction, then longest absent
+            var score = (u.interactionCount || 0) * 1e9 + absent;
+            if (!best || score > best.score) best = { id: u.id, name: u.name, absent: absent, interactions: u.interactionCount || 0, summary: u.summary || '', seenAt: (u.lastSeen || 0), count: count, score: score };
+          });
+          // Give up on anyone who's ignored every check-in: move them to historical friends so she
+          // stops pinging someone who isn't coming back (life happens), and the hot roster stays lean.
+          var archChain = Promise.resolve();
+          if (cfg.archiveStale) toArchive.forEach(function (t) { archChain = archChain.then(function () { return archiveUser(t.id, 'checkin-exhausted').then(function () { if (ci.byUser) delete ci.byUser[t.id]; }); }); });
+          return archChain.then(function () {
+            if (!best) return toArchive.length ? store.set(CHECKIN_KEY, ci).then(function () { return null; }) : null;
+            reply.replying = true;
+            if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
+            return Promise.resolve(cfg.checkinFn({ name: best.name, absentMs: best.absent, interactions: best.interactions, summary: best.summary })).then(function (r) {
+              var text = (r && r.ok) ? String(r.value || '').trim() : '';
+              if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
+              var body = '<@' + best.id + '> ' + text;   // the mention only actually pings if the gate allows it
+              indicateTyping();
+              return Promise.resolve(cfg.send(cfg.channelId, body)).then(function () {
+                lastActAt = clock.now(); reply.replying = false;
+                ci.__last = clock.now(); ci.byUser = ci.byUser || {};
+                ci.byUser[best.id] = { at: clock.now(), count: best.count + 1, seenAt: best.seenAt };
+                log('[chloe.checkin] checked in on ' + best.name + ' (absent ' + Math.round(best.absent / 86400000) + 'd, attempt ' + (best.count + 1) + '/' + cfg.checkinMaxAttempts + ')');
+                return store.set(CHECKIN_KEY, ci).then(function () { return { checkin: best.name }; });
+              }, function () { reply.replying = false; return null; });
+            }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+          });
+        });
+      });
+    }
+
     function partKey(id) { return 'u:' + id; }
 
     function toEpoch(ts) {
@@ -1484,7 +1710,11 @@
       });
     }
     function ingestOneCore(msg, ring, indexSet, touched) {
-      return Promise.resolve(store.get(partKey(msg.author.id))).then(function (existing) {
+      return Promise.resolve(store.get(partKey(msg.author.id))).then(function (hot) {
+        // A returning "historical friend" is restored from cold storage so their history survives.
+        if (hot || !cfg.archiveStale) return hot;
+        return restoreFromArchive(msg.author.id);
+      }).then(function (existing) {
         var now = clock.now();
         var seenAt = toEpoch(msg.timestamp);
         var p = existing || {
@@ -1570,6 +1800,7 @@
             // even for messages she won't reply to — she keeps watching the room either way.
             noteAuthorForLoop(!!(m.author && m.author.bot));
             chain = chain.then(function () { return ingestOne(m, ring, indexSet, touched); });
+            chain = chain.then(function () { return processMessageReactions(m); });   // size-relative reaction significance
           });
 
           return chain.then(function () {
@@ -1632,13 +1863,23 @@
                     return processBeats();
                   }).then(function (beat) {
                     if (beat) summary.beat = beat;
+                    return processLull();
+                  }).then(function (lull) {
+                    if (lull) summary.lull = lull;
+                    return processCheckin();
+                  }).then(function (checkin) {
+                    if (checkin) summary.checkin = checkin;
                   });
                   function finishPoll() {
                     pollCount++;
-                    if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
-                      return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } return summary; });
+                    var tail = Promise.resolve(summary);
+                    if (cfg.reactionTracking && cfg.reactionSweepEveryPolls > 0 && (pollCount % cfg.reactionSweepEveryPolls) === 0) {
+                      tail = tail.then(function () { return reactionSweep().then(function (n) { if (n) { summary.reactionSweep = n; log('[chloe.react] sweep scored ' + n + ' message(s)'); } return summary; }); });
                     }
-                    return summary;
+                    if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
+                      tail = tail.then(function () { return quietSweep().then(function (n) { if (n) { summary.quieted = n; log('[chloe.T5] quiet-sweep demoted ' + n + ' user(s)'); } if (quietSweep._archived) { summary.archived = quietSweep._archived; log('[chloe.archive] archived ' + quietSweep._archived + ' long-cold user(s)'); } return summary; }); });
+                    }
+                    return tail;
                   }
                   if (cfg.backgroundText) { summary.textJob = textLane; return finishPoll(); }
                   return textLane.then(finishPoll);
@@ -1918,6 +2159,55 @@
       });
     }
 
+    // ---- archive ("historical friends") -----------------------------------------------------
+    // Cold records leave the hot store so the main roster stays fast. Per-user keys; an index is kept
+    // only for pruning/inspection and is never read on the message hot path.
+    function getArchiveIndex() { return Promise.resolve(store.get(ARCH_INDEX_KEY)).then(function (a) { return Array.isArray(a) ? a : []; }); }
+    function archiveUser(id, reason) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p) return { ok: false, reason: 'unknown' };
+        p.archivedAt = clock.now(); p.archivedReason = reason || 'stale';
+        return Promise.resolve(store.set(archKey(id), p))
+          .then(function () { return store.del(partKey(id)); })
+          .then(function () { return removeFromIndex(id); })
+          .then(function () { return getArchiveIndex(); })
+          .then(function (idx) {
+            if (idx.indexOf(id) < 0) idx.push(id);
+            if (idx.length > cfg.archiveMaxKept) {   // prune the oldest archived ids (cold-cold)
+              var drop = idx.splice(0, idx.length - cfg.archiveMaxKept);
+              return Promise.all(drop.map(function (d) { return Promise.resolve(store.del(archKey(d))); })).then(function () { return store.set(ARCH_INDEX_KEY, idx); });
+            }
+            return store.set(ARCH_INDEX_KEY, idx);
+          })
+          .then(function () { log('[chloe.archive] moved ' + (p.name || id) + ' to historical friends (' + (reason || 'stale') + ')'); return { ok: true, name: p.name || id }; });
+      });
+    }
+    // Restore a returning friend from cold storage so their history (interaction count, summary,
+    // first-seen) is preserved rather than starting from zero. Returns the restored partition or null.
+    function restoreFromArchive(id) {
+      return Promise.resolve(store.get(archKey(id))).then(function (p) {
+        if (!p) return null;
+        delete p.archivedAt; delete p.archivedReason;
+        return Promise.resolve(store.del(archKey(id)))
+          .then(function () { return getArchiveIndex(); })
+          .then(function (idx) { var i = idx.indexOf(id); if (i >= 0) { idx.splice(i, 1); return store.set(ARCH_INDEX_KEY, idx); } })
+          .then(function () { return clearCheckinRecord(id); })   // fresh start: they came back
+          .then(function () { log('[chloe.archive] restored ' + (p.name || id) + ' from historical friends'); return p; });
+      });
+    }
+    function clearCheckinRecord(id) {
+      return Promise.resolve(store.get(CHECKIN_KEY)).then(function (ci) {
+        if (!ci || !ci.byUser || ci.byUser[id] == null) return null;
+        delete ci.byUser[id]; return store.set(CHECKIN_KEY, ci);
+      });
+    }
+    // How long a user is kept in the fast store before archival — extended for favorites (warmth buys
+    // patience). archiveAbsenceMs base + one bonus window per favorite tier of interactions.
+    function archiveThresholdFor(p) {
+      var tiers = Math.floor((p.interactionCount || 0) / (cfg.archiveFavoriteTier || 8));
+      return cfg.archiveAbsenceMs + tiers * (cfg.archiveFavoriteBonusMs || 0);
+    }
+
     function getSpeakerRing() { return Promise.resolve(store.get(RING_KEY)).then(function (r) { return r || []; }); }
 
     // ---- loop control --------------------------------------------------------------------
@@ -1985,6 +2275,9 @@
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
       addHighlight: addHighlight, listHighlights: listHighlights, clearHighlights: clearHighlights,
+      reactionSignificance: reactionSignificance, reactionThreshold: reactionThreshold, processMessageReactions: processMessageReactions, topReactions: topReactions, reactionSweep: reactionSweep,
+      processLull: processLull, processCheckin: processCheckin,
+      archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
@@ -2319,7 +2612,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.39.0';
+  var VERSION = '0.43.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -2452,6 +2745,9 @@
     getMessagesAfter: function (channelId, afterId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 50) + (afterId ? '&after=' + afterId : ''));
     },
+    getRecentMessages: function (channelId, limit) {
+      return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 30));   // newest window, no cursor — catches reactions added after a message scrolled past
+    },
     sendMessage: function (channelId, text) {
       return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
     },
@@ -2472,6 +2768,11 @@
     },
     startTyping: function (channelId) { return requestJSON('POST', '/channels/' + channelId + '/typing', { json: true, body: {} }); },
     getChannel: function (channelId) { return requestJSON('GET', '/channels/' + channelId, {}); },
+    getGuildMemberCount: function (guildId) {
+      return requestJSON('GET', '/guilds/' + guildId + '?with_counts=true').then(function (g) {
+        return (g && (g.approximate_member_count || g.member_count)) || 0;
+      });
+    },
     getReactions: function (channelId, messageId, emoji) { return requestJSON('GET', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '?limit=10', {}); },
     getMember: function (guildId, userId) { return requestJSON('GET', '/guilds/' + guildId + '/members/' + userId, {}); },
     getMessagesBefore: function (channelId, beforeId, limit) {
@@ -2606,6 +2907,11 @@
         engageMode: cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal')),
         beats: cfgGet('beats', []),
         beatFn: function (b) { return brainCall('beat', b, 30000); },
+        lullFn: function (ctx) { return brainCall('lull', ctx, 30000); },
+        lullFiller: cfgGet('lullFiller', false),
+        checkinFn: function (ctx) { return brainCall('checkin', ctx, 30000); },
+        checkins: cfgGet('checkins', false),
+        archiveStale: cfgGet('archiveStale', true),
         greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
@@ -2621,6 +2927,10 @@
         unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
         ackReactions: cfgGet('ackReactions', true),
         singleParagraph: cfgGet('singleParagraph', false),
+        reactionTracking: cfgGet('reactionTracking', true),
+        serverMemberCount: cfgGet('serverMemberCount', 0),
+        reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
+        recentFetch: function (n) { return transport.getRecentMessages(channelId, n); },
         requestTokenBudget: cfgGet('requestTokenBudget', 5000),
         ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udc40'),
         ackImageEmoji: cfgGet('ackImageEmoji', '\ud83c\udfa8'),
@@ -2727,10 +3037,27 @@
     if (wasRunning) ensureEngines().forEach(function (e) { e.start(); });
   }
 
+  // Auto-detect the server's member count once, so reaction significance scales correctly out of the
+  // box. Channel -> guild_id -> guild approximate_member_count. Only if not already set by the operator.
+  function maybeDetectMemberCount() {
+    if (cfgGet('serverMemberCount', 0) > 0) return Promise.resolve(0);
+    var ch = primaryChannel();
+    if (!ch) return Promise.resolve(0);
+    return Promise.resolve(transport.getChannel(ch)).then(function (c) {
+      var gid = c && c.guild_id;
+      if (!gid) return 0;
+      return transport.getGuildMemberCount(gid).then(function (n) {
+        if (n > 0) { cfgSet('serverMemberCount', n); applyConfigChange(); log('[chloe] detected ~' + n + ' members; reaction significance scaled accordingly'); }
+        return n;
+      });
+    }).catch(function () { return 0; });
+  }
+
   function validate() {
     return transport.getMe().then(function (me) {
       cfgSet('botUserId', me.id); cfgSet('botName', me.username || '');
       applyConfigChange();  // rebuild (and restart if live) with the fresh identity
+      maybeDetectMemberCount();   // fire-and-forget: scale reaction significance to the server
       return { ok: true, value: { id: me.id, username: me.username, bot: me.bot } };
     }).catch(function (e) { return { ok: false, reason: 'HTTP ' + (e.status || '?'), body: e.body || null }; });
   }
@@ -2743,6 +3070,8 @@
       dmReplies: !!cfgGet('dmReplies', false),
       ackReactions: cfgGet('ackReactions', true),
       singleParagraph: !!cfgGet('singleParagraph', false),
+      lullFiller: !!cfgGet('lullFiller', false),
+      checkins: !!cfgGet('checkins', false),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -2899,6 +3228,10 @@
         { var ar = !!(args && args.on); cfgSet('ackReactions', ar); applyConfigChange(); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
       case 'config.setSingleParagraph':
         { var sp = !!(args && args.on); cfgSet('singleParagraph', sp); applyConfigChange(); return Promise.resolve({ ok: true, value: { singleParagraph: sp } }); }
+      case 'config.setLullFiller':
+        { var lf = !!(args && args.on); cfgSet('lullFiller', lf); applyConfigChange(); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
+      case 'config.setCheckins':
+        { var ck = !!(args && args.on); cfgSet('checkins', ck); applyConfigChange(); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
