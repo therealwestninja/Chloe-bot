@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.28.2
+// @version      0.31.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -112,6 +112,10 @@
       // channel's style note (newest mod-anchored message wins; sanitized + capped before use).
       anchorEmoji: '\ud83d\udccc',
       personaNoteMaxLen: 200,
+      antiRepeatWindow: 5,    // G1: how many of her own recent replies to show the brain to avoid self-repetition
+      botLoopGrace: 2,        // bot-loop damper: consecutive bot turns answered at full chance before decay kicks in
+      botLoopFloor: 0.05,     // minimum reply chance once decaying (she keeps watching, rarely speaks)
+      botLoopHardStop: 12,    // consecutive bot turns after which she goes fully silent until a human speaks (0 = never)
       // D5: declarative job grammar. ONLY these verbs are accepted from chat-submitted JSON;
       // there is NO code path — a job is a validated plain object, never evaluated. Each verb
       // lists its allowed arg keys and which are required; anything else is rejected.
@@ -179,6 +183,30 @@
     // starve replies to everyone else. A lost queue on reload is acceptable.
     var reply = { queue: {}, replying: false };
     var lastReplyAt = {};                // per-author: when she last replied to that person
+    var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
+    var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
+    var lastSawHumanAt = 0;              // when a human last spoke here (observation, always updated)
+    function noteAuthorForLoop(isBot) {
+      if (isBot) consecutiveBotTurns++;
+      else { consecutiveBotTurns = 0; lastSawHumanAt = clock.now(); }
+    }
+    // Reply probability decays as a channel becomes bot-only chatter, so two bots don't ping-pong
+    // forever. 0..botLoopGrace bot turns: full chance. Beyond that, halve per extra turn, floored.
+    // A human message resets consecutiveBotTurns, restoring full responsiveness immediately.
+    function botLoopReplyChance() {
+      var grace = cfg.botLoopGrace, hardStop = cfg.botLoopHardStop;
+      if (consecutiveBotTurns <= grace) return 1;
+      if (hardStop > 0 && consecutiveBotTurns >= hardStop) return 0;
+      var over = consecutiveBotTurns - grace;
+      return Math.max(cfg.botLoopFloor, Math.pow(0.5, over));
+    }
+    function rememberReply(text) {
+      var t = String(text || '').trim();
+      if (!t) return;
+      recentReplies.push(t);
+      var keep = cfg.antiRepeatWindow || 5;
+      if (recentReplies.length > keep) recentReplies = recentReplies.slice(-keep);
+    }
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
@@ -217,6 +245,18 @@
     function hasPendingReply() { return Object.keys(reply.queue).length > 0; }
     function inGreetSettle(now) { return cfg.greetSettleMs > 0 && startedAt && (now - startedAt) < cfg.greetSettleMs; }
     function indicateTyping() { if (typeof cfg.typing === 'function') { try { Promise.resolve(cfg.typing(cfg.channelId)).catch(function () {}); } catch (e) {} } }
+    // Fast-ack: the Discord side is instant even while the Perchance brain is slow (up to ~60s with
+    // cooldowns). At the moment she COMMITS to a reply/image we react to the triggering message with
+    // a "working" emoji so the user gets immediate feedback; we clear it when the result lands (or
+    // fails). Reactions aren't paced and don't consume the send budget, so the ack is truly instant.
+    function ackWorking(messageId, emoji) {
+      if (!cfg.ackReactions || !messageId || typeof cfg.react !== 'function') return;
+      try { Promise.resolve(cfg.react(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
+    }
+    function clearAck(messageId, emoji) {
+      if (!cfg.ackReactions || !messageId || typeof cfg.unreact !== 'function') return;
+      try { Promise.resolve(cfg.unreact(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
+    }
     function gateEnabled() { return cfg.volunteer && typeof cfg.judge === 'function' && replyEnabled(); }
     function nameAliases() {
       var out = [];
@@ -1162,6 +1202,9 @@
           // ingest sequentially to keep last-write-wins deterministic per user
           var chain = Promise.resolve();
           incoming.forEach(function (m) {
+            // observation (always, ungated): track bot-vs-human flow for the loop damper. This runs
+            // even for messages she won't reply to — she keeps watching the room either way.
+            noteAuthorForLoop(!!(m.author && m.author.bot));
             chain = chain.then(function () { return ingestOne(m, ring, indexSet, touched); });
           });
 
@@ -1197,7 +1240,8 @@
                   newUsers: Object.keys(touched.newUsers),
                   cursor: newCursor,
                   ring: ring.slice(),
-                  rhythm: rh
+                  rhythm: rh,
+                  botTurns: consecutiveBotTurns
                 };
                 log('[chloe.T0] poll', summary.fetched + ' fetched, ' + summary.ingested +
                   ' ingested, ' + summary.newUsers.length + ' new, cursor=' + summary.cursor);
@@ -1246,7 +1290,18 @@
     function processReply() {
       if (!replyEnabled() || reply.replying || !hasPendingReply()) return Promise.resolve(null);
       var now = clock.now();
-      if (now - lastActAt < cfg.globalCooldownMs) return Promise.resolve(null);   // light global gap
+      if (now - lastActAt < cfg.globalCooldownMs) return Promise.resolve(null);   // light per-channel gap
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);   // cross-channel global budget (one voice)
+      // bot-loop damper: in a bot-only ping-pong, decay her chance of replying toward zero so two
+      // bots don't feed each other forever. A human message reset consecutiveBotTurns to 0 already.
+      var chance = botLoopReplyChance();
+      if (chance < 1) {
+        var roll = (typeof cfg.random === 'function' ? cfg.random() : Math.random());
+        if (roll >= chance) {
+          if (consecutiveBotTurns && (consecutiveBotTurns % 4 === 0)) log('[chloe.loop] holding back in bot-only chatter (' + consecutiveBotTurns + ' bot turns, chance=' + chance.toFixed(2) + ')');
+          return Promise.resolve(null);
+        }
+      }
       // choose the oldest-queued author who has settled (debounce) and is past their per-author cooldown
       var p = null;
       Object.keys(reply.queue).forEach(function (id) {
@@ -1256,15 +1311,21 @@
         if (!p || e.at < p.at) p = e;
       });
       if (!p) return Promise.resolve(null);
+      // Claim the cross-channel send budget NOW (before the multi-second generation), so two
+      // channels can't both pass the gate and both speak. Released below if nothing comes back.
+      if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
       delete reply.queue[p.authorId];
       reply.replying = true;
       indicateTyping();
+      ackWorking(p.messageId, cfg.ackWorkingEmoji);   // instant Discord-side ack while the brain generates
       return assembleContext(p)
         .then(function (ctx) { return cfg.respond(ctx); })
         .then(function (r) {
           var text = (r && r.ok) ? String(r.value || '').trim() : '';
           if (!text) {
             reply.replying = false;
+            clearAck(p.messageId, cfg.ackWorkingEmoji);
+            if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');   // generation produced nothing; give the budget back
             log('[chloe.T1] no reply to ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty generation'));
             return null;
           }
@@ -1272,11 +1333,13 @@
             var t = clock.now();
             lastActAt = t; lastReplyAt[p.authorId] = t;
             reply.replying = false;
+            clearAck(p.messageId, cfg.ackWorkingEmoji);
+            rememberReply(text);
             log('[chloe.T1] replied to ' + p.authorName);
             return bumpInteraction(p.authorId).then(function () { return text; });
           });
         })
-        .catch(function (e) { reply.replying = false; log('[chloe.T1] reply error:', (e && e.message) || e); return null; });
+        .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); return null; });
     }
 
     // ---- image path ----------------------------------------------------------------------
@@ -1296,7 +1359,10 @@
       var now = clock.now();
       if (now - paint.queue[0].at < cfg.debounceMs) return null;          // head still settling
       if (now - lastPaintAt < cfg.imageCooldownMs) return null;           // courtesy gap (image clock only)
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('image')) return null;   // cross-channel global image budget
       var p = paint.queue.shift(); paint.painting = true;
+      if (typeof cfg.noteSend === 'function') cfg.noteSend('image');      // claim the global image slot at start
+      ackWorking(p.messageId, cfg.ackImageEmoji);                        // instant "painting…" ack on the request
       indicateTyping();
       log('[chloe.img] painting for ' + p.authorName + ' (' + paint.queue.length + ' more queued): "' + p.prompt.slice(0, 60) + '" (' + p.resolution + (p.dm ? ', dm' : '') + ')');
       var job = Promise.resolve(cfg.paint({ prompt: p.prompt, resolution: p.resolution }))
@@ -1304,6 +1370,8 @@
           var dataUrl = (r && r.ok) ? String(r.value || '') : '';
           if (dataUrl.indexOf('data:') !== 0) {
             paint.painting = false; lastPaintAt = clock.now();
+            clearAck(p.messageId, cfg.ackImageEmoji);
+            if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
             return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I couldn't make that image just now.")).then(function () { return null; }, function () { return null; });
           }
@@ -1317,12 +1385,13 @@
             var caption = lead + (promptCap ? ('\u201c' + promptCap + '\u201d') : '');
             return Promise.resolve(cfg.sendImage(chId, dataUrl, caption)).then(function () {
               lastPaintAt = clock.now(); paint.painting = false;          // image clock only — do NOT touch lastActAt
+              clearAck(p.messageId, cfg.ackImageEmoji);
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
               return bumpInteraction(p.authorId).then(function () { return { image: true, to: p.authorId }; });
-            }, function (e) { paint.painting = false; log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
+            }, function (e) { paint.painting = false; clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
           });
         })
-        .catch(function (e) { paint.painting = false; log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
+        .catch(function (e) { paint.painting = false; clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
       paint.lastJob = job;
       return job;
     }
@@ -1396,6 +1465,7 @@
         return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
           if (pn && pn.text) base.personaNote = pn.text;
           if (personaName) base.personaName = personaName;
+          if (recentReplies.length) base.recentReplies = recentReplies.slice();
           return base;
         });
       });
@@ -1477,6 +1547,8 @@
       anchorSweep: anchorSweep,
       parseJob: parseJob,
       sanitizePromptForCaption: sanitizePromptForCaption,
+      botLoopReplyChance: botLoopReplyChance,
+      noteAuthorForLoop: noteAuthorForLoop,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
@@ -1811,7 +1883,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.28.2';
+  var VERSION = '0.31.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -1953,6 +2025,12 @@
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
     },
+    removeReaction: function (channelId, messageId, emoji) {
+      return requestJSON('DELETE', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
+    },
+    editMessage: function (channelId, messageId, text) {
+      return requestJSON('PATCH', '/channels/' + channelId + '/messages/' + messageId, { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
+    },
     pinMessage: function (channelId, messageId) {
       return requestJSON('PUT', '/channels/' + channelId + '/pins/' + messageId, {});   // needs Manage Messages; 204 on success
     },
@@ -2045,6 +2123,24 @@
   // ---- engine wiring ------------------------------------------------------------------
   var engines = {};   // D3: channelId -> engine (each with its own namespaced store)
   var lastPoll = null;
+  // ---- global send budget (cross-engine, "one voice, many eyes") -----------------------
+  // Observation is per-channel and always runs; SENDS are globally rationed. One text slot and one
+  // image slot, each with a `sendBudgetMs` window (default 60s) shared across EVERY channel's
+  // engine. canSend(kind) reports whether the slot is free; noteSend(kind) claims it (stamped at
+  // the START of generation so two channels can't both pass during a multi-second brain call);
+  // releaseSend(kind) hands it back if the work produced nothing. This is what makes a multi-bot
+  // room safe: even five channels share one mouth.
+  var sendBudget = { text: 0, image: 0 };   // monotonic-ish claim timestamps per kind
+  function budgetWindow() { return Math.max(0, cfgGet('sendBudgetMs', 60000)); }
+  function canSend(kind) {
+    var win = budgetWindow();
+    if (win === 0) return true;
+    var last = sendBudget[kind] || 0;
+    return (Date.now() - last) >= win;
+  }
+  function noteSend(kind) { sendBudget[kind] = Date.now(); }
+  function releaseSend(kind) { sendBudget[kind] = 0; }   // give the slot back (generation was empty/failed)
+
   function buildEngine(chId) {
     var channelId = String(chId || primaryChannel() || '').trim();
     if (!channelId) return null;
@@ -2086,6 +2182,10 @@
         recapFn: function (ctx) { return brainCall('recap', ctx, 45000); },
         typing: function (cid) { return transport.startTyping(cid); },
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
+        unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
+        ackReactions: cfgGet('ackReactions', true),
+        ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udc40'),
+        ackImageEmoji: cfgGet('ackImageEmoji', '\ud83c\udfa8'),
         paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
         openDM: function (uid) { return transport.openDM(uid).then(function (dmId) { if (dmId) recordDMSession(dmId, uid, ''); return dmId; }); },
@@ -2101,6 +2201,11 @@
           pushEvent('channelGone', { channelId: chId });
         },
         send: function (cid, text) { return transport.sendMessage(cid, text); },
+        canSend: canSend, noteSend: noteSend, releaseSend: releaseSend,
+        sendBudgetMs: cfgGet('sendBudgetMs', 60000),
+        botLoopGrace: cfgGet('botLoopGrace', 2),
+        botLoopFloor: cfgGet('botLoopFloor', 0.05),
+        botLoopHardStop: cfgGet('botLoopHardStop', 12),
         sendEmbed: function (cid, embed) { return transport.sendEmbed(cid, embed); },
         onPoll: function (summary) {
           lastPoll = summary; pushEvent('poll', summary);
@@ -2198,6 +2303,7 @@
       addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
       greet: !!cfgGet('greet', false), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
       dmReplies: !!cfgGet('dmReplies', false),
+      ackReactions: cfgGet('ackReactions', true),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -2350,6 +2456,8 @@
       }
       case 'config.setDMReplies':
         { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
+      case 'config.setAckReactions':
+        { var ar = !!(args && args.on); cfgSet('ackReactions', ar); applyConfigChange(); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });

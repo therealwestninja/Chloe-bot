@@ -208,6 +208,7 @@
         <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
         <label class="chip"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
         <label class="chip"><input type="checkbox" id="dmChk"> reply in DMs she's opened</label>
+        <label class="chip"><input type="checkbox" id="ackChk"> instant status reactions (while she generates)</label>
       </div>
     </div>
     <div class="card">
@@ -516,6 +517,21 @@
     return null;
   }
 
+  // Craft guidance shared by her conversational prompts (respond / volunteer-style replies):
+  // G1 anti-repetition (show her own recent lines, ask her not to echo them) and G3 in-character
+  // refusal (decline as the character, not as "an AI language model" — she's openly a bot, so she
+  // needn't deny it, just decline in-voice without boilerplate). Returns '' when nothing applies.
+  function craftGuidance(ctx) {
+    var out = '';
+    var rr = (ctx && ctx.recentReplies) ? ctx.recentReplies : [];
+    if (rr.length) {
+      var recent = rr.slice(-5).map(function (t) { return '- ' + String(t).replace(/\s+/g, ' ').slice(0, 120); }).join('\n');
+      out += '\nYour last few replies (do NOT repeat these phrasings, openers, or sentence shapes — say something fresh):\n' + recent + '\n';
+    }
+    out += '\nIf you must decline or cannot help with something, do it briefly and in character; never break character with phrases like "as an AI" or "I cannot as a language model." Stay in your own voice.\n';
+    return out;
+  }
+
   // respond(context) -> { ok, value:text }. context is assembled by the engine (Tier C).
   function respond(ctx) {
     var ai = grabAiText();
@@ -526,9 +542,10 @@
     var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
     var who = (ctx && ctx.addressedBy && ctx.addressedBy.name) ? ctx.addressedBy.name : 'someone';
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
-      + 'You are ' + myName + ', chatting in a Discord channel.\n'
+      + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + 'Recent conversation:\n' + transcript + '\n'
-      + who + ' is talking to you. Reply in character as a single short chat message. '
+      + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
+      + craftGuidance(ctx)
       + 'Do not prefix your reply with your name.';
     return Promise.resolve(ai({ instruction: instruction, startWith: '' })).then(function (result) {
       var text = String(result || '').trim();      // boxed-String unwrap (skill 0.1)
@@ -724,6 +741,7 @@
     var gc = byId('greetChk'); if (gc) gc.checked = !!s.greet;
     var mc = byId('memChk'); if (mc) mc.checked = !!s.memberCheck;
     var dc = byId('dmChk'); if (dc) dc.checked = !!s.dmReplies;
+    var ac = byId('ackChk'); if (ac) ac.checked = (s.ackReactions !== false);
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -940,6 +958,11 @@
   byId('dmChk').addEventListener('change', function () {
     call('config.setDMReplies', { on: byId('dmChk').checked }).then(function (res) {
       log(res && res.ok ? ('DM replies: ' + res.value.dmReplies + (res.value.dmReplies ? " (she'll poll DMs she has opened)" : '')) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('ackChk').addEventListener('change', function () {
+    call('config.setAckReactions', { on: byId('ackChk').checked }).then(function (res) {
+      log(res && res.ok ? ('status reactions: ' + res.value.ackReactions) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('backfillChk').addEventListener('change', function () {
