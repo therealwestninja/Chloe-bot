@@ -96,6 +96,8 @@
   button:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(139,92,246,.35)}
   button:active{transform:none;box-shadow:none}
   button.ghost{background:var(--surface2);color:var(--ink);border:1px solid var(--line)}
+  a.ghostlink{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--accent2);background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-weight:600;font-size:13px;transition:border-color .15s,box-shadow .15s}
+  a.ghostlink:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(5,8,18,.35)}
   button.ghost:hover{box-shadow:0 4px 14px rgba(5,8,18,.35);border-color:var(--accent)}
   button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
   button.danger:hover{box-shadow:0 4px 14px rgba(240,113,106,.25)}
@@ -158,6 +160,7 @@
     <button class="tab" id="tab_moderation">Moderation</button>
     <button class="tab" id="tab_people">People</button>
     <button class="tab" id="tab_system">System</button>
+    <button class="tab" id="tab_about">About</button>
   </nav>
 
   <section class="pane active" id="pane_setup">
@@ -204,6 +207,7 @@
         <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
         <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
         <label class="chip"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
+        <label class="chip"><input type="checkbox" id="dmChk"> reply in DMs she's opened</label>
       </div>
     </div>
     <div class="card">
@@ -309,6 +313,73 @@
         <button class="ghost" id="diagBtn">Dump trace ring</button>
         <span class="note">Link, transport, and poll events from the userscript &mdash; lands in the log below and your clipboard.</span>
       </div>
+    </div>
+  </section>
+
+  <section class="pane" id="pane_about">
+    <div class="card">
+      <h2>Setup &mdash; create a Discord bot</h2>
+      <div class="codehead">1 &middot; Make the bot</div>
+      <div class="note">
+        Go to the <strong>Discord Developer Portal</strong> (discord.com/developers/applications) and create a <em>New Application</em>, then open its <strong>Bot</strong> section. Copy the bot <strong>token</strong> here &mdash; you&rsquo;ll need it in step 3.
+      </div>
+      <div class="codehead">2 &middot; Turn on Message Content Intent (required)</div>
+      <div class="note">
+        Still under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty message text &mdash; Chloe will see that people are talking but never hear <em>what</em> they say.
+      </div>
+      <div class="codehead">3 &middot; Give Chloe the token</div>
+      <div class="note">
+        In Tampermonkey&rsquo;s menu for the Chloe-bridge userscript, click <strong>&ldquo;Set bot token&rdquo;</strong> and paste it. The token is stored only in the userscript and <em>never</em> enters this page. Then click <strong>Validate token</strong> in the Setup tab.
+      </div>
+      <div class="codehead">4 &middot; Invite the bot to your server</div>
+      <div class="note">
+        From the portal&rsquo;s <strong>OAuth2 &rarr; URL Generator</strong>, tick <em>bot</em>, then grant at least <em>View Channel</em>, <em>Send Messages</em>, and <em>Read Message History</em>. Optional extras: <em>Attach Files</em> (image replies), <em>Manage Messages</em> (pin the transparency notice), <em>Ban Members</em> (the human-confirmed permaban). Open the generated URL and add the bot to your server.
+      </div>
+      <div class="codehead">5 &middot; Point her at a channel</div>
+      <div class="note">
+        In Discord, enable <strong>Developer Mode</strong> (Settings &rarr; Advanced). Right-click the channel you want her in &rarr; <strong>Copy Channel ID</strong>, paste it into the Setup tab, and click <strong>Set channel</strong>. On a first run in an existing channel, click <strong>Backfill history</strong> so she starts with context instead of amnesia. Set any options in the Behavior, Moderation, and Personality tabs, then click <strong>Start</strong>. To run her in several channels at once, add more channel IDs (comma-separated) in Setup &mdash; each channel gets its own independent memory, moderation, and mode.
+      </div>
+      <div class="codehead">6 &middot; A DM is a channel too</div>
+      <div class="note">
+        Chloe can hold a one-to-one conversation in <strong>Direct Messages</strong> as well. Any DM she opens becomes a channel she polls, and in a DM she replies to <em>every</em> message (no mention needed). Turn on <strong>&ldquo;reply in DMs she&rsquo;s opened&rdquo;</strong> in the Behavior tab. One Discord limit: she can&rsquo;t receive a cold DM from someone she&rsquo;s never messaged &mdash; Discord only delivers those over the realtime Gateway, which this REST-polling bridge doesn&rsquo;t use &mdash; so DMs work for any conversation she&rsquo;s part of, just not unsolicited inbound ones.
+      </div>
+      <div class="codehead">7 &middot; Let her welcome and answer people automatically</div>
+      <div class="note">
+        In the Behavior tab, <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> has her introduce herself to newcomers and welcome people back, warmer the better she knows them &mdash; an auto-setup for new users. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets her judge when she can helpfully join a thread she wasn&rsquo;t directly addressed in. Both honor moderation, lockdown mode, and the output gates.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Troubleshooting</h2>
+      <div class="codehead">The app won&rsquo;t connect</div>
+      <div class="note">
+        If the command bar shows <em>userscript not detected</em>: confirm the <strong>Chloe-bridge userscript</strong> is installed and enabled in Tampermonkey, that you&rsquo;re on a <code>perchance.org</code> tab, and reload the page. The userscript and this generator talk over a private in-page link; a hard refresh re-establishes it. If you switched browsers or profiles, the token and settings live in that browser&rsquo;s userscript storage, so set them again there.
+      </div>
+      <div class="codehead">She runs but stays silent</div>
+      <div class="note">
+        Most often Message Content Intent is off (step 2) &mdash; the log will say so. Otherwise: check she&rsquo;s addressed the way the Behavior tab expects (mention vs. name), that the speaker isn&rsquo;t ignored / timed-out / soft-banned or on the block list, and that the channel isn&rsquo;t in lockdown. The <strong>Diagnostics</strong> button (System tab) dumps the recent link, transport, and poll events to the log.
+      </div>
+      <div class="codehead">Other failure modes</div>
+      <div class="note">
+        <strong>Images never arrive</strong> &mdash; paste the DSL top-panel page into the generator (image generation routes through it) and allow a minute; generation is slow. <strong>Spawned worker does nothing</strong> &mdash; allow pop-ups for perchance.org. <strong>A channel logs &ldquo;Unknown Channel&rdquo;</strong> &mdash; the id is wrong or the bot can&rsquo;t see it; fix it and Start again. <strong>She goes quiet when the computer sleeps</strong> &mdash; the queen tab must stay open and the machine awake; she resumes on wake and honors Discord rate limits automatically.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Weld Companion</h2>
+      <div class="note">
+        Chloe is part of the <strong>Weld</strong> project. The <strong>Weld Companion</strong> userscript adds quality-of-life tools around any Perchance generator &mdash; favorites, a scrapbook, reading comfort, GitHub sync, an IndexedDB data manager, and more. It&rsquo;s optional and separate from this bot.
+      </div>
+      <div class="row" style="margin-top:8px">
+        <a class="ghostlink" href="https://github.com/therealwestninja" target="_blank" rel="noopener">Weld &amp; Companion on GitHub &rarr;</a>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Credits &amp; links</h2>
+      <div class="note">Chloe-bridge is built and maintained by <strong>west-ninja</strong> (therealwestninja). The bot, userscript, and docs live at <strong>github.com/therealwestninja/Chloe-bot</strong>.</div>
+      <div class="row" style="margin-top:8px">
+        <a class="ghostlink" href="https://github.com/therealwestninja/Chloe-bot" target="_blank" rel="noopener">Chloe-bot on GitHub &rarr;</a>
+        <a class="ghostlink" href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt &mdash; west-ninja</a>
+      </div>
+      <div class="note" style="margin-top:10px">MIT licensed. Chloe runs entirely in your browser &mdash; no server, no account, your data stays local.</div>
     </div>
   </section>
 
@@ -652,6 +723,7 @@
     var vc = byId('volChk'); if (vc) vc.checked = !!s.volunteer;
     var gc = byId('greetChk'); if (gc) gc.checked = !!s.greet;
     var mc = byId('memChk'); if (mc) mc.checked = !!s.memberCheck;
+    var dc = byId('dmChk'); if (dc) dc.checked = !!s.dmReplies;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -863,6 +935,11 @@
   byId('memChk').addEventListener('change', function () {
     call('config.setMemberCheck', { on: byId('memChk').checked }).then(function (res) {
       log(res.ok ? ('departure detection: ' + res.value.memberCheck + (res.value.memberCheck ? ' (needs no extra perms; reads guild membership)' : '')) : ('failed: ' + res.reason));
+    });
+  });
+  byId('dmChk').addEventListener('change', function () {
+    call('config.setDMReplies', { on: byId('dmChk').checked }).then(function (res) {
+      log(res && res.ok ? ('DM replies: ' + res.value.dmReplies + (res.value.dmReplies ? " (she'll poll DMs she has opened)" : '')) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('backfillChk').addEventListener('change', function () {
@@ -1079,7 +1156,7 @@
 
   // ---- UI v2: tab rail (in-memory only; never touches location.hash — the worker role lives there)
   (function () {
-    var names = 'setup behavior moderation people system'.split(' ');
+    var names = 'setup behavior moderation people system about'.split(' ');
     function activate(name) {
       names.forEach(function (n) {
         var pane = byId('pane_' + n), tab = byId('tab_' + n);

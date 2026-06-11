@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.28.1
+// @version      0.28.2
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1811,7 +1811,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.28.1';
+  var VERSION = '0.28.2';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -2197,6 +2197,7 @@
       channelId: cfgGet('channelId', ''), botUserId: cfgGet('botUserId', ''), botName: cfgGet('botName', ''),
       addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
       greet: !!cfgGet('greet', false), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
+      dmReplies: !!cfgGet('dmReplies', false),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
