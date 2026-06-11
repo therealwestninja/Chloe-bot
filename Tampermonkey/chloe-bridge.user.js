@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.43.0
+// @version      0.45.1
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -180,6 +180,11 @@
       checkinAbsenceMs: 259200000,   // a favorite must be absent ~3 days before a check-in
       checkinPerUserGapMs: 1209600000,// don't check in on the same person more than once per ~2 weeks
       checkinGapMs: 86400000,        // at most one check-in (any user) per day
+      // G5 time awareness: she can sense the time of day, the day of week, and how long the room has
+      // been quiet, so her tone fits the moment (a late-night hush, a weekend lull) rather than being
+      // timeless. Needs the community's UTC offset to be right; off by default.
+      timeAware: false,              // weave a light sense of time-of-day / day / quiet-duration into context
+      timezoneOffsetMins: 0,         // the community's offset from UTC in minutes (e.g. -480 for US Pacific)
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -191,6 +196,18 @@
       archiveFavoriteBonusMs: 2592000000,// each "favorite tier" of interactions adds this much patience (~30d)
       archiveFavoriteTier: 8,        // interactions per favorite tier (so an 8-interaction user waits +30d)
       archiveMaxKept: 2000,          // cap on archived users (oldest pruned beyond this)
+      // --- F1 fact memory (learn people over time) ---
+      // She can remember a few durable, voluntarily-shared facts about regulars ("is learning rust",
+      // "has a cat named Pixel") so she feels like she knows them. Conservative and controllable:
+      // extraction refuses sensitive categories, users can see/forget what's stored, off by default.
+      factMemory: false,             // observe and remember durable facts about people
+      factsPerUser: 6,               // how many facts she keeps per person (oldest dropped past this)
+      factMinInteractions: 4,        // only start remembering people she's actually engaged with
+      factProposeGapMs: 86400000,    // at most one extraction pass per user per day (it's an AI call)
+      factProposeMinNew: 4,          // ...and only after this many new messages from them since last pass
+      factTextMax: 140,              // per-fact length cap
+      factContextCount: 4,           // how many facts ride into her context for an active person
+      factEveryPolls: 12,            // run the silent extraction pass at most every Nth poll
       beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
       judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
@@ -1207,7 +1224,13 @@
             return { ack: 'reactions this room values: ' + top.map(function (r) { return r.label + ' \u00d7' + r.count; }).join(', ') + mc };
           });
         } },
-      { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
+      { verb: 'aboutme',  modOnly: false, help: 'aboutme (what she remembers about you)', handler: function (modId, c) {
+          return getFacts(modId).then(function (facts) {
+            if (!facts.length) return { ack: "I haven\u2019t picked up anything I\u2019m holding onto about you \u2014 we just haven\u2019t talked enough yet, or fact memory is off." };
+            return { ack: 'here\u2019s what I remember about you:\n' + facts.map(function (f) { return '\u2022 ' + f.text; }).join('\n') + '\n(say "' + cfg.commandPrefix + ' forget <words>" to drop any of it)' };
+          });
+        } },
+      { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' }
     ];
     function resolveVerb(word) {
       word = String(word || '').toLowerCase();
@@ -1352,7 +1375,13 @@
               c.messageId = m.id; c.authorName = m.author.username;   // for queue-ack reaction + caption
               if (m.referenced_message) c.referenced = { text: m.referenced_message.content || '', authorName: (m.referenced_message.author && m.referenced_message.author.username) || '' };
               commandCount++; commandAuthors[m.author.id] = true;
-              if (c.cmd === 'forget') return forgetMe(m.author.id, m.author.username);  // anyone, self only
+              if (c.cmd === 'forget') {
+                var fa = String(c.rawArgs || '').trim();
+                if (fa && !/^me$/i.test(fa) && cfg.factMemory) {   // "forget <a thing>" drops matching facts, keeps the person
+                  return forgetFact(m.author.id, fa).then(function (n) { acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); });
+                }
+                return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person
+              }
               if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });  // open to anyone
               if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
@@ -1620,7 +1649,7 @@
             if (rec && !returned && (now - (rec.at || 0)) < cfg.checkinPerUserGapMs) return;  // cooling down
             // most-missed = most interaction, then longest absent
             var score = (u.interactionCount || 0) * 1e9 + absent;
-            if (!best || score > best.score) best = { id: u.id, name: u.name, absent: absent, interactions: u.interactionCount || 0, summary: u.summary || '', seenAt: (u.lastSeen || 0), count: count, score: score };
+            if (!best || score > best.score) best = { id: u.id, name: u.name, absent: absent, interactions: u.interactionCount || 0, summary: factSummary(u), seenAt: (u.lastSeen || 0), count: count, score: score };
           });
           // Give up on anyone who's ignored every check-in: move them to historical friends so she
           // stops pinging someone who isn't coming back (life happens), and the hot roster stays lean.
@@ -1645,6 +1674,42 @@
             }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
           });
         });
+      });
+    }
+
+    // F1 extraction pass: pick one due regular and ask the brain (page side) to propose durable facts
+    // from their recent lines. Gated like check-ins (one user per pass, periodic) so it's cheap. The
+    // page handler refuses sensitive categories and returns a short JSON array; we store conservatively.
+    // No send — this is silent background learning, not a message.
+    function processFacts() {
+      if (!cfg.factMemory || typeof cfg.factFn !== 'function') return Promise.resolve(null);
+      var now = clock.now();
+      return getRoster().then(function (roster) {
+        var due = null;
+        for (var i = 0; i < roster.length; i++) {
+          var u = roster[i];
+          if (!u || (u.state && u.state !== 'active')) continue;
+          if (factProposeDue(u, now)) { due = u; break; }    // roster is newest-first; take the freshest due user
+        }
+        if (!due) return null;
+        // gather their recent lines for context
+        var lines = (due.recent || []).map(function (r) { return String(r.text || r); }).filter(Boolean);
+        if (!lines.length) {
+          // nothing to learn from right now; still advance the baseline so we don't re-scan immediately
+          return Promise.resolve(store.get(partKey(due.id))).then(function (p) { if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; return store.set(partKey(p.id), p); } });
+        }
+        return Promise.resolve(cfg.factFn({ name: due.name, lines: lines, known: (due.facts || []).map(function (f) { return f.text; }) })).then(function (r) {
+          var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
+          return addFacts(due.id, proposed, 'observed').then(function (added) {
+            return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+              if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; }   // reset the cadence window
+              return (p ? store.set(partKey(p.id), p) : Promise.resolve()).then(function () {
+                if (added) log('[chloe.facts] learned ' + added + ' fact(s) about ' + due.name);
+                return added ? { facts: added, who: due.name } : null;
+              });
+            });
+          });
+        }, function () { return null; });
       });
     }
 
@@ -1869,6 +1934,11 @@
                     return processCheckin();
                   }).then(function (checkin) {
                     if (checkin) summary.checkin = checkin;
+                    // F1 silent learning pass — gated to a cadence (it's an AI call), never every poll
+                    if (cfg.factMemory && cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0) return processFacts();
+                    return null;
+                  }).then(function (facts) {
+                    if (facts) summary.facts = facts;
                   });
                   function finishPoll() {
                     pollCount++;
@@ -2104,14 +2174,14 @@
         // message, her recent-reply anti-repeat list, persona note, standing intent).
         var reserve = (cfg.promptOverheadTokens || 0)
           + estimateTokens(scrubDiscordTokens(p.content))
-          + estimateTokens((addressed && addressed.summary) || '');
+          + estimateTokens((addressed && factSummary(addressed)) || '');
         recentReplies.forEach(function (t) { reserve += estimateTokens(t) + 2; });
         var base = {
           you: { name: (personaName || cfg.botName || 'Chloe') },
           addressedBy: { id: p.authorId, name: p.authorName },
           addressedMessage: scrubDiscordTokens(p.content),
           channelRecent: lines,
-          userSummary: (addressed && addressed.summary) ? addressed.summary : null,
+          userSummary: (addressed && factSummary(addressed)) ? factSummary(addressed) : null,
           familiarity: addressed ? (addressed.interactionCount || 0) : 0
         };
         return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
@@ -2126,15 +2196,18 @@
                 base.channelHighlights = pick;
                 pick.forEach(function (h) { reserve += estimateTokens(h.who) + estimateTokens(h.text) + estimateTokens(h.note) + 4; });
               }
-              // NOW pack the transcript into whatever the request budget has left after the reserve.
-              var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
-              var packed = packByTokens(lines, transcriptBudget);
-              base.channelRecent = packed.lines;
-              base.contextTokens = packed.tokens;
-              base.contextDropped = packed.dropped;
-              base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
-              if (cfg.singleParagraph) base.singleParagraph = true;
-              return base;
+              return Promise.resolve(cfg.timeAware ? store.get(RHYTHM_KEY) : null).then(function (rh) {
+                if (cfg.timeAware) { base.timeContext = timeContext(rh && rh.lastActivity); reserve += 16; }   // a short descriptor line
+                // NOW pack the transcript into whatever the request budget has left after the reserve.
+                var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
+                var packed = packByTokens(lines, transcriptBudget);
+                base.channelRecent = packed.lines;
+                base.contextTokens = packed.tokens;
+                base.contextDropped = packed.dropped;
+                base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+                if (cfg.singleParagraph) base.singleParagraph = true;
+                return base;
+              });
             });
           });
         });
@@ -2208,6 +2281,94 @@
       return cfg.archiveAbsenceMs + tiers * (cfg.archiveFavoriteBonusMs || 0);
     }
 
+    // G5: a light, human sense of time. Derived purely from the clock + the community's UTC offset
+    // (Discord stamps are UTC), plus how long the room has been quiet. Returned as plain descriptors
+    // the brain can lean on softly — never as a timestamp to recite.
+    function partOfDay(h) {
+      if (h < 5) return 'the middle of the night';
+      if (h < 9) return 'early morning';
+      if (h < 12) return 'morning';
+      if (h < 14) return 'midday';
+      if (h < 18) return 'afternoon';
+      if (h < 22) return 'evening';
+      return 'late evening';
+    }
+    function timeContext(lastActivity) {
+      var now = clock.now();
+      var local = new Date(now + (cfg.timezoneOffsetMins || 0) * 60000);
+      var h = local.getUTCHours();   // getUTC* on the already-shifted instant = local wall clock
+      var dow = local.getUTCDay();   // 0 = Sunday
+      var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      var tc = { partOfDay: partOfDay(h), hour: h, dayOfWeek: days[dow], weekend: (dow === 0 || dow === 6), lateNight: (h < 5 || h >= 23) };
+      if (lastActivity != null) {
+        var q = now - lastActivity;
+        tc.quietForMs = q;
+        tc.quietFor = (q < 600000) ? null                         // <10m: not worth mentioning
+          : (q < 3600000) ? 'a little while'
+          : (q < 21600000) ? 'a few hours'
+          : (q < 86400000) ? 'most of the day'
+          : 'a day or more';
+      }
+      return tc;
+    }
+
+    // ---- F1 fact memory ---------------------------------------------------------------------
+    // Durable facts about a person live on their partition (so they archive/restore for free). Each
+    // fact is { text, at, source }. Storage is conservative: capped, deduped, and the extraction
+    // prompt (page side) refuses sensitive categories. Users can see and forget what's stored.
+    function normFact(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, '').replace(/\s+/g, ' ').trim(); }
+    function getFacts(id) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && Array.isArray(p.facts)) ? p.facts : []; });
+    }
+    // Merge newly-proposed fact strings into a user's store. Dedupes against existing (normalized),
+    // caps to factsPerUser (newest kept). Returns the count actually added.
+    function addFacts(id, proposed, source) {
+      if (!proposed || !proposed.length) return Promise.resolve(0);
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p) return 0;
+        var facts = Array.isArray(p.facts) ? p.facts : [];
+        var seen = {}; facts.forEach(function (f) { seen[normFact(f.text)] = true; });
+        var added = 0;
+        proposed.forEach(function (raw) {
+          var text = String(raw || '').trim().slice(0, cfg.factTextMax);
+          var key = normFact(text);
+          if (!key || seen[key]) return;          // empty or duplicate
+          seen[key] = true; facts.push({ text: text, at: clock.now(), source: source || 'observed' }); added++;
+        });
+        if (!added) return 0;
+        if (facts.length > cfg.factsPerUser) facts = facts.slice(-cfg.factsPerUser);   // keep newest
+        p.facts = facts; p.factsAt = clock.now();
+        return store.set(partKey(id), p).then(function () { return added; });
+      });
+    }
+    function forgetFact(id, match) {
+      var m = normFact(match);
+      if (!m) return Promise.resolve(0);
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p || !Array.isArray(p.facts)) return 0;
+        var before = p.facts.length;
+        p.facts = p.facts.filter(function (f) { return normFact(f.text).indexOf(m) < 0; });
+        var removed = before - p.facts.length;
+        if (!removed) return 0;
+        return store.set(partKey(id), p).then(function () { return removed; });
+      });
+    }
+    // A compact one-line synthesis of what she knows about someone — this is what populates the
+    // (previously empty) `summary` that already rides into response + check-in context.
+    function factSummary(p) {
+      if (!p || !Array.isArray(p.facts) || !p.facts.length) return '';
+      return p.facts.slice(-cfg.factContextCount).map(function (f) { return f.text; }).join('; ');
+    }
+    // Decide whether a user is due for an extraction pass: fact memory on, they're a real regular,
+    // enough new messages since the last pass, and the per-user cooldown has elapsed.
+    function factProposeDue(p, now) {
+      if (!cfg.factMemory) return false;
+      if ((p.interactionCount || 0) < cfg.factMinInteractions) return false;
+      if (p.factsAt && (now - p.factsAt) < cfg.factProposeGapMs) return false;
+      var newMsgs = (p.interactionCount || 0) - (p.factsBaseline || 0);
+      return newMsgs >= cfg.factProposeMinNew;
+    }
+
     function getSpeakerRing() { return Promise.resolve(store.get(RING_KEY)).then(function (r) { return r || []; }); }
 
     // ---- loop control --------------------------------------------------------------------
@@ -2276,7 +2437,9 @@
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
       addHighlight: addHighlight, listHighlights: listHighlights, clearHighlights: clearHighlights,
       reactionSignificance: reactionSignificance, reactionThreshold: reactionThreshold, processMessageReactions: processMessageReactions, topReactions: topReactions, reactionSweep: reactionSweep,
-      processLull: processLull, processCheckin: processCheckin,
+      processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
+      getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
+      timeContext: timeContext,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
@@ -2612,7 +2775,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.43.0';
+  var VERSION = '0.45.1';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -2827,6 +2990,7 @@
   // so fall back to '*' in that one case (responses are nonce-matched, so this stays safe).
   function replyTarget(o) { return (o && o !== 'null') ? o : '*'; }
   var callPending = new Map(); var callSeq = 0;
+  var seenReqNonces = new Set();   // de-dupe fanned-out page requests so a config command applies once
   function callPage(method, args, timeoutMs) {
     return new Promise(function (resolve) {
       if (!pageSource) { resolve({ ok: false, reason: 'no control page linked (open the Chloe generator tab)' }); return; }
@@ -2911,6 +3075,10 @@
         lullFiller: cfgGet('lullFiller', false),
         checkinFn: function (ctx) { return brainCall('checkin', ctx, 30000); },
         checkins: cfgGet('checkins', false),
+        factFn: function (ctx) { return brainCall('facts', ctx, 30000); },
+        factMemory: cfgGet('factMemory', false),
+        timeAware: cfgGet('timeAware', false),
+        timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
         archiveStale: cfgGet('archiveStale', true),
         greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
@@ -3072,6 +3240,9 @@
       singleParagraph: !!cfgGet('singleParagraph', false),
       lullFiller: !!cfgGet('lullFiller', false),
       checkins: !!cfgGet('checkins', false),
+      factMemory: !!cfgGet('factMemory', false),
+      timeAware: !!cfgGet('timeAware', false),
+      timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -3093,7 +3264,12 @@
   // ---- control link: page (generator HTML panel) -> userscript (trusted surface) ------
   // Mirrors the skybridge trust shape: origin-checked, nonce-matched, scoped commands,
   // secrets never cross (the bot token is never returned to the page).
-  var ORIGIN_OK = /^https:\/\/([a-z0-9]{32}\.)?perchance\.org$/;
+  // Perchance serves the control generator from a perchance.org origin OR, when the embed is
+  // sandboxed (no allow-same-origin), from origin "null". Both are legitimate same-tab embeds; the
+  // real protection is the same-tab link + nonce matching + the bot token never crossing to the page.
+  // Rejecting "null" was a false-negative that broke detection inside sandboxed embeds while real
+  // brain traffic (userscript-initiated, replied via the captured page handle) still flowed.
+  var ORIGIN_OK = /^(null|https:\/\/([a-z0-9]{32}\.)?perchance\.org)$/;
   function dispatch(cmd, args) {
     switch (cmd) {
       case 'ping':            return Promise.resolve({ ok: true, value: statusSnapshot() });
@@ -3232,6 +3408,12 @@
         { var lf = !!(args && args.on); cfgSet('lullFiller', lf); applyConfigChange(); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
       case 'config.setCheckins':
         { var ck = !!(args && args.on); cfgSet('checkins', ck); applyConfigChange(); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
+      case 'config.setFactMemory':
+        { var fm = !!(args && args.on); cfgSet('factMemory', fm); applyConfigChange(); return Promise.resolve({ ok: true, value: { factMemory: fm } }); }
+      case 'config.setTimeAware':
+        { var ta = !!(args && args.on); cfgSet('timeAware', ta);
+          if (args && args.offsetMins != null && isFinite(args.offsetMins)) cfgSet('timezoneOffsetMins', Math.max(-840, Math.min(840, Math.round(args.offsetMins))));
+          applyConfigChange(); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
@@ -3333,6 +3515,14 @@
     if (d.kind === 'callres') { var cb = callPending.get(d.nonce); if (cb) { callPending.delete(d.nonce); cb(d); } return; }
     if (d.kind !== 'req') return;
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
+    // The page now fans a request out to several candidate frames so it reaches us regardless of
+    // embed topology; if more than one reaches this listener, only handle the first (replies are
+    // nonce-matched on the page, but a config command must not double-apply).
+    if (nonce) {
+      if (seenReqNonces.has(nonce)) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: true, value: null, dup: true }, replyTarget(origin)); } catch (e) {} return; }
+      seenReqNonces.add(nonce);
+      if (seenReqNonces.size > 400) { var it = seenReqNonces.values().next(); if (!it.done) seenReqNonces.delete(it.value); }
+    }
     Promise.resolve().then(function () { return dispatch(d.cmd, d.args); })
       .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; try { source.postMessage(res, replyTarget(origin)); } catch (e) {} })
       .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, replyTarget(origin)); } catch (e) {} });

@@ -30,10 +30,10 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{font:14px/1.55 var(--body);color:var(--ink);background-color:var(--bg);
+  body{font:14px/1.55 var(--body);color:var(--ink);background-color:var(--bg);text-align:left;
     background-image:radial-gradient(rgba(139,92,246,.07) 1px,transparent 1.4px),linear-gradient(168deg,var(--bg2),var(--bg) 62%);
     background-size:24px 24px,100% 100%;background-attachment:fixed;-webkit-font-smoothing:antialiased}
-  #app{max-width:880px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+  #app{max-width:880px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px;text-align:left}
 
   .cmdbar{position:sticky;top:8px;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
     background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(10px);
@@ -212,6 +212,9 @@
         <label class="chip"><input type="checkbox" id="spChk"> limit her to one paragraph per message</label>
         <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
+        <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
+        <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
+        <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
       </div>
     </div>
     <div class="card">
@@ -353,19 +356,19 @@
       </div>
     </div>
     <div class="card">
-      <h2>Power command: <code>!chloe image {json}</code></h2>
+      <h2>Power command: <code>!chloe image \{json\}</code></h2>
       <div class="note">
         Anyone can request an image in plain language (&ldquo;chloe draw a red dragon over a city&rdquo;), but for precise control over the generator&rsquo;s real knobs, send a JSON object. Only options the Stable&nbsp;Diffusion&nbsp;1.5 backend actually honors are exposed:
       </div>
       <div class="codehead">Example</div>
-      <div class="note"><code>!chloe image {"prompt":"a red dragon over a neon city","resolution":"768x512","guidanceScale":11,"removeBackground":false,"weights":{"detailed":1.4,"misty":1.2},"dm":false}</code></div>
+      <div class="note"><code>!chloe image \{"prompt":"a red dragon over a neon city","resolution":"768x512","guidanceScale":11,"removeBackground":false,"weights":\{"detailed":1.4,"misty":1.2\},"dm":false\}</code></div>
       <div class="codehead">Fields</div>
       <div class="note">
         <strong>prompt</strong> (required) &mdash; the description; an empty prompt is refused because it hangs the backend forever.<br>
         <strong>resolution</strong> &mdash; one of <code>512x512</code>, <code>512x768</code>, <code>768x512</code>, <code>768x768</code> (anything else snaps to a sensible default).<br>
         <strong>guidanceScale</strong> &mdash; 1&ndash;30 (default 7); how strictly it follows the prompt.<br>
         <strong>removeBackground</strong> &mdash; <code>true</code> cuts the background client-side and returns a transparent PNG.<br>
-        <strong>weights</strong> &mdash; <code>{"term":1.4}</code> emphasises words via A1111 parentheses <code>(term:1.4)</code>; values 0&ndash;2.<br>
+        <strong>weights</strong> &mdash; <code>\{"term":1.4\}</code> emphasises words via A1111 parentheses <code>(term:1.4)</code>; values 0&ndash;2.<br>
         <strong>dm</strong> &mdash; <code>true</code> delivers privately.
       </div>
       <div class="note">
@@ -410,6 +413,18 @@
       <h2>Historical friends (data tiering)</h2>
       <div class="note">
         To keep the active roster fast, people who&rsquo;ve been gone a very long time &mdash; or who never answered her check-ins &mdash; are quietly moved to a separate &ldquo;historical friends&rdquo; archive rather than cluttering the live store. The longer she&rsquo;s interacted with someone, the longer they&rsquo;re kept active first (favorites get more patience). Nothing is lost: the moment an archived friend speaks again they&rsquo;re restored with their history intact &mdash; recognized as an old friend, though a long absence gently softens the familiarity, the way it would for anyone.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Getting to know people</h2>
+      <div class="note">
+        With <strong>&ldquo;remember durable facts about regulars&rdquo;</strong> on (Behavior tab), Chloe quietly notes a few lasting, voluntarily-shared things about people she chats with often &mdash; hobbies, projects, a pet&rsquo;s name &mdash; so she can be a thoughtful friend rather than a stranger every time. It&rsquo;s deliberately conservative and private: she only records things plainly stated, <strong>never</strong> sensitive topics (health, beliefs, identity, location, finances, relationships, anything embarrassing), and only for people she&rsquo;s actually engaged with. Anyone can say <code>!chloe aboutme</code> to see exactly what she remembers, or <code>!chloe forget some words</code> to drop a specific detail; <code>!chloe forget</code> on its own clears everything about them. Off by default. The learning happens in the background and never sends a message on its own.
+      </div>
+    </div>
+    <div class="card">
+      <h2>A sense of time</h2>
+      <div class="note">
+        Turn on <strong>&ldquo;sense time of day &amp; quiet spells&rdquo;</strong> (Behavior tab) and Chloe gains a light awareness of the moment &mdash; morning vs late night, weekday vs weekend, and how long the room has been quiet &mdash; so her tone can settle accordingly (calmer at 2am, easier on a lazy weekend). She won&rsquo;t announce the time or recite a clock; it just tints how she comes across. Because Discord timestamps are UTC, set your community&rsquo;s <strong>UTC offset in minutes</strong> beside the toggle (for example <code>-480</code> for US Pacific, <code>60</code> for Central Europe) so &ldquo;good morning&rdquo; lands at the right hour. Off by default.
       </div>
     </div>
     <div class="card">
@@ -463,6 +478,8 @@
   var pending = new Map();           // Map avoids obj[key] (parser-safe)
   var seq = 0;
   var linkAlive = false;
+  var linkMisses = 0;   // consecutive failed status pings; the banner waits for a couple, so a single
+                        // transient miss at load (or during a userscript restart) doesn't flash a scary error
 
   window.addEventListener('message', function (ev) {
     var d = ev.data;
@@ -497,6 +514,7 @@
       else if (d.method === 'beat') handler = beat;
       else if (d.method === 'lull') handler = lull;
       else if (d.method === 'checkin') handler = checkin;
+      else if (d.method === 'facts') handler = facts;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
@@ -540,6 +558,17 @@
   // The anchored note arrives pre-sanitized and capped from the engine; it is framed as STYLE
   // guidance only, never as instructions, so a pinned message can flavor her voice but cannot
   // override her rules (the prompt says so explicitly).
+  // G5: turn the engine's timeContext into soft prompt guidance. Descriptive, never a timestamp to
+  // recite — it should tint tone, not become the subject.
+  function timePhrase(ctx) {
+    var t = ctx && ctx.timeContext;
+    if (!t) return '';
+    var bits = [];
+    bits.push('It is ' + t.partOfDay + (t.weekend ? ' on a weekend' : ' on a ' + (t.dayOfWeek || 'weekday')));
+    if (t.quietFor) bits.push('the channel has been quiet for ' + t.quietFor);
+    return 'Context: ' + bits.join('; ') + '. Let this gently tint your tone if it fits (e.g. calmer late at night) \u2014 do not state the time or day unless it is naturally relevant.\n';
+  }
+
   function personaStyle(ctx) {
     var out = '';
     var p = ctx && ctx.personality;
@@ -612,10 +641,16 @@
       hiLine = 'A few memorable moments from this channel (reference only if naturally relevant, do not force them in):\n'
         + ctx.channelHighlights.map(function (h) { return '- ' + (h.who ? h.who + ': ' : '') + '\u201c' + String(h.text).slice(0, 120) + '\u201d' + (h.note ? ' (' + String(h.note).slice(0, 60) + ')' : ''); }).join('\n') + '\n';
     }
+    var memLine = (ctx && ctx.userSummary)
+      ? ('What you remember about ' + who + ': ' + String(ctx.userSummary) + '. Let this color your warmth naturally; only mention it if it genuinely fits, never recite it.\n')
+      : '';
+    var timeLine = timePhrase(ctx);
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + intentLine
       + hiLine
+      + memLine
+      + timeLine
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)
@@ -637,6 +672,42 @@
   // lull(ctx) -> { ok, value:text }. The room went quiet after being active; she gently re-opens
   // it. Uses the recent transcript she already has so the opener connects to what was happening,
   // rather than a non-sequitur. One short, natural message.
+  // Parse a model-emitted JSON array of strings, defensively (fence strip, must be an array).
+  function safeJsonArray(text) {
+    var s = String(text || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/,'').trim();
+    try { var v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+
+  // facts(ctx) -> { ok, value: array-of-strings }. Silent background learning: from a person's recent lines,
+  // propose a few durable, low-sensitivity facts worth remembering. This is deliberately conservative
+  // — it REFUSES sensitive categories and anything not plainly volunteered. Returns a JSON array.
+  function facts(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var name = (ctx && ctx.name) ? String(ctx.name) : 'they';
+    var lines = (ctx && ctx.lines) ? ctx.lines : [];
+    if (!lines.length) return Promise.resolve({ ok: true, value: [] });
+    var known = (ctx && ctx.known && ctx.known.length) ? ('Already known (do NOT repeat): ' + ctx.known.join('; ') + '\n') : '';
+    var transcript = lines.slice(-30).map(function (l) { return '- ' + String(l); }).join('\n');
+    var instruction =
+      'You note down a few durable things to remember about a person you chat with, so you can be a thoughtful friend later.\n'
+      + 'From ' + name + '\u2019s recent messages below, list at most 3 short, durable facts they clearly and voluntarily shared about themselves (hobbies, interests, projects, pets, preferences, what they\u2019re working on).\n'
+      + 'STRICT RULES:\n'
+      + '- Only things plainly stated by them. Never guess, infer, or read between the lines.\n'
+      + '- NEVER record sensitive things: health, mental health, religion, politics, sexuality, gender identity, race, exact location/address, finances, age, relationship/family details, or anything embarrassing or that could be used against them. If in doubt, leave it out.\n'
+      + '- No fleeting moods or one-off events. Only things likely true next month.\n'
+      + '- Each fact a short third-person phrase, max 12 words. No names.\n'
+      + known
+      + 'Recent messages:\n' + transcript + '\n\n'
+      + 'Respond ONLY with a JSON array of strings, for example: ' + '[' + '"is learning rust","has a cat named pixel"' + ']' + '. If there is nothing solid and non-sensitive to record, respond with an empty array ' + '[' + ']' + '.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
+      var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
+      // final client-side sanity clamp: strings only, trimmed, delete empties
+      var clean = (arr || []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim().slice(0, 140); }).slice(0, 3);
+      return { ok: true, value: clean };
+    }).catch(function (e) { dlog('facts: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   function lull(ctx) {
     var ai = grabAiText();
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
@@ -646,7 +717,8 @@
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + '. The channel was chatting and has now gone quiet for a bit.\n'
       + (transcript ? ('Recent conversation:\n' + transcript + '\n') : '')
-      + 'Say one short, natural thing to gently re-open the conversation \u2014 a light follow-up to what was just said, a small observation, or an easy question. Do NOT announce that it went quiet or that this is automated. Just speak as you naturally would. One or two sentences, no name prefix.';
+      + 'Say one short, natural thing to gently re-open the conversation \u2014 a light follow-up to what was just said, a small observation, or an easy question. Do NOT announce that it went quiet or that this is automated. Just speak as you naturally would. One or two sentences, no name prefix.\n'
+      + timePhrase(ctx);
     return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[[', '\n[['] })).then(function (result) {
       var text = String(result || '').trim();
       return { ok: !!text, value: text };
@@ -864,6 +936,9 @@
     var sp = byId('spChk'); if (sp) sp.checked = !!s.singleParagraph;
     var lull = byId('lullChk'); if (lull) lull.checked = !!s.lullFiller;
     var cki = byId('checkinChk'); if (cki) cki.checked = !!s.checkins;
+    var fct = byId('factChk'); if (fct) fct.checked = !!s.factMemory;
+    var tm = byId('timeChk'); if (tm) tm.checked = !!s.timeAware;
+    var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -992,7 +1067,8 @@
   }
   function refresh() {
     return call('status').then(function (res) {
-      if (!res.ok) { setLink(false); return; }
+      if (!res.ok) { linkMisses++; if (linkMisses >= 2) setLink(false); return; }
+      linkMisses = 0;
       setLink(true);
       applyStatus(res.value);
       renderChannelSel(res.value);
@@ -1102,6 +1178,19 @@
       log(res && res.ok ? ('favorite check-ins: ' + res.value.checkins) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
+  byId('factChk').addEventListener('change', function () {
+    call('config.setFactMemory', { on: byId('factChk').checked }).then(function (res) {
+      log(res && res.ok ? ('fact memory: ' + res.value.factMemory) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  function pushTimeAware() {
+    var off = parseInt(byId('tzOffset').value, 10); if (!isFinite(off)) off = 0;
+    call('config.setTimeAware', { on: byId('timeChk').checked, offsetMins: off }).then(function (res) {
+      log(res && res.ok ? ('time awareness: ' + res.value.timeAware + ' (UTC' + (res.value.timezoneOffsetMins >= 0 ? '+' : '') + res.value.timezoneOffsetMins + 'm)') : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  }
+  byId('timeChk').addEventListener('change', pushTimeAware);
+  byId('tzOffset').addEventListener('change', function () { if (byId('timeChk').checked) pushTimeAware(); });
   byId('backfillChk').addEventListener('change', function () {
     call('config.setBackfill', { on: byId('backfillChk').checked }).then(function (res) {
       log(res.ok ? ('backfill: ' + res.value.backfill + (res.value.backfill ? ' (will seed the roster from history over the next polls)' : '')) : ('failed: ' + res.reason));
