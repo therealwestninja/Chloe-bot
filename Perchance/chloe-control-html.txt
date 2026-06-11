@@ -215,6 +215,8 @@
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
         <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
+        <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
+        <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
         <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
       </div>
     </div>
@@ -429,6 +431,12 @@
       </div>
     </div>
     <div class="card">
+      <h2>Memory that earns its keep</h2>
+      <div class="note">
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. All three are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code>, and off by default.
+      </div>
+    </div>
+    <div class="card">
       <h2>Reading the room</h2>
       <div class="note">
         With <strong>&ldquo;read &amp; match the room&rsquo;s energy&rdquo;</strong> on (Behavior tab), Chloe keeps a light sense of the channel&rsquo;s tenor &mdash; how lively it is and how playful &mdash; from the pace of messages and simple cues like laughter, emoji, and exclamation. When things are buzzing she can be more animated; when it&rsquo;s quiet and slow she eases off. It&rsquo;s a gentle tone nudge, not a label she announces, and it drifts gradually rather than flipping on a single message. By design she only reads <em>energy</em> and <em>playfulness</em> &mdash; she does not try to guess anger or conflict, since misreading a serious moment would be worse than not guessing. All front-end, no AI call. Off by default.
@@ -520,6 +528,8 @@
       else if (d.method === 'lull') handler = lull;
       else if (d.method === 'checkin') handler = checkin;
       else if (d.method === 'facts') handler = facts;
+      else if (d.method === 'channelSummary') handler = channelSummary;
+      else if (d.method === 'reflect') handler = reflect;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
@@ -673,6 +683,7 @@
       : '';
     var timeLine = timePhrase(ctx);
     var moodLine = (ctx && ctx.mood) ? ('The room feels ' + String(ctx.mood) + ' right now \u2014 match that energy rather than working against it (don\u2019t name the mood).\n') : '';
+    var arcLine = (ctx && ctx.channelSummary) ? ('The story so far in this channel (older context that scrolled away): ' + String(ctx.channelSummary) + '\n') : '';
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + intentLine
@@ -680,6 +691,7 @@
       + memLine
       + timeLine
       + moodLine
+      + arcLine
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)
@@ -721,6 +733,7 @@
     var instruction =
       'You note down a few durable things to remember about a person you chat with, so you can be a thoughtful friend later.\n'
       + 'From ' + name + '\u2019s recent messages below, list at most 3 short, durable facts they clearly and voluntarily shared about themselves (hobbies, interests, projects, pets, preferences, what they\u2019re working on).\n'
+      + 'For each fact also rate its importance 1 to 10 (1 = mundane, 10 = central to who they are or a major life event). Most are 3-6.\n'
       + 'STRICT RULES:\n'
       + '- Only things plainly stated by them. Never guess, infer, or read between the lines.\n'
       + '- NEVER record sensitive things: health, mental health, religion, politics, sexuality, gender identity, race, exact location/address, finances, age, relationship/family details, or anything embarrassing or that could be used against them. If in doubt, leave it out.\n'
@@ -728,13 +741,66 @@
       + '- Each fact a short third-person phrase, max 12 words. No names.\n'
       + known
       + 'Recent messages:\n' + transcript + '\n\n'
-      + 'Respond ONLY with a JSON array of strings, for example: ' + '[' + '"is learning rust","has a cat named pixel"' + ']' + '. If there is nothing solid and non-sensitive to record, respond with an empty array ' + '[' + ']' + '.';
+      + 'Respond ONLY with a JSON array of objects {' + '"t":<fact>,"i":<1-10>' + '}, for example: ' + '[' + '{"t":"is learning rust","i":6},{"t":"has a cat named pixel","i":4}' + ']' + '. If there is nothing solid and non-sensitive to record, respond with an empty array ' + '[' + ']' + '.';
     return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
       var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
-      // final client-side sanity clamp: strings only, trimmed, delete empties
-      var clean = (arr || []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim().slice(0, 140); }).slice(0, 3);
+      // tolerant parse: accept {t,i} objects OR bare strings (back-compat); clamp importance 1-10.
+      var clean = (arr || []).map(function (x) {
+        if (x && typeof x === 'object' && typeof x.t === 'string') {
+          var imp = Math.max(1, Math.min(10, Math.round(Number(x.i)) || 5));
+          return { text: x.t.trim().slice(0, 140), importance: imp };
+        }
+        if (typeof x === 'string' && x.trim()) return { text: x.trim().slice(0, 140), importance: 5 };
+        return null;
+      }).filter(function (x) { return x && x.text; }).slice(0, 3);
       return { ok: true, value: clean };
     }).catch(function (e) { dlog('facts: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // channelSummary(ctx) -> { ok, value: string }. Recursive rolling summary: fold recent activity into
+  // a running short summary of the channel's arc, feeding the prior summary back in so it accretes.
+  function channelSummary(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var lines = (ctx && ctx.lines) ? ctx.lines : [];
+    if (!lines.length) return Promise.resolve({ ok: true, value: (ctx && ctx.prior) || '' });
+    var words = (ctx && ctx.words) ? ctx.words : 60;
+    var prior = (ctx && ctx.prior) ? String(ctx.prior) : '';
+    var transcript = lines.slice(-40).map(function (l) { return '- ' + String(l); }).join('\n');
+    var base = prior ? ('Summary so far:\n' + prior + '\n\n') : '';
+    var instruction =
+      'You keep a short running summary of what has been happening in a chat channel, so you remember the gist after old messages scroll away.\n'
+      + base
+      + 'Recent messages:\n' + transcript + '\n\n'
+      + (prior ? 'Update the summary so far by folding in anything new and important from the recent messages. Keep what still matters, drop what no longer does.\n' : 'Write a brief summary of what is going on from the recent messages.\n')
+      + 'Cover ongoing topics, running jokes, who is around, and the general vibe \u2014 not message-by-message detail. Neutral third-person. Limit to ' + words + ' words or fewer. Respond with ONLY the summary text, nothing else.';
+    return Promise.resolve(ai({ instruction: instruction })).then(function (result) {
+      var text = String(result || '').trim().replace(/^["']|["']$/g, '').slice(0, words * 12);
+      return { ok: true, value: text };
+    }).catch(function (e) { dlog('channelSummary: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // reflect(ctx) -> { ok, value: array-of-strings }. Synthesis: turn a person's accumulated facts into
+  // 1-2 higher-level durable insights — what the facts ADD UP TO, not a restatement of them.
+  function reflect(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var name = (ctx && ctx.name) ? String(ctx.name) : 'they';
+    var factList = (ctx && ctx.facts && ctx.facts.length) ? ctx.facts : [];
+    if (!factList.length) return Promise.resolve({ ok: true, value: [] });
+    var prior = (ctx && ctx.insights && ctx.insights.length) ? ('Insights you already hold (do NOT restate; only add what is genuinely new): ' + ctx.insights.join('; ') + '\n') : '';
+    var instruction =
+      'You quietly reflect on what you have learned about a person, forming a deeper understanding of who they are.\n'
+      + 'Facts you have noted about ' + name + ':\n' + factList.map(function (f) { return '- ' + String(f); }).join('\n') + '\n'
+      + prior
+      + 'What do these facts ADD UP TO? Form at most 2 short, durable insights \u2014 higher-level conclusions, not restatements (e.g. from "is learning rust", "builds discord bots", "asks about parsers" you might conclude "a self-taught builder who loves systems-level tinkering").\n'
+      + 'RULES: ground every insight in the facts given; never speculate beyond them; nothing sensitive (health, beliefs, identity, finances, relationships); each insight one phrase, max 15 words; third person, no names.\n'
+      + 'Respond ONLY with a JSON array of strings, or an empty array ' + '[' + ']' + ' if the facts do not yet add up to anything.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
+      var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
+      var clean = (arr || []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim().slice(0, 160); }).slice(0, 2);
+      return { ok: true, value: clean };
+    }).catch(function (e) { dlog('reflect: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
   function lull(ctx) {
@@ -968,6 +1034,8 @@
     var fct = byId('factChk'); if (fct) fct.checked = !!s.factMemory;
     var tm = byId('timeChk'); if (tm) tm.checked = !!s.timeAware;
     var md = byId('moodChk'); if (md) md.checked = !!s.moodAware;
+    var cs = byId('chansumChk'); if (cs) cs.checked = !!s.channelSummary;
+    var rf = byId('reflectChk'); if (rf) rf.checked = !!s.reflection;
     var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
@@ -1221,6 +1289,16 @@
   byId('moodChk').addEventListener('change', function () {
     call('config.setMoodAware', { on: byId('moodChk').checked }).then(function (res) {
       log(res && res.ok ? ('room-energy sensing: ' + res.value.moodAware) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('chansumChk').addEventListener('change', function () {
+    call('config.setChannelSummary', { on: byId('chansumChk').checked }).then(function (res) {
+      log(res && res.ok ? ('running channel summary: ' + res.value.channelSummary) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('reflectChk').addEventListener('change', function () {
+    call('config.setReflection', { on: byId('reflectChk').checked }).then(function (res) {
+      log(res && res.ok ? ('reflection: ' + res.value.reflection) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('backfillChk').addEventListener('change', function () {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.46.3
+// @version      0.49.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -192,6 +192,20 @@
       // guidance. Off by default.
       moodAware: false,              // sense and gently match the room's energy / playfulness
       moodDecay: 0.7,                // how much prior mood carries over each update (higher = steadier)
+      // Rolling channel summary (SillyTavern-style recursive summary): every N polls, fold the recent
+      // transcript into a running ≤W-word summary of the channel's arc, fed back in each time. Rides
+      // into context so she keeps a sense of the story so far past the raw transcript window. Off by default.
+      channelSummary: false,
+      channelSummaryEveryPolls: 30,
+      channelSummaryWords: 60,
+      // Reflection (Generative-Agents pattern): when enough IMPORTANCE has accumulated from newly
+      // learned facts about a person, make one synthesis pass turning their raw facts into 1-2 durable
+      // higher-level insights ("what I've come to understand about them"). Insights live on the
+      // partition (archive/restore free) and lead the person-summary above raw facts. Off by default.
+      reflection: false,
+      reflectionImportanceThreshold: 20,   // summed importance of new facts that triggers a reflection
+      reflectionEveryPolls: 16,            // cadence gate (it's an AI call)
+      insightsPerUser: 3,                  // durable insights kept per person (oldest dropped)
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -214,6 +228,8 @@
       factProposeMinNew: 4,          // ...and only after this many new messages from them since last pass
       factTextMax: 140,              // per-fact length cap
       factContextCount: 4,           // how many facts ride into her context for an active person
+      factImportanceDefault: 5,      // neutral importance for facts with none (old data / bare strings)
+      factRecencyWeight: 2,          // how much recency tilts the importance-ranked fact selection
       factEveryPolls: 12,            // run the silent extraction pass at most every Nth poll
       beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
@@ -258,6 +274,7 @@
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
     var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
+    var CHANSUM_KEY = 'chansum:' + cfg.channelId;   // rolling recursive summary of the channel's arc
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
     // survives across polls and rides in every response context, so she holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
@@ -603,6 +620,27 @@
       if (cfg.addressMode === 'mention') return !!mentioned;
       if (cfg.addressMode === 'name') return !!named;
       return !!(mentioned || named);
+    }
+    // Distinguish HOW she was addressed, for response priority: an explicit @-ping outranks her name
+    // dropped in casual conversation. In a DM every message is a direct ping-equivalent.
+    function addressKind(content) {
+      if (cfg.addressMode === 'always') return 'ping';   // DM: treat as a direct address
+      var c = String(content || '');
+      if (cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0)) return 'ping';
+      if (nameAliases().some(function (a) { return new RegExp('\\b' + escRe(a) + '\\b', 'i').test(c); })) return 'name';
+      return 'none';
+    }
+    // Response priority. Higher wins. Weights are spaced by an order of magnitude so the ordering is
+    // strict and composable: DM lane > mod > @-ping > (new-user tiebreak) > name-in-casual. So a mod's
+    // ping is highest; a new user's ping (11) outranks an existing user's casual name-drop (0); and a
+    // DM (1000+) is always served before anything in a regular channel.
+    function replyPriority(opts) {
+      var s = 0;
+      if (cfg.addressMode === 'always') s += 1000;   // this engine is a DM session
+      if (opts.isMod) s += 100;
+      if (opts.kind === 'ping') s += 10;
+      if (opts.isNew) s += 1;                        // tiebreak among same-kind addresses
+      return s;
     }
     function imageEnabled() { return cfg.image && typeof cfg.paint === 'function' && typeof cfg.sendImage === 'function' && typeof cfg.send === 'function'; }
     function scrubDiscordTokens(c) {
@@ -1070,6 +1108,7 @@
         var name = (p && p.name) || opts.targetName || targetId;
         return Promise.resolve(store.del(partKey(targetId)))
           .then(function () { return removeFromIndex(targetId); })
+          .then(function () { return dropFromArchive(targetId); })   // erasure must include the cold copy, not just the hot one
           .then(function () { return Promise.resolve(store.get(partKey(targetId))); })   // read back
           .then(function (after) {
             return store.listIndex().then(function (ids) {
@@ -1494,7 +1533,10 @@
               }
             }
             if (replyEnabled() && addressed && !isStartupBatch) {
-              reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
+              var gi = touched && touched.greetInfo && touched.greetInfo[m.author.id];
+              var newUser = !!(gi && gi.brandNew);
+              var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser });
+              reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now, priority: pri };
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
             } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
@@ -1718,6 +1760,74 @@
       });
     }
 
+    // A flat, time-ordered recent transcript of the channel (reused by the rolling summary pass).
+    function recentTranscript(maxLines) {
+      return getRoster().then(function (roster) {
+        var now = clock.now();
+        roster = roster.filter(function (u) { return !isSuppressed(u, now); });
+        var lines = [];
+        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, text: scrubDiscordTokens(ln.content), ts: ln.ts }); }); });
+        lines.sort(function (a, b) { return a.ts - b.ts; });
+        if (lines.length > (maxLines || 40)) lines = lines.slice(-(maxLines || 40));
+        return lines.map(function (l) { return l.who + ': ' + l.text; });
+      });
+    }
+    // Rolling recursive channel summary: fold recent activity into a running ≤W-word summary, feeding
+    // the prior summary back in so it accretes the channel's arc rather than restarting. Gated to a
+    // cadence (it's an AI call). No send — it's memory, not a message.
+    function processChannelSummary() {
+      if (!cfg.channelSummary || typeof cfg.summaryFn !== 'function') return Promise.resolve(null);
+      return recentTranscript(40).then(function (lines) {
+        if (!lines.length) return null;
+        return Promise.resolve(store.get(CHANSUM_KEY)).then(function (prev) {
+          var prior = (prev && typeof prev.text === 'string') ? prev.text : '';
+          return Promise.resolve(cfg.summaryFn({ prior: prior, lines: lines, words: cfg.channelSummaryWords || 60 })).then(function (r) {
+            var text = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
+            if (!text) return null;
+            return store.set(CHANSUM_KEY, { text: text, at: clock.now() }).then(function () { log('[chloe.sum] channel summary updated (' + text.length + ' chars)'); return text; });
+          });
+        });
+      });
+    }
+    // Reflection: one synthesis pass for ONE person whose accumulated fact-importance crossed the
+    // threshold. Turns facts + prior insights into 1-2 durable higher-level insights, stored on the
+    // partition; resets the accumulator. No send — silent understanding, not a message.
+    function processReflection() {
+      if (!cfg.reflection || typeof cfg.reflectFn !== 'function') return Promise.resolve(null);
+      return getRoster().then(function (roster) {
+        var due = null;
+        for (var i = 0; i < roster.length; i++) {
+          var u = roster[i];
+          if (!u || (u.state && u.state !== 'active')) continue;
+          if ((u.reflectImportanceAccum || 0) >= cfg.reflectionImportanceThreshold) { due = u; break; }
+        }
+        if (!due) return null;
+        var factTexts = (due.facts || []).map(function (f) { return f.text; });
+        var priorInsights = (due.insights || []).map(function (x) { return x.text; });
+        return Promise.resolve(cfg.reflectFn({ name: due.name, facts: factTexts, insights: priorInsights })).then(function (r) {
+          var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
+          return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+            if (!p) return null;
+            p.reflectImportanceAccum = 0; p.reflectAt = clock.now();   // reset even on an empty result (don't loop)
+            var ins = Array.isArray(p.insights) ? p.insights : [];
+            var seen = {}; ins.forEach(function (x) { seen[normFact(x.text)] = true; });
+            var added = 0;
+            proposed.forEach(function (raw) {
+              var text = String(raw || '').trim().slice(0, 160);
+              var key = normFact(text);
+              if (!key || seen[key]) return;
+              seen[key] = true; ins.push({ text: text, at: clock.now() }); added++;
+            });
+            if (ins.length > (cfg.insightsPerUser || 3)) ins = ins.slice(-(cfg.insightsPerUser || 3));
+            p.insights = ins;
+            return store.set(partKey(p.id), p).then(function () {
+              if (added) log('[chloe.reflect] formed ' + added + ' insight(s) about ' + due.name);
+              return added ? { name: due.name, added: added } : null;
+            });
+          });
+        });
+      });
+    }
     // F1 extraction pass: pick one due regular and ask the brain (page side) to propose durable facts
     // from their recent lines. Gated like check-ins (one user per pass, periodic) so it's cheap. The
     // page handler refuses sensitive categories and returns a short JSON array; we store conservatively.
@@ -1818,9 +1928,24 @@
     function ingestOneCore(msg, ring, indexSet, touched) {
       return Promise.resolve(store.get(partKey(msg.author.id))).then(function (hot) {
         // A returning "historical friend" is restored from cold storage so their history survives.
-        if (hot || !cfg.archiveStale) return hot;
+        // Restore is independent of cfg.archiveStale: that flag controls whether we *create* new
+        // archives, but if a cold copy already exists we must always bring it back (otherwise toggling
+        // archiving off would strand returning users as empty "new" partitions while their cold record
+        // and archive-index entry linger — a split-brain dual-pool state).
+        if (hot) return hot;
         return restoreFromArchive(msg.author.id);
       }).then(function (existing) {
+        // If they're not in the hot roster or archive, they could still be known from the mod log or
+        // blocklist (a purged or moderated user). Resolve that BEFORE deciding "new" so we never greet
+        // or prioritize a previously-seen person as a first-timer. Skip the lookup for the common case
+        // (we already have them) to keep the hot path cheap.
+        if (existing) return { existing: existing, knownElsewhere: null };
+        return knownFromOtherSurfaces(msg.author.id, msg.author.username).then(function (k) {
+          return { existing: null, knownElsewhere: k && k.known ? k : null };
+        });
+      }).then(function (res) {
+        var existing = res.existing;
+        var knownElsewhere = res.knownElsewhere;
         var now = clock.now();
         var seenAt = toEpoch(msg.timestamp);
         var p = existing || {
@@ -1832,7 +1957,8 @@
           state: 'active',            // spec 5.4 ladder; T0 only ever sets 'active'
           recent: []
         };
-        var isNew = !existing;
+        var isNew = !existing && !knownElsewhere;   // truly new only if no surface (roster/archive/modlog/blocklist) knows them
+        if (!existing && knownElsewhere) log('[chloe.T5] ' + (msg.author.username || msg.author.id) + ' is not new \u2014 known from ' + knownElsewhere.where + ' (treating as a returning user, not a first-timer)');
         var prevLastSeen = existing ? (existing.lastSeen || 0) : null;   // capture BEFORE we overwrite it
         if (existing) applyExpiry(p, now);   // T3: a timeout that has elapsed reverts to active
         // T5 decay: a return after a long quiet spell lets familiarity fade (warmth follows recency)
@@ -1996,8 +2122,13 @@
                     return processCheckin();
                   }).then(function (checkin) {
                     if (checkin) summary.checkin = checkin;
-                    // F1 silent learning pass — gated to a cadence (it's an AI call), never every poll
+                    // One gated AI pass per poll (each is an AI call): facts first, then rolling
+                    // channel summary, then reflection — whichever is due this poll.
                     if (cfg.factMemory && cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0) return processFacts();
+                    // (every-1) form: fires on the Nth poll, never poll 1 — the first poll can be a
+                    // cold-start backlog and the room should accumulate before being summarized.
+                    if (cfg.channelSummary && cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)) return processChannelSummary().then(function (cs) { if (cs) summary.channelSummary = true; return null; });
+                    if (cfg.reflection && cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
                     return null;
                   }).then(function (facts) {
                     if (facts) summary.facts = facts;
@@ -2031,7 +2162,6 @@
       if (!replyEnabled() || reply.replying || !hasPendingReply()) return Promise.resolve(null);
       var now = clock.now();
       if (now - lastActAt < cfg.globalCooldownMs) return Promise.resolve(null);   // light per-channel gap
-      if (typeof cfg.canSend === 'function' && !cfg.canSend('text')) return Promise.resolve(null);   // cross-channel global budget (one voice)
       // bot-loop damper: in a bot-only ping-pong, decay her chance of replying toward zero so two
       // bots don't feed each other forever. A human message reset consecutiveBotTurns to 0 already.
       var chance = botLoopReplyChance();
@@ -2042,18 +2172,26 @@
           return Promise.resolve(null);
         }
       }
-      // choose the oldest-queued author who has settled (debounce) and is past their per-author cooldown
+      // choose the highest-PRIORITY queued author who has settled (debounce) and is past their
+      // per-author cooldown; ties break to the oldest (so a burst of equal-priority pings is FIFO).
+      // Priority ranks mods > @-pings > new-user pings > casual name-drops (see replyPriority).
       var p = null;
       Object.keys(reply.queue).forEach(function (id) {
         var e = reply.queue[id];
         if (now - e.at < cfg.debounceMs) return;                        // still bursting
         if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) return;      // per-author cooldown
-        if (!p || e.at < p.at) p = e;
+        var ep = e.priority || 0;
+        if (!p) { p = e; return; }
+        var pp = p.priority || 0;
+        if (ep > pp || (ep === pp && e.at < p.at)) p = e;
       });
       if (!p) return Promise.resolve(null);
-      // Claim the cross-channel send budget NOW (before the multi-second generation), so two
-      // channels can't both pass the gate and both speak. Released below if nothing comes back.
-      if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
+      // Cross-channel budget ("one voice"), now priority-aware: a DM (high priority) can claim the
+      // shared slot ahead of a regular channel, so DMs are answered first. Checked AFTER selection so
+      // we know the winner's priority. Claimed NOW (before the multi-second generation); released if
+      // nothing comes back.
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('text', p.priority || 0)) return Promise.resolve(null);
+      if (typeof cfg.noteSend === 'function') cfg.noteSend('text', p.priority || 0);
       delete reply.queue[p.authorId];
       reply.replying = true;
       indicateTyping();
@@ -2262,15 +2400,18 @@
                 if (cfg.timeAware) { base.timeContext = timeContext(rh && rh.lastActivity); reserve += 16; }   // a short descriptor line
                 return Promise.resolve(cfg.moodAware ? store.get(MOOD_KEY) : null).then(function (mood) {
                   if (cfg.moodAware && mood) { base.mood = moodDescriptor(mood); reserve += 12; }
-                  // NOW pack the transcript into whatever the request budget has left after the reserve.
-                  var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
-                  var packed = packByTokens(lines, transcriptBudget);
-                  base.channelRecent = packed.lines;
-                  base.contextTokens = packed.tokens;
-                  base.contextDropped = packed.dropped;
-                  base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
-                  if (cfg.singleParagraph) base.singleParagraph = true;
-                  return base;
+                  return Promise.resolve(cfg.channelSummary ? store.get(CHANSUM_KEY) : null).then(function (cs) {
+                    if (cfg.channelSummary && cs && cs.text) { base.channelSummary = cs.text; reserve += estimateTokens(cs.text) + 8; }
+                    // NOW pack the transcript into whatever the request budget has left after the reserve.
+                    var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
+                    var packed = packByTokens(lines, transcriptBudget);
+                    base.channelRecent = packed.lines;
+                    base.contextTokens = packed.tokens;
+                    base.contextDropped = packed.dropped;
+                    base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+                    if (cfg.singleParagraph) base.singleParagraph = true;
+                    return base;
+                  });
                 });
               });
             });
@@ -2301,6 +2442,34 @@
     // Cold records leave the hot store so the main roster stays fast. Per-user keys; an index is kept
     // only for pruning/inspection and is never read on the message hot path.
     function getArchiveIndex() { return Promise.resolve(store.get(ARCH_INDEX_KEY)).then(function (a) { return Array.isArray(a) ? a : []; }); }
+    // Completely remove a user's cold archive record (data + index entry). Used by purge/block so an
+    // erasure is total — otherwise an archived user who is blocked keeps their cold copy, and the
+    // novelty check would still report them "known from archive" after they were supposedly forgotten.
+    function dropFromArchive(id) {
+      var sid = String(id || '');
+      return Promise.resolve(store.del(archKey(sid)))
+        .then(function () { return getArchiveIndex(); })
+        .then(function (idx) { var i = idx.indexOf(sid); if (i >= 0) { idx.splice(i, 1); return store.set(ARCH_INDEX_KEY, idx); } });
+    }
+    // Before calling anyone "new", check the surfaces a known person can hide in even when they're
+    // absent from the hot roster: the cold archive ("historical friends"), the mod log (someone we
+    // warned/timed-out/noted), and the blocklist/tombstones (a banned user whose partition was purged).
+    // Presence on ANY of these means we've met them — so they must not be greeted/prioritized as a
+    // first-timer. (The archive is also restored separately on the hot path; this catches the cases
+    // where archiving is off or the partition was deleted.)
+    function knownFromOtherSurfaces(id, name) {
+      var sid = String(id || '');
+      return getArchiveIndex().then(function (idx) {
+        if (sid && idx.indexOf(sid) >= 0) return { known: true, where: 'archive' };
+        return getModLog().then(function (log) {
+          if (sid && (log || []).some(function (e) { return String(e && e.targetId) === sid; })) return { known: true, where: 'modlog' };
+          return getBlocklist().then(function (bl) {
+            if (isBlockedSync(bl, sid, name)) return { known: true, where: 'blocklist' };
+            return { known: false, where: null };
+          });
+        });
+      });
+    }
     function archiveUser(id, reason) {
       return Promise.resolve(store.get(partKey(id))).then(function (p) {
         if (!p) return { ok: false, reason: 'unknown' };
@@ -2326,7 +2495,13 @@
       return Promise.resolve(store.get(archKey(id))).then(function (p) {
         if (!p) return null;
         delete p.archivedAt; delete p.archivedReason;
-        return Promise.resolve(store.del(archKey(id)))
+        // Durability: commit the hot copy and re-index FIRST, then delete the cold copy. The reverse
+        // order (the previous behavior) destroyed the only copy before the hot write landed, so a
+        // throw or a closed tab mid-restore lost the user's entire history. Worst case now is a
+        // harmless duplicate (cold + hot) that the next sweep reconciles — never data loss.
+        return Promise.resolve(store.set(partKey(id), p))
+          .then(function () { return ensureIndexed(id); })
+          .then(function () { return store.del(archKey(id)); })
           .then(function () { return getArchiveIndex(); })
           .then(function (idx) { var i = idx.indexOf(id); if (i >= 0) { idx.splice(i, 1); return store.set(ARCH_INDEX_KEY, idx); } })
           .then(function () { return clearCheckinRecord(id); })   // fresh start: they came back
@@ -2442,16 +2617,21 @@
         if (!p) return 0;
         var facts = Array.isArray(p.facts) ? p.facts : [];
         var seen = {}; facts.forEach(function (f) { seen[normFact(f.text)] = true; });
-        var added = 0;
+        var added = 0, impAdded = 0;
         proposed.forEach(function (raw) {
-          var text = String(raw || '').trim().slice(0, cfg.factTextMax);
+          // accept {text/t, importance/i} objects or bare strings (back-compat)
+          var text, imp;
+          if (raw && typeof raw === 'object') { text = String(raw.text != null ? raw.text : raw.t || '').trim().slice(0, cfg.factTextMax); imp = Math.max(1, Math.min(10, Math.round(Number(raw.importance != null ? raw.importance : raw.i)) || (cfg.factImportanceDefault || 5))); }
+          else { text = String(raw || '').trim().slice(0, cfg.factTextMax); imp = cfg.factImportanceDefault || 5; }
           var key = normFact(text);
           if (!key || seen[key]) return;          // empty or duplicate
-          seen[key] = true; facts.push({ text: text, at: clock.now(), source: source || 'observed' }); added++;
+          seen[key] = true; facts.push({ text: text, at: clock.now(), source: source || 'observed', importance: imp }); added++; impAdded += imp;
         });
         if (!added) return 0;
         if (facts.length > cfg.factsPerUser) facts = facts.slice(-cfg.factsPerUser);   // keep newest
         p.facts = facts; p.factsAt = clock.now();
+        // reflection fuel: accumulate the importance of what we learned (Step 3 reads this threshold)
+        p.reflectImportanceAccum = (p.reflectImportanceAccum || 0) + impAdded;
         return store.set(partKey(id), p).then(function () { return added; });
       });
     }
@@ -2470,8 +2650,26 @@
     // A compact one-line synthesis of what she knows about someone — this is what populates the
     // (previously empty) `summary` that already rides into response + check-in context.
     function factSummary(p) {
-      if (!p || !Array.isArray(p.facts) || !p.facts.length) return '';
-      return p.facts.slice(-cfg.factContextCount).map(function (f) { return f.text; }).join('; ');
+      if (!p) return '';
+      // Insights (reflection's earned, higher-level layer) lead; importance-ranked facts follow.
+      var parts = [];
+      if (Array.isArray(p.insights) && p.insights.length) {
+        parts.push(p.insights.map(function (x) { return x.text; }).join('; '));
+      }
+      if (Array.isArray(p.facts) && p.facts.length) {
+        var n = p.facts.length, def = cfg.factImportanceDefault || 5;
+        // rank by importance blended with a mild recency bias; old facts without importance score at the
+        // neutral default so nothing is unfairly dropped. Keep the top N, then render in original order.
+        var scored = p.facts.map(function (f, idx) {
+          var imp = (typeof f.importance === 'number') ? f.importance : def;
+          var recency = n > 1 ? (idx / (n - 1)) : 1;   // 0 oldest .. 1 newest
+          return { f: f, idx: idx, score: imp + recency * (cfg.factRecencyWeight || 2) };
+        });
+        scored.sort(function (a, b) { return b.score - a.score; });
+        var keep = scored.slice(0, cfg.factContextCount).sort(function (a, b) { return a.idx - b.idx; });
+        parts.push(keep.map(function (x) { return x.f.text; }).join('; '));
+      }
+      return parts.join('; ');
     }
     // Decide whether a user is due for an extraction pass: fact memory on, they're a real regular,
     // enough new messages since the last pass, and the per-user cooldown has elapsed.
@@ -2556,6 +2754,8 @@
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
+      processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
+      processReflection: processReflection,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
@@ -2563,6 +2763,8 @@
       purge: purge,
       getModLog: getModLog,
       appendModLog: appendModLog,
+      knownFromOtherSurfaces: knownFromOtherSurfaces,
+      ingestOne: ingestOne,
       quietSweep: quietSweep,
       dueForMemberCheck: dueForMemberCheck,
       noteMemberPresent: noteMemberPresent,
@@ -2622,6 +2824,7 @@
     var pending = {};        // request id -> { resolve, reject, deadline, to }
     var jobHandlers = {};    // worker: jobType -> fn(args) -> Promise
     var queenId = null;      // worker: learned from the queen's 'registered' ack / pings
+    var queenHasPage = false; // worker: whether the current queen advertises a page brain
     var lastPingAt = 0;
     var seq = 0;
 
@@ -2645,6 +2848,7 @@
     // (returns truthy on a spawn attempt). "expected N, have M -> spawn" covers Memory-Saver
     // tab discards: a discarded worker simply stops ponging, gets reaped, and is respawned.
     var poolTarget = (typeof opts.poolTarget === 'function') ? opts.poolTarget : function () { return 0; };
+    var capable = (typeof opts.capable === 'function') ? opts.capable : function () { return true; };   // does THIS tab have a page brain it can run jobs against?
     var doSpawn = (typeof opts.doSpawn === 'function') ? opts.doSpawn : null;
     var spawnBackoffMs = opts.spawnBackoffMs || 20000;
     var lastSpawnAt = 0;
@@ -2655,7 +2859,12 @@
     function rankDelay() {
       var h = 0, str = tabId;
       for (var i = 0; i < str.length; i++) h = ((h * 31) + str.charCodeAt(i)) >>> 0;
-      return (h % 5) * 1000 + 250;
+      // Capability-preferential election: a tab that has a page (can run the brain locally and is
+      // usually the un-throttled foreground tab) claims sooner, so it wins the lease before a
+      // page-less tab even tries. A page-less tab defers a full extra window — it only promotes if no
+      // page-having peer claimed first. This makes the natural queen the tab the user is looking at.
+      var capBias = capable() ? 0 : (queenDeadAfterMs > 0 ? Math.min(8000, claimSettleMs * 3 + 4000) : 5000);
+      return capBias + (h % 5) * 1000 + 250;
     }
     function promoteSelf() {
       role = 'queen'; workers = {}; claimState = null; lastPingAt = 0;
@@ -2754,7 +2963,11 @@
     // or the chosen worker fails/times out/dies mid-job, run the injected fallback instead.
     var rr = 0;
     function dispatchJob(jobType, payload, timeoutMs, fallback) {
-      var ids = Object.keys(workers).filter(function (id) { return workers[id].status === 'idle'; });
+      // brain jobs need a page to run against; only route them to workers that advertised one.
+      var needsPage = (jobType === 'brain');
+      var ids = Object.keys(workers).filter(function (id) {
+        return workers[id].status === 'idle' && (!needsPage || workers[id].hasPage);
+      });
       if (role !== 'queen' || !ids.length) {
         if (fallback) return Promise.resolve().then(fallback);
         return Promise.reject(new Error('no idle workers and no fallback'));
@@ -2768,9 +2981,24 @@
     }
 
     function handleAsQueen(env) {
+      if (env.type === 'hello') {
+        // a newcomer announced itself — answer immediately so it discovers us without waiting a ping
+        // interval, and (if it's a peer queen) so its queenConflict resolves now.
+        sendTo(env.from, 'ping', { hasPage: capable() });
+        return;
+      }
+      if (env.type === 'here') {
+        // a worker answered our startup hello — learn it (and its abilities) now instead of waiting
+        // for its register/pong.
+        if (env.payload && env.payload.role === 'worker' && !workers[env.from]) {
+          workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: !!env.payload.hasPage };
+          if (typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
+        }
+        return;
+      }
       if (env.type === 'register') {
         var fresh = !workers[env.from];
-        workers[env.from] = { status: 'idle', lastSeen: clock.now() };
+        workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: !!(env.payload && env.payload.hasPage) };
         sendTo(env.from, 'registered', { queenId: tabId });
         log('[bridge] worker ' + env.from + (fresh ? ' joined' : ' re-registered'));
         if (fresh && typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
@@ -2778,8 +3006,9 @@
       }
       if (env.type === 'ping') { queenConflict(env.from); return; }   // another queen exists — resolve via the lease
       if (env.type === 'pong') {
-        if (workers[env.from]) { workers[env.from].lastSeen = clock.now(); return; }
-        workers[env.from] = { status: 'idle', lastSeen: clock.now() };   // a surviving worker adopted after promotion
+        var cap = !!(env.payload && env.payload.hasPage);
+        if (workers[env.from]) { workers[env.from].lastSeen = clock.now(); workers[env.from].hasPage = cap; return; }
+        workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: cap };   // a surviving worker adopted after promotion
         log('[bridge] adopted worker ' + env.from);
         if (typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
         return;
@@ -2790,8 +3019,10 @@
     }
 
     function handleAsWorker(env) {
+      if (env.type === 'hello') { sendTo(env.from, 'here', { role: 'worker', hasPage: capable() }); return; }   // capability exchange
+      if (env.type === 'here') { return; }   // informational; queen election uses the lease, not a vote
       if (env.type === 'registered') { queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; lastQueenSeenAt = clock.now(); claimState = null; return; }
-      if (env.type === 'ping') { queenId = env.from; lastQueenSeenAt = clock.now(); claimState = null; sendTo(env.from, 'pong'); return; }
+      if (env.type === 'ping') { queenId = env.from; queenHasPage = !!(env.payload && env.payload.hasPage); lastQueenSeenAt = clock.now(); claimState = null; sendTo(env.from, 'pong', { hasPage: capable() }); return; }
       if (env.type === 'shutdown') {
         log('[bridge] shutdown received');
         broadcast('bye');
@@ -2826,7 +3057,7 @@
       var now = clock.now();
       var duty = Promise.resolve();
       if (role === 'queen') {
-        if (now - lastPingAt >= pingIntervalMs) { lastPingAt = now; broadcast('ping'); }
+        if (now - lastPingAt >= pingIntervalMs) { lastPingAt = now; broadcast('ping', { hasPage: capable() }); }
         Object.keys(workers).forEach(function (id) {
           if (now - workers[id].lastSeen > deadAfterMs) {
             delete workers[id];
@@ -2851,7 +3082,11 @@
       running = true;
       bus.onMessage(onBusMessage);
       lastQueenSeenAt = clock.now(); lastWatchdogAt = 0;
-      if (role === 'worker') broadcast('register');
+      // Handshake (ask): announce ourselves and our abilities to whoever is already here. The queen
+      // answers with a ping (fast discovery, no waiting a full ping interval); a peer queen answers
+      // with its own ping, which trips queenConflict so the duplicate stands down in one round-trip.
+      broadcast('hello', { role: role, hasPage: capable() });
+      if (role === 'worker') broadcast('register', { hasPage: capable() });
       log('[bridge] started as ' + role + ' (' + tabId + ')');
     }
     function stop() { running = false; }
@@ -2870,6 +3105,17 @@
       onJob: function (jobType, fn) { jobHandlers[jobType] = fn; },
       workers: function () { var out = {}; Object.keys(workers).forEach(function (k) { out[k] = { status: workers[k].status, lastSeen: workers[k].lastSeen }; }); return out; },
       shutdownWorker: function (id) { sendTo(id, 'shutdown'); },
+      hello: function () { if (running) broadcast('hello', { role: role, hasPage: capable() }); },   // re-run the discovery handshake on demand
+      queenHasPage: function () { return role === 'queen' ? capable() : queenHasPage; },              // does the current queen have a page brain?
+      capablePeers: function () { var n = capable() ? 1 : 0; Object.keys(workers).forEach(function (k) { if (workers[k].hasPage) n++; }); return n; },  // tabs in this pool that can run a brain job
+      // Force this tab to contest the queen election now (used to recover a tab that was wrongly left
+      // as a worker but is actually hosting the control panel). If a live queen exists, the claim flow
+      // backs off and this stays a worker; if not, it promotes. Safe to call repeatedly.
+      standForQueen: function () {
+        if (role === 'queen') return;
+        claimState = null; lastQueenSeenAt = clock.now() - (queenDeadAfterMs + 1); lastWatchdogAt = 0;
+        if (running) workerWatchdog(clock.now());
+      },
       isRunning: function () { return running; }
     };
   }
@@ -2891,11 +3137,12 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.46.3';
+  var VERSION = '0.49.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
   var TAB_ROLE = (typeof location !== 'undefined' && /chloe-worker/.test(location.hash || '')) ? 'worker' : 'queen';
+  var workerSelfHealTried = false;   // one-shot: a worker-roled tab that turns out to host the panel reclaims queen
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
@@ -3148,15 +3395,20 @@
   // releaseSend(kind) hands it back if the work produced nothing. This is what makes a multi-bot
   // room safe: even five channels share one mouth.
   var sendBudget = { text: 0, image: 0 };   // monotonic-ish claim timestamps per kind
+  var sendBudgetPri = { text: 0, image: 0 }; // priority of the current claim (lets a DM preempt a channel)
   function budgetWindow() { return Math.max(0, cfgGet('sendBudgetMs', 60000)); }
-  function canSend(kind) {
+  function canSend(kind, priority) {
     var win = budgetWindow();
     if (win === 0) return true;
     var last = sendBudget[kind] || 0;
-    return (Date.now() - last) >= win;
+    if ((Date.now() - last) >= win) return true;
+    // The slot is held — but a strictly higher-priority sender (e.g. a DM, priority>=1000) may preempt
+    // a regular-channel claim so DMs are answered before in-channel chatter. Equal priority waits.
+    var pri = priority || 0;
+    return pri > (sendBudgetPri[kind] || 0);
   }
-  function noteSend(kind) { sendBudget[kind] = Date.now(); }
-  function releaseSend(kind) { sendBudget[kind] = 0; }   // give the slot back (generation was empty/failed)
+  function noteSend(kind, priority) { sendBudget[kind] = Date.now(); sendBudgetPri[kind] = priority || 0; }
+  function releaseSend(kind) { sendBudget[kind] = 0; sendBudgetPri[kind] = 0; }   // give the slot back (generation was empty/failed)
 
   function buildEngine(chId) {
     var channelId = String(chId || primaryChannel() || '').trim();
@@ -3192,6 +3444,10 @@
         checkinFn: function (ctx) { return brainCall('checkin', ctx, 30000); },
         checkins: cfgGet('checkins', false),
         factFn: function (ctx) { return brainCall('facts', ctx, 30000); },
+        summaryFn: function (ctx) { return brainCall('channelSummary', ctx, 40000); },
+        channelSummary: cfgGet('channelSummary', false),
+        reflectFn: function (ctx) { return brainCall('reflect', ctx, 30000); },
+        reflection: cfgGet('reflection', false),
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
@@ -3362,6 +3618,8 @@
       timeAware: !!cfgGet('timeAware', false),
       timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
       moodAware: !!cfgGet('moodAware', false),
+      channelSummary: !!cfgGet('channelSummary', false),
+      reflection: !!cfgGet('reflection', false),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -3535,6 +3793,10 @@
           applyConfigChange(); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
       case 'config.setMoodAware':
         { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
+      case 'config.setChannelSummary':
+        { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
+      case 'config.setReflection':
+        { var rfl = !!(args && args.on); cfgSet('reflection', rfl); applyConfigChange(); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
@@ -3633,6 +3895,23 @@
     // capture/refresh the control page window so the engine can call its brain
     if (!pageSource) trace('link', 'control page connected from ' + ev.origin);
     pageSource = ev.source; pageOrigin = ev.origin;
+    // Self-heal a mis-captured tab: receiving a page message means THIS tab hosts a generator panel a
+    // user is actively using — a real control surface, not a background-spawned worker. If it somehow
+    // booted as a worker (e.g. a stale '#chloe-worker' left in the URL by an older build), shed that
+    // role: strip the hash and stand for the queen election so the engine can actually run here.
+    if (TAB_ROLE === 'worker' && !workerSelfHealTried) {
+      workerSelfHealTried = true;
+      try { if (/chloe-worker/.test(location.hash || '')) history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+      // Contest the election. onPromote flips TAB_ROLE to 'queen' if this tab wins (no live queen);
+      // if a real queen exists this stays a worker, but at least the stale URL hash is cleaned so a
+      // future reload doesn't boot as a worker again.
+      try {
+        if (tabBridge && typeof tabBridge.standForQueen === 'function') tabBridge.standForQueen();
+        else { TAB_ROLE = 'queen'; }   // no bus/bridge (single-tab) — just reclaim
+      } catch (e) {}
+      trace('bridge', 'a panel is attached to a worker-roled tab — cleaned stale worker hash and contested the queen election');
+      console.log('[chloe-bridge] this tab hosts the control panel but had a stale worker role; reclaiming.');
+    }
     if (d.kind === 'callres') { var cb = callPending.get(d.nonce); if (cb) { callPending.delete(d.nonce); cb(d); } return; }
     if (d.kind !== 'req') return;
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
@@ -3683,6 +3962,7 @@
       queenDeadAfterMs: cfgGet('queenDeadAfterMs', 90000),
       poolTarget: function () { return cfgGet('poolSize', 0) | 0; },   // D7: 0 = manual-only (default)
       doSpawn: function () { var r = spawnWorker(); return !!(r && r.ok); },
+      capable: function () { return !!pageSource; },   // can this tab actually run a brain job (has a linked control page)?
       spawnBackoffMs: cfgGet('spawnBackoffMs', 20000),
       log: function (m) { trace('bridge', m); },
       onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
@@ -3700,7 +3980,10 @@
       onDemote: function () {
         TAB_ROLE = 'worker';
         eachEngine(function (e) { e.stop(); });
-        try { if (location.hash.indexOf('chloe-worker') < 0) location.hash = 'chloe-worker'; } catch (e) {}
+        // NOTE: we deliberately do NOT write location.hash here. Role is in-memory state. Stamping
+        // '#chloe-worker' into the URL is sticky (TAB_ROLE is read from the hash at load), so it would
+        // permanently convert an ordinary perchance tab — or the Chloe generator itself — into a worker
+        // that can never start the engine. That mis-capture made the bot look dead/"not detected".
         trace('bridge', 'demoted to worker (another queen holds the lease); engines stopped');
       }
     });
@@ -3709,7 +3992,14 @@
     tabBridge.onJob('echo', function (args) { return Promise.resolve(args == null ? null : args); });
     tabBridge.onJob('brain', function (p) {
       p = p || {};
-      return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000);
+      // If this worker has no control page, REJECT so the queen's dispatchJob fallback runs the call
+      // on a page-having tab. Resolving {ok:false} here would look like a successful empty answer and
+      // the reply/paint would be silently dropped.
+      if (!pageSource) return Promise.reject(new Error('worker has no control page'));
+      return callPage(String(p.kind || 'respond'), p.args || {}, p.timeoutMs || 40000).then(function (res) {
+        if (res && res.ok === false && /no control page/.test(String(res.reason || ''))) throw new Error('worker lost its control page');
+        return res;
+      });
     });
     tabBridge.start();
     setInterval(function () { tabBridge.tick(); }, 5000);   // host-driven time; the queen tab is the foreground tab
