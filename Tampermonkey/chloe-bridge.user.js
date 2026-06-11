@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.27.0
+// @version      0.28.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -79,7 +79,7 @@
       // ---- T1 reply path (all optional; absent => pure T0 read-only) ----
       respond: null,          // async (context) -> { ok, value:text }   (the brain; runs in the generator page)
       send: null,             // async (channelId, text) -> any           (POST to Discord; runs in the userscript)
-      addressMode: 'both',    // 'mention' | 'name' | 'both'
+      addressMode: 'both',    // 'mention' | 'name' | 'both' | 'always' (DM)
       cooldownMs: 8000,       // per-AUTHOR reply cooldown (don't spam the same person)
       globalCooldownMs: 2500, // min gap between ANY two of her sends (lets different people be answered promptly)
       debounceMs: 2500,       // wait for a lull before replying (don't reply mid-burst)
@@ -112,6 +112,16 @@
       // channel's style note (newest mod-anchored message wins; sanitized + capped before use).
       anchorEmoji: '\ud83d\udccc',
       personaNoteMaxLen: 200,
+      // D5: declarative job grammar. ONLY these verbs are accepted from chat-submitted JSON;
+      // there is NO code path — a job is a validated plain object, never evaluated. Each verb
+      // lists its allowed arg keys and which are required; anything else is rejected.
+      jobVerbs: {
+        summarize: { args: { lines: 'int' }, required: [] },
+        recap:     { args: {}, required: [] },
+        roster:    { args: {}, required: [] },
+        remindme:  { args: { minutes: 'int', text: 'str' }, required: ['minutes', 'text'] }
+      },
+      jobMaxReminderMin: 1440,   // 24h cap on remindme
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -180,6 +190,27 @@
     var pollCount = 0;                   // drives the periodic quiet-sweep cadence
     var warnedEmpty = false;             // one-time empty-content (Message Content Intent) notice
     var greetSettleLogged = false;       // one-time "suppressing greetings (just started)" notice
+    var personaName = null;              // D4+: if a pinned note names a character, she answers to THAT name
+    // Pull an optional character name out of an anchored note. Supports a leading "Name:" label,
+    // or "you are X" / "you're X" / "be X" / "act as X" / "play X" / "roleplay as X". Returns a
+    // trimmed name (<=40 chars, letters/spaces/-/' only) or null. The note text is used as-is for
+    // style; the name only adds an alias + reframes the prompt so she doesn't narrate "Chloe as X".
+    function parsePersonaName(text) {
+      var t = String(text || '').trim();
+      var m = t.match(/^\s*(?:name|character|persona)\s*[:=]\s*([A-Za-z][A-Za-z .'\-]{1,39}?)\s*(?:[.,;!?\n]|$)/i)
+           || t.match(/\b(?:you(?:'re| are)|be|act as|play|roleplay as|become)\s+([A-Z][A-Za-z'\-]*(?:\s+[A-Z][A-Za-z'\-]*)?)/);
+      if (!m) return null;
+      var n = m[1].replace(/[.\s'\-]+$/, '').trim();
+      // drop a trailing lowercase filler word the second pattern may catch ("Marcus the" -> "Marcus")
+      n = n.replace(/\s+(the|a|an|now|please|today|here)$/i, '').trim();
+      return (n && n.length >= 2) ? n : null;
+    }
+    function refreshPersonaName() {
+      return Promise.resolve(store.get('persona:note')).then(function (pn) {
+        personaName = (pn && pn.text) ? parsePersonaName(pn.persona || pn.text) : null;
+        return personaName;
+      }, function () { personaName = null; });
+    }
     function greetEnabled() { return cfg.greet && typeof cfg.greetFn === 'function' && typeof cfg.send === 'function'; }
     function escRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
     function replyEnabled() { return typeof cfg.respond === 'function' && typeof cfg.send === 'function'; }
@@ -195,9 +226,11 @@
         if (short && short.length >= 2 && short !== cfg.botName) out.push(short);
       }
       (cfg.botAliases || []).forEach(function (a) { if (a) out.push(String(a)); });
+      if (personaName) { out.push(personaName); var ps = String(personaName).split(/[-_ ]/)[0]; if (ps && ps.length >= 2 && ps !== personaName) out.push(ps); }
       return out;
     }
     function isAddressed(content) {
+      if (cfg.addressMode === 'always') return true;   // DM channel: every message is to her
       var c = String(content || '');
       var mentioned = cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0);
       var named = nameAliases().some(function (a) { return new RegExp('\\b' + escRe(a) + '\\b', 'i').test(c); });
@@ -218,6 +251,16 @@
       c = scrubDiscordTokens(c);
       nameAliases().forEach(function (a) { if (a) c = c.replace(new RegExp('\\b' + escRe(a) + '\\b', 'ig'), ' '); });
       return c.replace(/\s+/g, ' ').trim();
+    }
+    function sanitizePromptForCaption(prompt, maxLen) {
+      var t = scrubDiscordTokens(prompt);
+      t = t.replace(/@(everyone|here)/gi, '$1');
+      t = t.replace(/https?:\/\/\S+/gi, '');
+      t = t.replace(/[*_`~|>#\\]/g, '');
+      t = t.replace(/\s+/g, ' ').trim();
+      var cap = maxLen || 220;
+      if (t.length > cap) t = t.slice(0, cap - 1).replace(/\s\S*$/, '') + '\u2026';
+      return t;
     }
     function pickResolution(p) {
       if (/\b(portrait|selfie|headshot)\b/i.test(p)) return '512x768';
@@ -412,15 +455,64 @@
           var note = sanitizePersonaNote(m.content);
           if (!note) return { changed: false };
           var rec = { msgId: m.id, text: note, by: (m.author && m.author.username) || '', at: clock.now() };
+          rec.persona = parsePersonaName(note) || null;
           return Promise.resolve(store.set(PERSONA_KEY, rec)).then(function () {
-            log('[chloe.persona] anchored style note from ' + rec.by + ': "' + note.slice(0, 60) + '"');
-            return { changed: true, note: note };
+            personaName = rec.persona;
+            log('[chloe.persona] anchored style note from ' + rec.by + ': "' + note.slice(0, 60) + '"' + (rec.persona ? ' (character: ' + rec.persona + ')' : ''));
+            return { changed: true, note: note, persona: rec.persona };
           });
         });
       });
     }
     function getPersonaNote() { return Promise.resolve(store.get(PERSONA_KEY)).then(function (v) { return v || null; }); }
-    function clearPersonaNote() { return Promise.resolve(store.del(PERSONA_KEY)); }
+    function clearPersonaNote() { personaName = null; return Promise.resolve(store.del(PERSONA_KEY)); }
+
+    // ---- D5: declarative job grammar (validate-only; NO eval, ever) ----------------------
+    // parseJob(text) -> { ok, job } | { ok:false, reason }. Accepts a JSON object (or a fenced
+    // ```json block). Rejects unknown verbs, unknown/missing/mistyped args, and anything that
+    // isn't a plain object. This is the ONLY bridge between chat input and the job system.
+    function coerceArg(type, v) {
+      if (type === 'int') { var n = parseInt(v, 10); return isFinite(n) ? n : null; }
+      if (type === 'str') { var t = String(v == null ? '' : v).trim(); return t ? t : null; }
+      return null;
+    }
+    function parseJob(text) {
+      var raw = String(text || '').trim();
+      var m = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (m) raw = m[1].trim();
+      var obj;
+      try { obj = JSON.parse(raw); } catch (e) { return { ok: false, reason: 'not valid JSON' }; }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'a job must be a JSON object' };
+      // Reject dangerous keys outright (defense in depth — we never assign from src into a real
+      // object, but a job that names these is malformed by definition).
+      if (/"(__proto__|constructor|prototype)"\s*:/.test(raw)) return { ok: false, reason: 'illegal key in job object' };
+      var verb = String(obj.task || obj.verb || '').toLowerCase();
+      var spec = (cfg.jobVerbs || {})[verb];
+      if (!spec) return { ok: false, reason: 'unknown task "' + verb + '" (allowed: ' + Object.keys(cfg.jobVerbs || {}).join(', ') + ')' };
+      var args = {}, src = (obj.args && typeof obj.args === 'object') ? obj.args : obj;
+      var keys = Object.keys(src).filter(function (k) { return k !== 'task' && k !== 'verb' && k !== 'args'; });
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (!(k in spec.args)) return { ok: false, reason: 'task "' + verb + '" does not accept "' + k + '"' };
+        var cv = coerceArg(spec.args[k], src[k]);
+        if (cv == null) return { ok: false, reason: '"' + k + '" must be a ' + (spec.args[k] === 'int' ? 'number' : 'string') };
+        args[k] = cv;
+      }
+      for (var j = 0; j < spec.required.length; j++) {
+        if (!(spec.required[j] in args)) return { ok: false, reason: 'task "' + verb + '" requires "' + spec.required[j] + '"' };
+      }
+      if (verb === 'remindme' && args.minutes != null) {
+        if (args.minutes < 1) return { ok: false, reason: 'minutes must be at least 1' };
+        if (args.minutes > (cfg.jobMaxReminderMin || 1440)) return { ok: false, reason: 'minutes is capped at ' + (cfg.jobMaxReminderMin || 1440) };
+      }
+      return { ok: true, job: { task: verb, args: args } };
+    }
+    function describeJobs() {
+      return Object.keys(cfg.jobVerbs || {}).map(function (v) {
+        var a = cfg.jobVerbs[v].args, keys = Object.keys(a);
+        return v + (keys.length ? (' {' + keys.map(function (k) { return k + ':' + a[k]; }).join(', ') + '}') : '');
+      });
+    }
 
     function removeFromIndex(id) {
       return Promise.resolve(store.listIndex()).then(function (ids) {
@@ -561,6 +653,16 @@
       { verb: 'clear',     modOnly: true, needsTarget: true, action: 'clear',   help: 'clear @u' },
       { verb: 'note',      modOnly: true, needsTarget: true, action: 'note',    help: 'note @u <text>' },
       { verb: 'warn',      modOnly: true, needsTarget: true, action: 'warn',    aliases: ['\u26a0\ufe0f'], help: 'warn @u [reason]' },
+      { verb: 'block',     modOnly: true, needsTarget: true, help: 'block @u [reason]', handler: function (modId, c) {
+          if (!c.targetId) return Promise.resolve({ ack: 'block needs an @mention of the user' });
+          return blockUser({ id: c.targetId, name: c.targetName, byModId: modId, reason: c.reason })
+            .then(function (r) { return { ack: r.ok ? ('blocked ' + (c.targetName || c.targetId) + " \u2014 they're forgotten and will never be scanned again") : ('failed: ' + r.reason) }; });
+        } },
+      { verb: 'unblock',   modOnly: true, needsTarget: true, help: 'unblock @u', handler: function (modId, c) {
+          if (!c.targetId) return Promise.resolve({ ack: 'unblock needs an @mention of the user' });
+          return unblockUser({ id: c.targetId, name: c.targetName })
+            .then(function (r) { return { ack: r.ok ? ('unblocked ' + (c.targetName || c.targetId) + ' \u2014 she can form memory of them again') : ((c.targetName || c.targetId) + ' was not on the blocklist') }; });
+        } },
       { verb: 'warns',     modOnly: true, needsTarget: true, help: 'warns @u', handler: function (modId, c) {
           if (!c.targetId) return Promise.resolve({ ack: 'warns needs an @mention of the user' });
           return Promise.resolve(store.get(partKey(c.targetId))).then(function (p) {
@@ -589,6 +691,31 @@
       { verb: 'unlock',    modOnly: true, aliases: ['\ud83d\udd13'], help: 'unlock', handler: function () { engageMode = 'normal'; log('[chloe.mode] back to normal'); return Promise.resolve({ ack: 'unlocked \u2014 back to normal.' }); } },
       { verb: 'open',      modOnly: true, aliases: ['openchat', '\ud83d\udce2'], help: 'open', handler: function () { engageMode = 'open'; log('[chloe.mode] open (reply to everyone)'); return Promise.resolve({ ack: 'open mode \u2014 I\u2019ll reply to everyone in here. ' + cfg.commandPrefix + ' unlock to stop.' }); } },
       { verb: 'help',      modOnly: true, cooldownMs: 5000, aliases: ['?', '\ud83c\udd98'], handler: function () { return Promise.resolve({ ack: helpText(), embed: helpEmbed() }); } },
+      { verb: 'do',        modOnly: true, help: 'do {json task}', handler: function (modId, c) {
+          var parsed = parseJob(c.reason || '');
+          if (!parsed.ok) return Promise.resolve({ ack: 'job rejected: ' + parsed.reason + '. Allowed: ' + describeJobs().join('; ') });
+          var task = parsed.job.task, a = parsed.job.args;
+          if (task === 'roster') {
+            return getRoster().then(function (r) {
+              var names = r.slice(0, 20).map(function (u) { return u.name + (u.state && u.state !== 'active' ? ' (' + u.state + ')' : ''); });
+              return { ack: r.length + ' here: ' + (names.join(', ') || '\\u2014') };
+            });
+          }
+          if (task === 'recap' || task === 'summarize') {
+            if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'summaries are not available right now' });
+            return assembleContext({ authorId: modId, authorName: '', content: '' }).then(function (ctx) {
+              var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
+              if (task === 'summarize' && a.lines) lines = lines.slice(-a.lines);
+              return Promise.resolve(cfg.recapFn({ recent: lines })).then(function (res) {
+                return { ack: (res && res.ok) ? res.value : 'could not summarize right now' };
+              });
+            });
+          }
+          if (task === 'remindme') {
+            return Promise.resolve({ ack: 'reminders are coming soon (validated: ' + a.minutes + 'm \\u2014 "' + a.text + '")' });
+          }
+          return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
+        } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
     function resolveVerb(word) {
@@ -899,8 +1026,60 @@
       return isNaN(t) ? clock.now() : t;
     }
 
+    // ---- permanent blocklist (tombstones) ------------------------------------------------
+    // "Forgotten" must mean forgotten FOREVER: a blocked author is never re-scanned, never
+    // re-added to the roster, ever. The blocklist lives at its own top-level key, independent of
+    // any partition, so purge()/forgetMe() cannot remove it — purging clears memory, blocking
+    // prevents memory from ever forming again. Structured as { ids:{id:meta}, names:{lcname:meta} }
+    // so future *fetchable* markers can slot in (account-age, guild-verification gates); note that
+    // Discord does NOT expose IP, 2FA, or phone to bots, so those markers are intentionally absent.
+    var BLOCK_KEY = 'blocklist';
+    function getBlocklist() { return Promise.resolve(store.get(BLOCK_KEY)).then(function (b) { return b || { ids: {}, names: {} }; }); }
+    function isBlockedSync(bl, id, name) {
+      if (!bl) return false;
+      if (id && bl.ids && bl.ids[String(id)]) return true;
+      var ln = String(name || '').trim().toLowerCase();
+      if (ln && bl.names && bl.names[ln]) return true;
+      return false;
+    }
+    function blockUser(opts) {
+      opts = opts || {};
+      var id = opts.id ? String(opts.id) : null;
+      var name = opts.name ? String(opts.name).trim() : null;
+      if (!id && !name) return Promise.resolve({ ok: false, reason: 'need a user id or username to block' });
+      return getBlocklist().then(function (bl) {
+        var meta = { at: clock.now(), by: opts.byModId || null, reason: opts.reason || null };
+        if (id) bl.ids[id] = meta;
+        if (name) bl.names[name.toLowerCase()] = meta;
+        return Promise.resolve(store.set(BLOCK_KEY, bl)).then(function () {
+          // blocking also purges any memory that already formed
+          if (id) return purge(id, { targetName: name || id }).then(function () { return { ok: true, value: { id: id, name: name } }; }, function () { return { ok: true, value: { id: id, name: name } }; });
+          return { ok: true, value: { id: id, name: name } };
+        });
+      });
+    }
+    function unblockUser(opts) {
+      opts = opts || {};
+      var id = opts.id ? String(opts.id) : null;
+      var name = opts.name ? String(opts.name).trim().toLowerCase() : null;
+      return getBlocklist().then(function (bl) {
+        var changed = false;
+        if (id && bl.ids[id]) { delete bl.ids[id]; changed = true; }
+        if (name && bl.names[name]) { delete bl.names[name]; changed = true; }
+        return Promise.resolve(store.set(BLOCK_KEY, bl)).then(function () { return { ok: changed, value: { id: id, name: name } }; });
+      });
+    }
+    function listBlocked() { return getBlocklist(); }
+
     // ---- partition upsert (the per-user system of record) --------------------------------
     function ingestOne(msg, ring, indexSet, touched) {
+      // permanent tombstone gate: a blocked author is invisible to ingestion forever
+      return Promise.resolve(store.get(BLOCK_KEY)).then(function (bl) {
+        if (isBlockedSync(bl, msg.author.id, msg.author.username)) return null;
+        return ingestOneCore(msg, ring, indexSet, touched);
+      });
+    }
+    function ingestOneCore(msg, ring, indexSet, touched) {
       return Promise.resolve(store.get(partKey(msg.author.id))).then(function (existing) {
         var now = clock.now();
         var seenAt = toEpoch(msg.timestamp);
@@ -1133,7 +1312,9 @@
             target = Promise.resolve(cfg.openDM(p.authorId)).then(function (id) { return id || cfg.channelId; }, function () { return cfg.channelId; });
           }
           return target.then(function (chId) {
-            var caption = p.dm ? ('here you go, ' + p.authorName + ' \u2014 ' + p.prompt.slice(0, 140)) : ('here you go, ' + p.authorName + '!');
+            var promptCap = sanitizePromptForCaption(p.prompt, 220);
+            var lead = p.dm ? ('here you go, ' + p.authorName + ' \u2014 ') : ('here you go, ' + p.authorName + '! ');
+            var caption = lead + (promptCap ? ('\u201c' + promptCap + '\u201d') : '');
             return Promise.resolve(cfg.sendImage(chId, dataUrl, caption)).then(function () {
               lastPaintAt = clock.now(); paint.painting = false;          // image clock only — do NOT touch lastActAt
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
@@ -1205,7 +1386,7 @@
         if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);
         var addressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
         var base = {
-          you: { name: cfg.botName || 'Chloe' },
+          you: { name: (personaName || cfg.botName || 'Chloe') },
           addressedBy: { id: p.authorId, name: p.authorName },
           addressedMessage: scrubDiscordTokens(p.content),
           channelRecent: lines,
@@ -1214,6 +1395,7 @@
         };
         return Promise.resolve(store.get(PERSONA_KEY)).then(function (pn) {
           if (pn && pn.text) base.personaNote = pn.text;
+          if (personaName) base.personaName = personaName;
           return base;
         });
       });
@@ -1255,6 +1437,7 @@
       running = true;
       startedAt = clock.now();
       greetSettleLogged = false;
+      refreshPersonaName();
       log('[chloe.T0] started; ' + (cfg.adaptivePolling ? ('adaptive polling ' + cfg.pollFloorMs + '\u2013' + cfg.pollCeilMs + 'ms') : ('polling every ' + cfg.pollIntervalMs + 'ms')));
       if (!cfg.botUserId && !cfg.botName) {
         log('[chloe] WARNING: no bot identity yet — click Validate. Until then she can\u2019t tell she\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
@@ -1268,7 +1451,14 @@
           curDelay = computeNextDelay(curDelay, summary);
           if (running) timer = setTimeout(tick, curDelay);
         }, function (e) {
-          log('[chloe.T0] poll error:', e && e.message || e);
+          var code = e && (e.status || (e.body && e.body.code));
+          var unknownChannel = (e && e.status === 404) || (e && e.body && e.body.code === 10003);
+          log('[chloe.T0] poll error:', (e && e.message) || e);
+          if (unknownChannel && typeof cfg.onChannelGone === 'function') {
+            try { cfg.onChannelGone(cfg.channelId); } catch (e2) {}
+            running = false;   // stop this engine's loop; the bootstrap decides whether to drop the channel
+            return;
+          }
           if (running) timer = setTimeout(tick, cfg.pollIntervalMs);
         });
       };
@@ -1283,7 +1473,11 @@
       getSpeakerRing: getSpeakerRing,
       applyModAction: applyModAction,
       applyStrike: applyStrike,
+      blockUser: blockUser, unblockUser: unblockUser, listBlocked: listBlocked,
       anchorSweep: anchorSweep,
+      parseJob: parseJob,
+      sanitizePromptForCaption: sanitizePromptForCaption,
+      describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
       purge: purge,
@@ -1364,6 +1558,16 @@
     var claimSettleMs = opts.claimSettleMs || 1500;
     var wakeJumpMs = opts.wakeJumpMs || 30000;
     var leaseRenewMs = opts.leaseRenewMs || 10000;
+    // D7 pool autosizing. The queen keeps the live worker count near a target. It only ever
+    // SPAWNS (never kills healthy workers — quiet just means it stops replacing reaped ones),
+    // and it backs off between spawns so a discard storm or a popup-blocked spawn doesn't loop.
+    // The host supplies poolTarget() (current desired count, may change live) and doSpawn()
+    // (returns truthy on a spawn attempt). "expected N, have M -> spawn" covers Memory-Saver
+    // tab discards: a discarded worker simply stops ponging, gets reaped, and is respawned.
+    var poolTarget = (typeof opts.poolTarget === 'function') ? opts.poolTarget : function () { return 0; };
+    var doSpawn = (typeof opts.doSpawn === 'function') ? opts.doSpawn : null;
+    var spawnBackoffMs = opts.spawnBackoffMs || 20000;
+    var lastSpawnAt = 0;
     var lastQueenSeenAt = 0;
     var lastWatchdogAt = 0;
     var lastLeaseAt = 0;
@@ -1414,6 +1618,17 @@
       if (now - lastLeaseAt < leaseRenewMs) return Promise.resolve();
       lastLeaseAt = now;
       return Promise.resolve(lease.set({ id: tabId, at: now, nonce: 'reign:' + tabId }));
+    }
+    function autosize(now) {
+      if (!doSpawn) return;
+      var target = poolTarget() | 0;
+      if (target <= 0) return;
+      var have = Object.keys(workers).length;
+      if (have >= target) return;
+      if (now - lastSpawnAt < spawnBackoffMs) return;   // backoff: one spawn per window
+      lastSpawnAt = now;
+      var r = doSpawn();
+      log('[bridge] autosize: ' + have + '/' + target + ' workers \u2014 spawning' + (r ? '' : ' (spawn declined)'));
     }
     function queenConflict(otherId) {
       if (!lease) { if (tabId > otherId) demoteSelf(); return Promise.resolve(); }
@@ -1541,6 +1756,7 @@
           }
         });
         duty = queenLeaseTick(now);
+        autosize(now);
       } else {
         duty = workerWatchdog(now);
       }
@@ -1595,7 +1811,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.27.0';
+  var VERSION = '0.28.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -1632,9 +1848,21 @@
   }
   var store = makeStore('');
   function primaryChannel() { return String(cfgGet('channelId', '') || '').trim(); }
+  // DM sessions: once Chloe opens a DM channel (she gets the channel id back), that channel is
+  // pollable like any other — Discord lets a bot read messages in a DM it's part of. We can't
+  // DISCOVER a cold inbound DM (no Gateway), but any DM Chloe opens becomes two-way. Stored as
+  // { dmChannelId: { user, name, openedAt } }.
+  function dmSessions() { return cfgGet('dmSessions', {}) || {}; }
+  function dmChannelIds() { return Object.keys(dmSessions()); }
+  function isDMChannel(chId) { return !!dmSessions()[chId]; }
+  function recordDMSession(dmChannelId, userId, name) {
+    if (!dmChannelId || !userId) return;
+    var s = dmSessions();
+    if (!s[dmChannelId]) { s[dmChannelId] = { user: String(userId), name: name || '', openedAt: Date.now() }; cfgSet('dmSessions', s); }
+  }
   function channelList() {
     var seen = {}, out = [];
-    [primaryChannel()].concat(cfgGet('channels', []) || []).forEach(function (c) {
+    [primaryChannel()].concat(cfgGet('channels', []) || []).concat(cfgGet('dmReplies', false) ? dmChannelIds() : []).forEach(function (c) {
       c = String(c || '').trim();
       if (c && !seen[c]) { seen[c] = 1; out.push(c); }
     });
@@ -1690,16 +1918,37 @@
       return body;
     });
   }
+  // ---- output gates (mod-toggleable) ---------------------------------------------------
+  // What Chloe is allowed to put in an outgoing message. PINGS use Discord's own input-sanitation
+  // (the allowed_mentions object — the platform itself decides what resolves to a real ping);
+  // EMOJI / LINKS / CHANNEL-LINKS have no such API for your own messages, so Chloe scrubs them
+  // from her content before posting. Each gate is independently mod-toggleable. Safe defaults:
+  // emoji on (harmless, expressive); pings / @everyone / links / channel-links off.
+  function gate(k, d) { return !!cfgGet('gate:' + k, d); }
+  function allowedMentions() {
+    var parse = [];
+    if (gate('pings', false)) { parse.push('users'); parse.push('roles'); }
+    if (gate('everyone', false)) parse.push('everyone');
+    return { parse: parse };   // parse:[] = Discord resolves NO mentions to real pings
+  }
+  function gateContent(text) {
+    var t = String(text || '');
+    if (!gate('emoji', true)) t = t.replace(/<a?:\w+:\d+>/g, '');           // custom/animated emoji
+    if (!gate('channelLinks', false)) t = t.replace(/<#\d+>/g, '');          // channel mentions
+    if (!gate('links', false)) t = t.replace(/https?:\/\/\S+/gi, '');        // URLs (also kills auto-embeds)
+    return t.replace(/[ \t]{2,}/g, ' ').replace(/ +([,.!?])/g, '$1').trim(); // tidy, preserve newlines
+  }
+
   var transport = {
     getMe: function () { return requestJSON('GET', '/users/@me'); },
     getMessagesAfter: function (channelId, afterId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 50) + (afterId ? '&after=' + afterId : ''));
     },
     sendMessage: function (channelId, text) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: String(text || '').slice(0, 1900) } });
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
     },
     sendEmbed: function (channelId, embed) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed] } });
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed], allowed_mentions: allowedMentions() } });
     },
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
@@ -1724,7 +1973,7 @@
       var blob = dataUrlToBlob(dataUrl);
       var ext = blob.type.indexOf('png') >= 0 ? 'png' : 'jpg';
       var fd = new FormData();
-      fd.append('payload_json', JSON.stringify({ content: String(caption || '').slice(0, 1900) }));
+      fd.append('payload_json', JSON.stringify({ content: gateContent(caption).slice(0, 1900), allowed_mentions: allowedMentions() }));
       fd.append('files[0]', blob, 'chloe.' + ext);
       return requestJSON('POST', '/channels/' + channelId + '/messages', { formData: fd });
     },
@@ -1806,7 +2055,7 @@
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
         botAliases: cfgGet('botAliases', []),
-        addressMode: cfgGet('addressMode', 'both'),
+        addressMode: isDMChannel(channelId) ? 'always' : cfgGet('addressMode', 'both'),
         volunteer: !!cfgGet('volunteer', false),
         greet: !!cfgGet('greet', false),
         backfill: !!cfgGet('backfill', false),
@@ -1839,7 +2088,18 @@
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
-        openDM: function (uid) { return transport.openDM(uid); },
+        openDM: function (uid) { return transport.openDM(uid).then(function (dmId) { if (dmId) recordDMSession(dmId, uid, ''); return dmId; }); },
+        onChannelGone: function (chId) {
+          if (isDMChannel(chId)) {
+            var s = dmSessions(); if (s[chId]) { delete s[chId]; cfgSet('dmSessions', s); }
+            trace('poll', 'DM channel ' + chId + ' is gone (recipient closed it) \u2014 dropped from polling');
+          } else {
+            trace('poll', 'channel ' + chId + ' returned Unknown Channel (404) \u2014 paused. Check the channel id / bot permissions, then Start again.');
+            console.warn('[chloe] channel ' + chId + ' is unreachable (404 Unknown Channel). Polling for it is paused; verify the channel id and that the bot can see it.');
+          }
+          delete engines[chId];
+          pushEvent('channelGone', { channelId: chId });
+        },
         send: function (cid, text) { return transport.sendMessage(cid, text); },
         sendEmbed: function (cid, embed) { return transport.sendEmbed(cid, embed); },
         onPoll: function (summary) {
@@ -1948,6 +2208,7 @@
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       personality: cfgGet('personality', null), personaAnchor: !!cfgGet('personaAnchor', false),
+      gates: { emoji: gate('emoji', true), pings: gate('pings', false), everyone: gate('everyone', false), links: gate('links', false), channelLinks: gate('channelLinks', false) },
       pageLinked: !!pageSource,
       running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
       lastPoll: lastPoll
@@ -2078,7 +2339,37 @@
         return Promise.resolve({ ok: true, value: { count: clean.length, rules: clean } });
       }
       case 'bridge.status':
-        return Promise.resolve({ ok: true, value: { role: TAB_ROLE, tabId: tabBridge ? tabBridge.tabId : null, bus: !!tabBus, workers: (tabBridge && TAB_ROLE === 'queen') ? tabBridge.workers() : {} } });
+        return Promise.resolve({ ok: true, value: { role: TAB_ROLE, tabId: tabBridge ? tabBridge.tabId : null, bus: !!tabBus, poolSize: cfgGet('poolSize', 0), workers: (tabBridge && TAB_ROLE === 'queen') ? tabBridge.workers() : {} } });
+      case 'config.setGate': {
+        var GKEYS = { emoji: true, pings: false, everyone: false, links: false, channelLinks: false };
+        var gk = String((args && args.key) || '');
+        if (!(gk in GKEYS)) return Promise.resolve({ ok: false, reason: 'unknown gate "' + gk + '" (emoji, pings, everyone, links, channelLinks)' });
+        cfgSet('gate:' + gk, !!(args && args.on));
+        return Promise.resolve({ ok: true, value: { key: gk, on: !!(args && args.on) } });
+      }
+      case 'config.setDMReplies':
+        { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
+      case 'dm.open': {
+        var duid = String((args && args.userId) || '').trim();
+        if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
+        return transport.openDM(duid).then(function (dmId) {
+          if (!dmId) return { ok: false, reason: 'could not open a DM (the bot must share a server with the user, and the user must allow DMs)' };
+          recordDMSession(dmId, duid, (args && args.name) || '');
+          if (cfgGet('dmReplies', false)) applyConfigChange();   // start polling the new DM
+          var greeting = (args && args.message);
+          if (greeting) return transport.sendMessage(dmId, String(greeting)).then(function () { return { ok: true, value: { dmChannelId: dmId, sent: true } }; });
+          return { ok: true, value: { dmChannelId: dmId } };
+        }, function (e) { return { ok: false, reason: 'openDM failed: ' + (e && e.message) }; });
+      }
+      case 'dm.list':
+        return Promise.resolve({ ok: true, value: { dmReplies: !!cfgGet('dmReplies', false), sessions: dmSessions() } });
+      case 'dm.forget': {
+        var fch = String((args && args.dmChannelId) || '').trim();
+        var s = dmSessions(); if (fch && s[fch]) { delete s[fch]; cfgSet('dmSessions', s); applyConfigChange(); }
+        return Promise.resolve({ ok: true, value: { sessions: dmSessions() } });
+      }
+      case 'config.setPoolSize':
+        { var ps = Math.max(0, Math.min(10, parseInt((args && args.size), 10) || 0)); cfgSet('poolSize', ps); return Promise.resolve({ ok: true, value: { poolSize: ps } }); }
       case 'bridge.spawn':
         { if (TAB_ROLE !== 'queen') return Promise.resolve({ ok: false, reason: 'only the queen spawns workers' }); return Promise.resolve(spawnWorker()); }
       case 'bridge.shutdown':
@@ -2195,6 +2486,9 @@
       role: TAB_ROLE, token: busToken, bus: tabBus,
       lease: queenLease,
       queenDeadAfterMs: cfgGet('queenDeadAfterMs', 90000),
+      poolTarget: function () { return cfgGet('poolSize', 0) | 0; },   // D7: 0 = manual-only (default)
+      doSpawn: function () { var r = spawnWorker(); return !!(r && r.ok); },
+      spawnBackoffMs: cfgGet('spawnBackoffMs', 20000),
       log: function (m) { trace('bridge', m); },
       onWorkerJoin: function (id) { trace('bridge', 'worker joined: ' + id); },
       onWorkerLost: function (id, why) { trace('bridge', 'worker lost: ' + id + ' (' + why + ')'); },
