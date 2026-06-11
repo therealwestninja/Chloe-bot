@@ -381,6 +381,18 @@
       <div class="note"><code>!chloe reminders</code> lists yours; <code>!chloe reminders clear</code> cancels them. Limit is a few pending per person.</div>
     </div>
     <div class="card">
+      <h2>Away (AFK)</h2>
+      <div class="note">
+        Also front-end-only. <code>!chloe afk lunch</code> marks you away; anyone who pings you while you&rsquo;re out gets a quiet heads-up (with your reason and how long you&rsquo;ve been gone). Your next message clears it automatically with a welcome-back, or use <code>!chloe back</code>. Repeated pings won&rsquo;t spam the same notice.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Highlights</h2>
+      <div class="note">
+        Pin the channel&rsquo;s memorable moments. Reply to a message with <code>!chloe highlight</code> (optionally add a note), or quote text directly: <code>!chloe highlight "best line all week" so good</code>. <code>!chloe highlights</code> lists them; a mod can <code>!chloe highlights clear</code>. A few recent highlights ride along in Chloe&rsquo;s context, so she can reference them when it fits &mdash; a light touch of channel memory, all handled front-end with no AI call.
+      </div>
+    </div>
+    <div class="card">
       <h2>Troubleshooting</h2>
       <div class="codehead">The app won&rsquo;t connect</div>
       <div class="note">
@@ -573,9 +585,15 @@
     var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
     var who = (ctx && ctx.addressedBy && ctx.addressedBy.name) ? ctx.addressedBy.name : 'someone';
     var intentLine = (ctx && ctx.currentIntent) ? ('Right now you are quietly focused on: ' + String(ctx.currentIntent) + '. Let that guide your reply without stating it outright.\n') : '';
+    var hiLine = '';
+    if (ctx && ctx.channelHighlights && ctx.channelHighlights.length) {
+      hiLine = 'A few memorable moments from this channel (reference only if naturally relevant, do not force them in):\n'
+        + ctx.channelHighlights.map(function (h) { return '- ' + (h.who ? h.who + ': ' : '') + '\u201c' + String(h.text).slice(0, 120) + '\u201d' + (h.note ? ' (' + String(h.note).slice(0, 60) + ')' : ''); }).join('\n') + '\n';
+    }
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + intentLine
+      + hiLine
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.37.0
+// @version      0.39.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -139,6 +139,10 @@
       reminderMaxPerUser: 5,     // how many pending reminders one person may hold
       reminderMaxTotal: 50,      // global pending-reminder cap per channel
       reminderTextMax: 280,      // reminder text length cap
+      afkNoticeCooldownMs: 300000,// don't repeat an "X is away" heads-up for the same person within 5m
+      highlightMax: 50,          // how many highlights a channel keeps (oldest dropped past this)
+      highlightContextCount: 3,  // how many recent highlights ride in the response context
+      highlightTextMax: 300,     // per-highlight stored text length cap
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -193,6 +197,11 @@
     var REMIND_KEY = 'reminders:' + cfg.channelId;   // poll-driven scheduled reminders (front-end only,
     // no AI call). Checked each poll rather than via setTimeout, because background tabs throttle
     // timers to ~1/min — a poll-driven check fires reliably on the first poll after the due time.
+    var AFK_KEY = 'afk:' + cfg.channelId;   // user-set away state (front-end only, no AI call): set on
+    // "!chloe afk", auto-cleared when the person speaks again, surfaced when others ping them.
+    var HILITE_KEY = 'highlights:' + cfg.channelId;   // pinned notable messages (front-end only): saved
+    // for recall via "!chloe highlights", and a few recent ones ride in context so she can reference
+    // the channel's memorable moments — a step toward memory without the full fact-extraction build.
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
 
@@ -205,6 +214,7 @@
     var lastReplyAt = {};                // per-author: when she last replied to that person
     var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
+    var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
     var lastSawHumanAt = 0;              // when a human last spoke here (observation, always updated)
     function noteAuthorForLoop(isBot) {
       if (isBot) consecutiveBotTurns++;
@@ -298,6 +308,52 @@
       });
     }
 
+    // ---- AFK / away state (front-end only, no AI call) --------------------------------------
+    function getAfkMap() { return Promise.resolve(store.get(AFK_KEY)).then(function (a) { return (a && typeof a === 'object') ? a : {}; }); }
+    function setAfk(userId, name, reason) {
+      return getAfkMap().then(function (map) {
+        map[userId] = { name: name || '', reason: String(reason || '').trim().slice(0, 200), since: clock.now() };
+        return Promise.resolve(store.set(AFK_KEY, map)).then(function () { return map[userId]; });
+      });
+    }
+    function getAfk(userId) { return getAfkMap().then(function (map) { return map[userId] || null; }); }
+    // Clear a user's AFK if set. Returns the prior entry (so the caller can say "welcome back"), or
+    // null if they weren't away.
+    function clearAfk(userId) {
+      return getAfkMap().then(function (map) {
+        var prior = map[userId] || null;
+        if (!prior) return null;
+        delete map[userId];
+        return Promise.resolve(store.set(AFK_KEY, map)).then(function () { return prior; });
+      });
+    }
+    function humanGap(ms) {
+      var mn = Math.round(ms / 60000);
+      if (mn < 1) return 'less than a minute';
+      if (mn < 60) return mn + ' minute' + (mn === 1 ? '' : 's');
+      var h = Math.round(mn / 60);
+      if (h < 24) return h + ' hour' + (h === 1 ? '' : 's');
+      var d = Math.round(h / 24); return d + ' day' + (d === 1 ? '' : 's');
+    }
+
+    // ---- highlights (front-end only, no AI call) --------------------------------------------
+    function getHighlights() { return Promise.resolve(store.get(HILITE_KEY)).then(function (h) { return Array.isArray(h) ? h : []; }); }
+    // Save a notable message. `src` carries the captured message ({ text, authorName }) — usually the
+    // replied-to message, or a manual quote. Returns { ok, value } or { ok:false, reason }.
+    function addHighlight(src, savedBy, savedByName, note) {
+      var text = scrubDiscordTokens(String((src && src.text) || '')).trim().slice(0, cfg.highlightTextMax);
+      if (!text) return Promise.resolve({ ok: false, reason: 'nothing to highlight \u2014 reply to a message or quote some text' });
+      return getHighlights().then(function (list) {
+        var rec = { id: 'h' + clock.now() + '_' + Math.floor(Math.random() * 1e6), text: text,
+          authorName: (src && src.authorName) || '', savedBy: savedBy, savedByName: savedByName || '',
+          note: String(note || '').trim().slice(0, 200), at: clock.now() };
+        list.push(rec);
+        if (list.length > cfg.highlightMax) list = list.slice(-cfg.highlightMax);   // drop oldest
+        return Promise.resolve(store.set(HILITE_KEY, list)).then(function () { return { ok: true, value: rec }; });
+      });
+    }
+    function listHighlights(n) { return getHighlights().then(function (list) { return n ? list.slice(-n) : list; }); }
+    function clearHighlights() { return getHighlights().then(function (list) { var c = list.length; return Promise.resolve(store.set(HILITE_KEY, [])).then(function () { return c; }); }); }
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
@@ -980,6 +1036,46 @@
             return { ack: 'your reminders:\n' + lines.join('\n') };
           });
         } },
+      { verb: 'afk',       modOnly: false, help: 'afk [reason] (mark yourself away)', handler: function (modId, c) {
+          var reason = String(c.rawArgs || '').trim();
+          return setAfk(modId, c.authorName || '', reason).then(function () {
+            return { ack: "ok " + (c.authorName ? c.authorName + ', ' : '') + "i'll let people know you're away" + (reason ? ' (' + reason.slice(0, 80) + ')' : '') };
+          });
+        } },
+      { verb: 'back',      modOnly: false, help: 'back (clear your away state)', handler: function (modId, c) {
+          return clearAfk(modId).then(function (prior) {
+            if (!prior) return { ack: 'you were not marked away' };
+            return { ack: 'welcome back' + (c.authorName ? ', ' + c.authorName : '') + " \u2014 you were away " + humanGap(clock.now() - prior.since) };
+          });
+        } },
+      { verb: 'highlight', modOnly: false, help: 'highlight [note] (reply to a message, or quote text)', handler: function (modId, c) {
+          var args = String(c.rawArgs || '').trim();
+          var src = null, note = args;
+          if (c.referenced && c.referenced.text) { src = c.referenced; note = args; }           // replied-to message
+          else {
+            var q = args.match(/^["\u201c]([\s\S]+?)["\u201d]\s*(.*)$/);                          // "quoted text" optional note
+            if (q) { src = { text: q[1], authorName: '' }; note = q[2]; }
+            else if (args) { src = { text: args, authorName: c.authorName || '' }; note = ''; }   // bare text becomes the highlight
+          }
+          if (!src) return Promise.resolve({ ack: 'reply to a message with ' + cfg.commandPrefix + ' highlight, or quote some text to save' });
+          return addHighlight(src, modId, c.authorName || '', note).then(function (res) {
+            if (!res.ok) return { ack: res.reason };
+            return { ack: '\ud83d\udccc saved' + (res.value.note ? ' (' + res.value.note.slice(0, 60) + ')' : '') + ': \u201c' + res.value.text.slice(0, 80) + '\u201d' };
+          });
+        } },
+      { verb: 'highlights',modOnly: false, help: 'highlights (list) / highlights clear', handler: function (modId, c) {
+          var arg = String(c.rawArgs || '').trim().toLowerCase();
+          if (arg === 'clear' || arg === 'reset') {
+            if (!isMod(modId)) return Promise.resolve({ ack: 'only a mod can clear the channel highlights' });
+            return clearHighlights().then(function (n) { return { ack: n ? ('cleared ' + n + ' highlight' + (n === 1 ? '' : 's')) : 'no highlights to clear' }; });
+          }
+          return listHighlights(10).then(function (list) {
+            if (!list.length) return { ack: 'no highlights saved yet \u2014 reply to a good message with ' + cfg.commandPrefix + ' highlight' };
+            var now = clock.now();
+            var lines = list.map(function (h) { return '\u2022 ' + (h.authorName ? h.authorName + ': ' : '') + '\u201c' + h.text.slice(0, 70) + '\u201d' + (h.note ? ' \u2014 ' + h.note.slice(0, 40) : '') + ' (' + humanGap(now - h.at) + ' ago)'; });
+            return { ack: 'channel highlights:\n' + lines.join('\n') };
+          });
+        } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me' }
     ];
     function resolveVerb(word) {
@@ -1115,7 +1211,7 @@
         var now = clock.now();
         var stateById = {}, commandAuthors = {};
         authorIds.forEach(function (id, i) { var p = parts[i]; if (p) { applyExpiry(p, now); stateById[id] = p.state || 'active'; } else stateById[id] = 'active'; });
-        var acks = [], embeds = [], commandCount = 0, addressedName = null, imageReqName = null;
+        var acks = [], embeds = [], notices = [], commandCount = 0, addressedName = null, imageReqName = null;
         var canEmbed = typeof cfg.sendEmbed === 'function';
         var chain = Promise.resolve();
         incoming.forEach(function (m) {
@@ -1123,6 +1219,7 @@
             var c = parseCommand(m.content);
             if (c) {
               c.messageId = m.id; c.authorName = m.author.username;   // for queue-ack reaction + caption
+              if (m.referenced_message) c.referenced = { text: m.referenced_message.content || '', authorName: (m.referenced_message.author && m.referenced_message.author.username) || '' };
               commandCount++; commandAuthors[m.author.id] = true;
               if (c.cmd === 'forget') return forgetMe(m.author.id, m.author.username);  // anyone, self only
               if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });  // open to anyone
@@ -1131,6 +1228,34 @@
               return;
             }
             if (looksLikeCommand(m.content)) log('[chloe.T3] "' + String(m.content || '').slice(0, 40) + '" starts with ' + cfg.commandPrefix + ' but is not a known command \u2014 treating as normal chat');
+            // AFK (front-end only, no AI call): the author speaking clears their own away state, and
+            // pinging someone who is away gets a quiet heads-up. Runs on normal chat, before the
+            // engagement gates, so it works even for people Chloe otherwise wouldn't reply to.
+            var afkChain = Promise.resolve();
+            afkChain = afkChain.then(function () {
+              return clearAfk(m.author.id).then(function (prior) {
+                if (prior) { var since = clock.now() - prior.since; if (since > 120000) notices.push('welcome back, ' + (m.author.username || 'friend') + ' \u2014 away ' + humanGap(since)); }
+              });
+            });
+            var pings = String(m.content || '').match(/<@!?(\d+)>/g) || [];
+            if (pings.length) {
+              var seen = {};
+              pings.forEach(function (tok) {
+                var id = tok.replace(/<@!?(\d+)>/, '$1');
+                if (id === m.author.id || id === cfg.botUserId || seen[id]) return;
+                seen[id] = true;
+                afkChain = afkChain.then(function () {
+                  return getAfk(id).then(function (a) {
+                    if (!a) return;
+                    var key = id;
+                    if (now - (afkNoticed[key] || 0) < cfg.afkNoticeCooldownMs) return;   // don't spam the same notice
+                    afkNoticed[key] = now;
+                    notices.push((a.name || 'they') + ' is away' + (a.reason ? ' (' + a.reason.slice(0, 80) + ')' : '') + ' \u2014 since ' + humanGap(now - a.since) + ' ago');
+                  });
+                });
+              });
+            }
+            return afkChain.then(function () {
             // Auto-mod watches everyone except mods, BEFORE the engagement-suppression gate, so a
             // repeat offender who is already ignored/timed-out still escalates up the strike ladder.
             // Skip only the terminal soft-ban (already maximally handled reversibly — re-moderating is moot).
@@ -1177,6 +1302,7 @@
             } else if (gateEnabled() && engageMode === 'normal') {
               gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
             }
+            });   // end afkChain.then wrapper
           });
         });
         return chain.then(function () {
@@ -1201,6 +1327,11 @@
           if (greetEnabled() && inGreetSettle(now) && !greetSettleLogged) {
             greetSettleLogged = true;
             log('[chloe.T5] greetings paused for ~' + Math.round(cfg.greetSettleMs / 1000) + 's after start (current speakers treated as already-present, not arrivals)');
+          }
+          // AFK heads-ups + welcome-backs flush regardless of the ackCommands toggle — they're a
+          // user-facing utility, not a command confirmation.
+          if (notices.length && typeof cfg.send === 'function') {
+            try { cfg.send(cfg.channelId, notices.join('\n')); } catch (e) {}
           }
           if ((acks.length || embeds.length) && cfg.ackCommands) {
             log('[chloe.T3] ran ' + commandCount + ' command(s)' + (embeds.length ? (' (' + embeds.length + ' embed)') : ''));
@@ -1748,15 +1879,22 @@
           if (recentReplies.length) base.recentReplies = recentReplies.slice();
           return Promise.resolve(store.get(INTENT_KEY)).then(function (gi) {
             if (gi && gi.text && (clock.now() - (gi.at || 0) < cfg.intentTtlMs)) { base.currentIntent = gi.text; reserve += estimateTokens(gi.text) + 12; }
-            // NOW pack the transcript into whatever the request budget has left after the reserve.
-            var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
-            var packed = packByTokens(lines, transcriptBudget);
-            base.channelRecent = packed.lines;
-            base.contextTokens = packed.tokens;
-            base.contextDropped = packed.dropped;
-            base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
-            if (cfg.singleParagraph) base.singleParagraph = true;
-            return base;
+            return Promise.resolve((cfg.highlightContextCount > 0) ? getHighlights() : []).then(function (hl) {
+              if (hl && hl.length) {
+                var pick = hl.slice(-cfg.highlightContextCount).map(function (h) { return { who: h.authorName || 'someone', text: h.text, note: h.note || '' }; });
+                base.channelHighlights = pick;
+                pick.forEach(function (h) { reserve += estimateTokens(h.who) + estimateTokens(h.text) + estimateTokens(h.note) + 4; });
+              }
+              // NOW pack the transcript into whatever the request budget has left after the reserve.
+              var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
+              var packed = packByTokens(lines, transcriptBudget);
+              base.channelRecent = packed.lines;
+              base.contextTokens = packed.tokens;
+              base.contextDropped = packed.dropped;
+              base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+              if (cfg.singleParagraph) base.singleParagraph = true;
+              return base;
+            });
           });
         });
       });
@@ -1845,6 +1983,8 @@
       parseImageJson: parseImageJson,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
+      setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
+      addHighlight: addHighlight, listHighlights: listHighlights, clearHighlights: clearHighlights,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
       clearPersonaNote: clearPersonaNote,
@@ -2179,7 +2319,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.37.0';
+  var VERSION = '0.39.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
