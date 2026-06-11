@@ -214,6 +214,7 @@
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
+        <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
         <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
       </div>
     </div>
@@ -428,10 +429,16 @@
       </div>
     </div>
     <div class="card">
+      <h2>Reading the room</h2>
+      <div class="note">
+        With <strong>&ldquo;read &amp; match the room&rsquo;s energy&rdquo;</strong> on (Behavior tab), Chloe keeps a light sense of the channel&rsquo;s tenor &mdash; how lively it is and how playful &mdash; from the pace of messages and simple cues like laughter, emoji, and exclamation. When things are buzzing she can be more animated; when it&rsquo;s quiet and slow she eases off. It&rsquo;s a gentle tone nudge, not a label she announces, and it drifts gradually rather than flipping on a single message. By design she only reads <em>energy</em> and <em>playfulness</em> &mdash; she does not try to guess anger or conflict, since misreading a serious moment would be worse than not guessing. All front-end, no AI call. Off by default.
+      </div>
+    </div>
+    <div class="card">
       <h2>Troubleshooting</h2>
       <div class="codehead">The app won&rsquo;t connect</div>
       <div class="note">
-        If the command bar shows <em>userscript not detected</em>: confirm the <strong>Chloe-bridge userscript</strong> is installed and enabled in Tampermonkey, that you&rsquo;re on a <code>perchance.org</code> tab, and reload the page. The userscript and this generator talk over a private in-page link; a hard refresh re-establishes it. If you switched browsers or profiles, the token and settings live in that browser&rsquo;s userscript storage, so set them again there.
+        If the link dot stays amber (<em>waiting for userscript</em>) but Chloe is replying in Discord, ignore it &mdash; the dot reflects a status ping that isn&rsquo;t reliable across Perchance&rsquo;s frame setups, and the bot working is the real signal. If she&rsquo;s genuinely <strong>not</strong> responding: confirm the <strong>Chloe-bridge userscript</strong> is installed and enabled in Tampermonkey, that you&rsquo;re on a <code>perchance.org</code> tab, and reload the page. The userscript and this generator talk over a private in-page link; a hard refresh re-establishes it. If you switched browsers or profiles, the token and settings live in that browser&rsquo;s userscript storage, so set them again there.
       </div>
       <div class="codehead">She runs but stays silent</div>
       <div class="note">
@@ -478,8 +485,6 @@
   var pending = new Map();           // Map avoids obj[key] (parser-safe)
   var seq = 0;
   var linkAlive = false;
-  var linkMisses = 0;   // consecutive failed status pings; the banner waits for a couple, so a single
-                        // transient miss at load (or during a userscript restart) doesn't flash a scary error
 
   window.addEventListener('message', function (ev) {
     var d = ev.data;
@@ -536,6 +541,30 @@
   }
   function renderFromStatus() {}  // placeholder; status refresh handles rendering
 
+  // Post a request to every window that could host the userscript's listener. In Perchance's embed
+  // the panel's window.top may be the outer shell frame (no listener) while the userscript runs in a
+  // different frame, and brain calls only worked because the userscript reached US directly. A status
+  // ping sent solely to window.top can therefore vanish. So fan out to top + parent + the frame chain,
+  // and post with BOTH the perchance origin and '*' (a sandboxed embed's origin is "null", which a
+  // fixed targetOrigin silently drops). Replies are nonce-matched, so duplicate delivery is harmless.
+  function postToHosts(msg) {
+    var targets = [];
+    try { if (window.top && window.top !== window) targets.push(window.top); } catch (e) {}
+    try { if (window.parent && window.parent !== window && targets.indexOf(window.parent) < 0) targets.push(window.parent); } catch (e) {}
+    try {
+      var w = window;
+      for (var i = 0; i < 6 && w && w.parent && w.parent !== w; i++) { w = w.parent; if (targets.indexOf(w) < 0) targets.push(w); }
+    } catch (e) {}
+    if (!targets.length) targets.push(window.top);   // last resort
+    var sent = 0;
+    targets.forEach(function (t) {
+      [TARGET_ORIGIN, '*'].forEach(function (origin) {
+        try { t.postMessage(msg, origin); sent++; } catch (e) {}
+      });
+    });
+    return sent > 0;
+  }
+
   function call(cmd, args, timeoutMs) {
     return new Promise(function (resolve) {
       seq = seq + 1;
@@ -545,9 +574,7 @@
         resolve({ ok: false, reason: 'timeout' });
       }, timeoutMs || 8000);
       pending.set(nonce, function (res) { clearTimeout(timer); resolve(res); });
-      try {
-        window.top.postMessage({ __chloe: 1, kind: 'req', nonce: nonce, cmd: cmd, args: args || null }, TARGET_ORIGIN);
-      } catch (e) {
+      if (!postToHosts({ __chloe: 1, kind: 'req', nonce: nonce, cmd: cmd, args: args || null })) {
         clearTimeout(timer); pending.delete(nonce); resolve({ ok: false, reason: 'post failed' });
       }
     });
@@ -645,12 +672,14 @@
       ? ('What you remember about ' + who + ': ' + String(ctx.userSummary) + '. Let this color your warmth naturally; only mention it if it genuinely fits, never recite it.\n')
       : '';
     var timeLine = timePhrase(ctx);
+    var moodLine = (ctx && ctx.mood) ? ('The room feels ' + String(ctx.mood) + ' right now \u2014 match that energy rather than working against it (don\u2019t name the mood).\n') : '';
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + intentLine
       + hiLine
       + memLine
       + timeLine
+      + moodLine
       + 'Recent conversation:\n' + transcript + '\n'
       + who + ' is talking to you. Reply in character as a single short chat message \u2014 match the room, do not monologue, and do not restate what was already said.'
       + craftGuidance(ctx)
@@ -938,6 +967,7 @@
     var cki = byId('checkinChk'); if (cki) cki.checked = !!s.checkins;
     var fct = byId('factChk'); if (fct) fct.checked = !!s.factMemory;
     var tm = byId('timeChk'); if (tm) tm.checked = !!s.timeAware;
+    var md = byId('moodChk'); if (md) md.checked = !!s.moodAware;
     var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
@@ -1067,8 +1097,7 @@
   }
   function refresh() {
     return call('status').then(function (res) {
-      if (!res.ok) { linkMisses++; if (linkMisses >= 2) setLink(false); return; }
-      linkMisses = 0;
+      if (!res.ok) { setLink(false); return; }   // dot goes amber "waiting"; no banner, no alarm
       setLink(true);
       applyStatus(res.value);
       renderChannelSel(res.value);
@@ -1078,17 +1107,14 @@
   }
   function setLink(alive) {
     linkAlive = alive;
-    byId('linkDot').className = 'dot ' + (alive ? 'on' : 'off');
-    setText('linkTxt', alive ? 'userscript linked' : 'userscript not detected');
-    var b = byId('linkBannerHost');
-    if (!alive && !byId('linkBanner')) {
-      var div = document.createElement('div');
-      div.id = 'linkBanner'; div.className = 'banner bad';
-      div.textContent = 'No response from the chloe-bridge userscript. Install it (Tampermonkey) and open this generator on a perchance.org tab in the same browser.';
-      byId('app').insertBefore(div, byId('app').firstChild.nextSibling);
-    } else if (alive && byId('linkBanner')) {
-      byId('linkBanner').remove();
-    }
+    // The connection banner is intentionally disabled: its detection (a page->userscript status ping)
+    // proved unreliable across Perchance's frame topologies and repeatedly false-negatived while the
+    // bot was working fine. Brain calls are the ground truth, not this ping. We keep only a quiet,
+    // non-blocking dot so the panel never alarms over a flaky status round-trip. If a stale banner
+    // exists from an older build, clear it.
+    byId('linkDot').className = 'dot ' + (alive ? 'on' : 'idle');
+    setText('linkTxt', alive ? 'userscript linked' : 'waiting for userscript\u2026');
+    var stale = byId('linkBanner'); if (stale) stale.remove();
   }
 
   // ---- buttons ----------------------------------------------------------------------
@@ -1191,6 +1217,11 @@
   }
   byId('timeChk').addEventListener('change', pushTimeAware);
   byId('tzOffset').addEventListener('change', function () { if (byId('timeChk').checked) pushTimeAware(); });
+  byId('moodChk').addEventListener('change', function () {
+    call('config.setMoodAware', { on: byId('moodChk').checked }).then(function (res) {
+      log(res && res.ok ? ('room-energy sensing: ' + res.value.moodAware) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
   byId('backfillChk').addEventListener('change', function () {
     call('config.setBackfill', { on: byId('backfillChk').checked }).then(function (res) {
       log(res.ok ? ('backfill: ' + res.value.backfill + (res.value.backfill ? ' (will seed the roster from history over the next polls)' : '')) : ('failed: ' + res.reason));

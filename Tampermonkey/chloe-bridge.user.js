@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.45.1
+// @version      0.46.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -185,6 +185,13 @@
       // timeless. Needs the community's UTC offset to be right; off by default.
       timeAware: false,              // weave a light sense of time-of-day / day / quiet-duration into context
       timezoneOffsetMins: 0,         // the community's offset from UTC in minutes (e.g. -480 for US Pacific)
+      // G6 mood: a light, front-end read of the room's tenor from pace + cheap lexical signals
+      // (laughter, exclamation, emoji, caps). Two safe dimensions only — energy (quiet..lively) and
+      // playfulness (subdued..joking). Deliberately NOT trying to detect anger/conflict (error-prone,
+      // and misreading a serious moment is worse than no read). Rides into context as soft tone
+      // guidance. Off by default.
+      moodAware: false,              // sense and gently match the room's energy / playfulness
+      moodDecay: 0.7,                // how much prior mood carries over each update (higher = steadier)
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -244,6 +251,7 @@
     var INDEX_KEY = 'roster:index';
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
+    var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
     // survives across polls and rides in every response context, so she holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
@@ -1886,12 +1894,18 @@
                 rh.lastActivity = now;
               }
 
+              // G6: blend this batch's human-message tenor into the decayed mood (front-end, no AI)
+              var humanTexts = (cfg.moodAware && incoming.length)
+                ? incoming.filter(function (m) { return m.author && !m.author.bot; }).map(function (m) { return m.content || ''; })
+                : [];
+
               var writes = [
                 store.set(RING_KEY, ring),
                 store.set(RHYTHM_KEY, rh),
                 store.setIndex(Object.keys(indexSet))
               ];
               if (newCursor && newCursor !== ctx.cursor) writes.push(store.set(CURSOR_KEY, newCursor));
+              if (humanTexts.length) writes.push(updateMood(humanTexts, rh.avgGapMs));
 
               return Promise.all(writes).then(function () {
                 var summary = {
@@ -2198,15 +2212,18 @@
               }
               return Promise.resolve(cfg.timeAware ? store.get(RHYTHM_KEY) : null).then(function (rh) {
                 if (cfg.timeAware) { base.timeContext = timeContext(rh && rh.lastActivity); reserve += 16; }   // a short descriptor line
-                // NOW pack the transcript into whatever the request budget has left after the reserve.
-                var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
-                var packed = packByTokens(lines, transcriptBudget);
-                base.channelRecent = packed.lines;
-                base.contextTokens = packed.tokens;
-                base.contextDropped = packed.dropped;
-                base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
-                if (cfg.singleParagraph) base.singleParagraph = true;
-                return base;
+                return Promise.resolve(cfg.moodAware ? store.get(MOOD_KEY) : null).then(function (mood) {
+                  if (cfg.moodAware && mood) { base.mood = moodDescriptor(mood); reserve += 12; }
+                  // NOW pack the transcript into whatever the request budget has left after the reserve.
+                  var transcriptBudget = Math.max(cfg.minTranscriptTokens || 200, (cfg.requestTokenBudget || 5000) - reserve);
+                  var packed = packByTokens(lines, transcriptBudget);
+                  base.channelRecent = packed.lines;
+                  base.contextTokens = packed.tokens;
+                  base.contextDropped = packed.dropped;
+                  base.requestTokensEst = reserve + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
+                  if (cfg.singleParagraph) base.singleParagraph = true;
+                  return base;
+                });
               });
             });
           });
@@ -2310,6 +2327,55 @@
           : 'a day or more';
       }
       return tc;
+    }
+
+    // G6 mood: read the room's tenor from cheap, front-end signals — no AI call. Two safe dimensions:
+    // energy (how lively/fast) and playfulness (how joking/warm). We never try to detect anger; a
+    // wrong "the room is angry" read is worse than none. Per batch we extract signals from human
+    // messages, then blend into a decayed state so mood drifts rather than snapping.
+    function moodSignals(humanMsgs, avgGapMs) {
+      if (!humanMsgs.length) return null;
+      var laugh = 0, excl = 0, emoji = 0, caps = 0, qs = 0, totalLen = 0;
+      var laughRe = /\b(lol|lmao|lmfao|rofl|haha+|hehe+|heh)\b|😂|🤣|😹/i;
+      var emojiRe = /[\u231A-\uD83F\uDC00-\uDFFF\u2600-\u27BF\uFE0F\u2190-\u21FF\u2B00-\u2BFF]/;
+      humanMsgs.forEach(function (t) {
+        t = String(t || '');
+        totalLen += t.length;
+        if (laughRe.test(t)) laugh++;
+        if (t.indexOf('!') >= 0) excl++;
+        if (emojiRe.test(t)) emoji++;
+        if (/\?/.test(t)) qs++;
+        var words = t.split(/\s+/).filter(function (w) { return w.length >= 3; });
+        if (words.some(function (w) { return w === w.toUpperCase() && /[A-Z]/.test(w); })) caps++;
+      });
+      var n = humanMsgs.length;
+      var avgLen = totalLen / n;
+      // pace: faster average gap -> higher energy (cap the influence)
+      var pace = (avgGapMs && avgGapMs > 0) ? Math.max(0, Math.min(1, 1 - (avgGapMs / 120000))) : 0.5;  // <2min gaps feel live
+      var energy = Math.max(0, Math.min(1, 0.35 * pace + 0.30 * Math.min(1, n / 6) + 0.20 * (excl / n) + 0.15 * (avgLen < 40 ? 0.8 : 0.3)));
+      var playful = Math.max(0, Math.min(1, 0.5 * Math.min(1, laugh / Math.max(1, n * 0.5)) + 0.3 * Math.min(1, emoji / n) + 0.2 * Math.min(1, excl / n)));
+      return { energy: energy, playful: playful };
+    }
+    function updateMood(humanMsgs, avgGapMs) {
+      if (!cfg.moodAware) return Promise.resolve(null);
+      var sig = moodSignals(humanMsgs, avgGapMs);
+      if (!sig) return Promise.resolve(null);
+      return Promise.resolve(store.get(MOOD_KEY)).then(function (m) {
+        var d = cfg.moodDecay;
+        m = (m && typeof m === 'object') ? m : { energy: 0.5, playful: 0.4, samples: 0 };
+        m.energy = m.energy * d + sig.energy * (1 - d);
+        m.playful = m.playful * d + sig.playful * (1 - d);
+        m.samples = (m.samples || 0) + humanMsgs.length;
+        m.at = clock.now();
+        return store.set(MOOD_KEY, m).then(function () { return m; });
+      });
+    }
+    function moodDescriptor(m) {
+      if (!m) return '';
+      var e = m.energy, p = m.playful;
+      var energyWord = e < 0.3 ? 'quiet and slow' : e < 0.55 ? 'relaxed' : e < 0.8 ? 'lively' : 'buzzing with energy';
+      var playWord = p > 0.6 ? ' and playful' : p > 0.35 ? ' and easygoing' : '';
+      return energyWord + playWord;
     }
 
     // ---- F1 fact memory ---------------------------------------------------------------------
@@ -2440,6 +2506,7 @@
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       timeContext: timeContext,
+      updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
       getPersonaNote: getPersonaNote,
@@ -2775,7 +2842,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.45.1';
+  var VERSION = '0.46.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -3079,6 +3146,7 @@
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
+        moodAware: cfgGet('moodAware', false),
         archiveStale: cfgGet('archiveStale', true),
         greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
         modList: cfgGet('modList', []),
@@ -3243,6 +3311,7 @@
       factMemory: !!cfgGet('factMemory', false),
       timeAware: !!cfgGet('timeAware', false),
       timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
+      moodAware: !!cfgGet('moodAware', false),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
@@ -3414,6 +3483,8 @@
         { var ta = !!(args && args.on); cfgSet('timeAware', ta);
           if (args && args.offsetMins != null && isFinite(args.offsetMins)) cfgSet('timezoneOffsetMins', Math.max(-840, Math.min(840, Math.round(args.offsetMins))));
           applyConfigChange(); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
+      case 'config.setMoodAware':
+        { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
       case 'dm.open': {
         var duid = String((args && args.userId) || '').trim();
         if (!/^\d+$/.test(duid)) return Promise.resolve({ ok: false, reason: 'a numeric user id is required' });
