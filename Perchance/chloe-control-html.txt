@@ -243,8 +243,8 @@
   <section class="pane active" id="pane_setup">
     <div class="card" id="setupCard">
       <h2>Channels</h2>
-      <div class="note" style="margin-bottom:6px">One channel ID per line (Developer Mode &rarr; right-click a channel &rarr; Copy ID). The <strong>first</strong> line is her primary channel; any others are extra channels she also runs.</div>
-      <textarea id="channelsBox" rows="4" spellcheck="false" placeholder="123456789012345678&#10;987654321098765432"></textarea>
+      <div class="note" style="margin-bottom:6px">One channel ID per line (Developer Mode &rarr; right-click a channel &rarr; Copy ID). The <strong>first</strong> line is her primary channel; any others are extra channels she also runs. You can add <code>// comments</code> after any ID &mdash; they&rsquo;re stripped on save and never stored.</div>
+      <textarea id="channelsBox" rows="4" spellcheck="false" placeholder="123456789012345678  // #general&#10;987654321098765432  // #bot-testing"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="ghost" id="setChannelsBtn">Save channels</button>
         <span class="note">With more than one, a selector appears in the command bar &mdash; it scopes the roster, mod log, and mode.</span>
@@ -336,6 +336,7 @@
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
         <label class="chip"><input type="checkbox" id="deviceTimeChk"> know the current date &amp; time (your device clock, no location)</label>
+        <label class="chip"><input type="checkbox" id="selfKnowChk"> know her own basics (her name, how people reach her, that she’s a bot)</label>
         <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
         <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
@@ -393,7 +394,7 @@
   </section>
 
   <section class="pane" id="pane_moderation">
-    <div class="banner" id="modBanner">Reversible actions (ignore / timeout / note / soft-ban / clear) take effect immediately and gate Chloe <em>before</em> she reads a message &mdash; a suppressed user is invisible to her. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Permaban</strong> bans the user from the server <em>and</em> erases Chloe&rsquo;s memory of them: it asks for a final confirmation in the userscript, bans first, and only purges if the ban succeeds &mdash; then verifies the delete actually took. Irreversible.</div>
+    <div class="banner" id="modBanner">Reversible actions (ignore / timeout / note / soft-ban / clear) take effect immediately and gate Chloe <em>before</em> she reads a message &mdash; a suppressed user is invisible to her. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Prune</strong> permanently blocks the user ID and erases everything Chloe remembers about them. Irreversible.</div>
     <div class="card">
       <h2>Output gates</h2>
       <div class="note">What Chloe is allowed to put in a message she sends. Pings use Discord&rsquo;s own <code>allowed_mentions</code> system; emoji / links / channel-links are scrubbed from her text before it posts.</div>
@@ -418,6 +419,15 @@
         <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." class="grow">
         <button class="ghost sm" id="pinNoticeBtn">Post &amp; pin notice</button>
         <span class="note" id="noticeState"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Banned users</h2>
+      <div class="note" style="margin-bottom:8px">These users are on the permanent blocklist. Their Discord ban and any memory purge from the permaban are separate &mdash; unbanning here only removes them from <em>Chloe’s</em> blocklist so she can interact with them again. You may still need to lift the Discord server ban manually.</div>
+      <div id="bannedList" style="margin-top:4px"></div>
+      <div class="empty" id="bannedEmpty" style="display:none">No banned users.</div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost sm" id="refreshBannedBtn">Refresh</button>
       </div>
     </div>
   </section>
@@ -494,6 +504,16 @@
       <div class="row">
         <button class="ghost" id="diagBtn">Dump trace ring</button>
         <span class="note">Link, transport, and poll events from the userscript &mdash; lands in the log below and your clipboard.</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="exportBtn">Export backup&hellip;</button>
+        <input type="file" id="importFile" accept=".json,.gz" hidden>
+        <button class="ghost" id="importBtn">Import backup&hellip;</button>
+        <span class="note">Backup saves all state &amp; settings as a <code>.json.gz</code> file (token excluded). Import restores a backup &mdash; then restart.</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="danger" id="factoryResetBtn">Factory reset&hellip;</button>
+        <span class="note">Wipes all state <em>and</em> all settings (token kept). Export a backup first.</span>
       </div>
     </div>
   </section>
@@ -605,7 +625,7 @@
     <div class="card">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> she keeps a running sense of how fast a channel usually moves (the typical gap between messages and how much it varies) and lets that shape her timing &mdash; settling faster before replying in a quick room, waiting longer in a slow one, checking for new messages MORE often when a room is quiet (so she acts quickly the moment a dead channel stirs) and easing off into passive ingest when a room is busy (letting context build, then replying on the lull), while judging &ldquo;quiet&rdquo; relative to each room&rsquo;s own rhythm rather than a fixed clock. Being directly @-mentioned or replied to always takes priority and pulls her back to checking quickly. It never makes her slower to reply than her configured settle time, costs no extra AI calls, and falls back to fixed timing until a room has shown enough of its rhythm. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> alongside her long-term memory, she keeps a small, fast-fading workspace of what&rsquo;s happening <em>right now</em> in a channel &mdash; what it&rsquo;s currently about, who&rsquo;s here, the goal she&rsquo;s working on, and what she just did &mdash; and lets that ground her replies in the live situation rather than only in retrieved facts. It&rsquo;s built mostly from things she already tracks (so it costs almost nothing), and it&rsquo;s deliberately volatile: when a channel goes quiet the workspace fades rather than asserting a stale &ldquo;current topic.&rdquo; You can see what she&rsquo;s holding in mind on the System tab. Off by default. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> when a channel is genuinely quiet and she&rsquo;s in a curious mood, Chloe spends idle time actually <em>reasoning</em> rather than just maintaining memory: she takes something from her current workspace &mdash; the topic, an open goal, or a regular she&rsquo;s been getting to know &mdash; breaks it into a handful of small, independent questions, works through them (in parallel across any worker tabs you&rsquo;ve spawned, otherwise one at a time), and recomposes what she finds into a single insight or follow-up goal. It&rsquo;s a quiet internal process: she <strong>never</strong> sends a message from it &mdash; you only see it as &ldquo;thinking&rdquo; activity in the feed, and the result shows up as something she&rsquo;s realized in the People tab. It&rsquo;s deliberately self-limiting (thinking something through scratches the curiosity that prompted it, so she settles rather than spiralling), only fires when idle and at most occasionally, and needs <strong>&ldquo;inner weather&rdquo;</strong> on (it&rsquo;s the gate). Because it spends real generation calls on its own, it&rsquo;s off by default &mdash; turn it on when you want her to use her downtime to understand people and topics more deeply. <strong>&ldquo;Prioritize her background thinking by relevance&rdquo; (attention manager):</strong> Chloe runs at most one background pass per quiet moment &mdash; learning a fact, updating her channel summary, reflecting, recording a moment, tidying memory, or thinking something over. Normally she does whichever is due in a fixed order of importance. With this on, when several are due at once she instead scores them by what the moment calls for &mdash; an overdue pass that keeps getting skipped gets nudged up so it isn&rsquo;t starved, tidying rises when someone&rsquo;s memory is getting cluttered, and reflection-style thinking gets a little lift when the room is quiet and she&rsquo;s curious &mdash; while still letting the standing order of importance dominate, so nothing erratic happens. It never adds an extra pass or an extra AI call (still exactly one per quiet moment); with it off, or when nothing special is going on, she behaves exactly as before. You can watch it in the feed as &ldquo;attend&rdquo; activity when it re-orders something. Off by default. <strong>&ldquo;Count tokens exactly&rdquo; (token budgets, System tab):</strong> Chloe has to fit everything she knows about a moment &mdash; the conversation, what she remembers, who&rsquo;s here &mdash; into a limited request size. By default she now measures that with the <em>same</em> tokenizer Perchance&rsquo;s AI uses, so her budgeting is exact rather than an approximation, which means she packs in as much real context as will actually fit without overflowing. The tokenizer loads quietly in the background the first time; while it loads, or if it ever fails to load, she falls back to a safe character-based estimate and never stalls waiting on it. You can see its status on the System tab. On by default; turn it off to skip the load entirely and always use the estimate. <strong>&ldquo;Know the current date &amp; time&rdquo; (device clock):</strong> with this on, Chloe is told the current date and time from <em>your device&rsquo;s own clock</em> &mdash; including your timezone name (e.g. &ldquo;America/Chicago&rdquo;) so the reading is correct &mdash; and she can state it when someone asks. It reads only your device&rsquo;s clock and locale settings; it does <strong>not</strong> read your IP, GPS, physical address, or any location beyond the timezone you&rsquo;re implicitly sharing by chatting, and she&rsquo;s explicitly instructed never to infer or mention where you are. The reading refreshes itself so it stays current, and it&rsquo;s time-limited internally so a stale clock is dropped rather than asserted. This rides a more general mechanism &mdash; an internal slot for grounding her in arbitrary system facts &mdash; of which the clock is the first use. Off by default. With this on, anyone can also ask <code>!chloe time</code> or <code>!chloe date</code> for an <strong>instant, exact</strong> answer &mdash; these reply straight from the bridge without going through her AI at all, so they can&rsquo;t be misread, rephrased, or delayed; if the panel is closed and the reading goes stale, she says so rather than guessing. <strong>&ldquo;Tidy her replies&rdquo; (output hygiene, System tab):</strong> language models occasionally leave small mechanical artifacts in their output &mdash; a stray &ldquo;Chloe:&rdquo; name-tag at the front, a sentence cut off mid-thought when the reply hits its length limit, a code block opened but never closed (which would make the rest of the channel render as code), or a stuttered repeated word. With this on, Chloe quietly cleans those at the seams before she sends, so her messages read cleanly. It only removes things that were never meant to be part of the reply &mdash; it never changes what she actually says, and it&rsquo;s careful never to blank out a short valid message like &ldquo;lol ok.&rdquo; On by default; turn it off only if you want to see her completely raw output. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> with this on, anyone chatting with Chloe can pick their own language with <code>!chloe lang fr</code> (or es, de, ja, pt, ru, zh…; <code>!chloe lang off</code> returns to English). From then on she reads <em>their</em> messages in their language and replies back in it, while her actual thinking, memory, and moderation all stay in English under the hood &mdash; translation happens only at the edges, as messages come and go. It uses a free public translation service (no API key); on first enable your userscript manager may ask permission to reach it. It&rsquo;s deliberately best-effort: if the translator is ever slow or unavailable she sends the original English rather than going silent, mentions and emoji are preserved so replies still ping correctly, and each person&rsquo;s choice is remembered until they change it or ask her to forget them. Off by default. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> she keeps a running sense of how fast a channel usually moves (the typical gap between messages and how much it varies) and lets that shape her timing &mdash; settling faster before replying in a quick room, waiting longer in a slow one, checking for new messages MORE often when a room is quiet (so she acts quickly the moment a dead channel stirs) and easing off into passive ingest when a room is busy (letting context build, then replying on the lull), while judging &ldquo;quiet&rdquo; relative to each room&rsquo;s own rhythm rather than a fixed clock. Being directly @-mentioned or replied to always takes priority and pulls her back to checking quickly. It never makes her slower to reply than her configured settle time, costs no extra AI calls, and falls back to fixed timing until a room has shown enough of its rhythm. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> alongside her long-term memory, she keeps a small, fast-fading workspace of what&rsquo;s happening <em>right now</em> in a channel &mdash; what it&rsquo;s currently about, who&rsquo;s here, the goal she&rsquo;s working on, and what she just did &mdash; and lets that ground her replies in the live situation rather than only in retrieved facts. It&rsquo;s built mostly from things she already tracks (so it costs almost nothing), and it&rsquo;s deliberately volatile: when a channel goes quiet the workspace fades rather than asserting a stale &ldquo;current topic.&rdquo; You can see what she&rsquo;s holding in mind on the System tab. Off by default. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> when a channel is genuinely quiet and she&rsquo;s in a curious mood, Chloe spends idle time actually <em>reasoning</em> rather than just maintaining memory: she takes something from her current workspace &mdash; the topic, an open goal, or a regular she&rsquo;s been getting to know &mdash; breaks it into a handful of small, independent questions, works through them (in parallel across any worker tabs you&rsquo;ve spawned, otherwise one at a time), and recomposes what she finds into a single insight or follow-up goal. It&rsquo;s a quiet internal process: she <strong>never</strong> sends a message from it &mdash; you only see it as &ldquo;thinking&rdquo; activity in the feed, and the result shows up as something she&rsquo;s realized in the People tab. It&rsquo;s deliberately self-limiting (thinking something through scratches the curiosity that prompted it, so she settles rather than spiralling), only fires when idle and at most occasionally, and needs <strong>&ldquo;inner weather&rdquo;</strong> on (it&rsquo;s the gate). Because it spends real generation calls on its own, it&rsquo;s off by default &mdash; turn it on when you want her to use her downtime to understand people and topics more deeply. <strong>&ldquo;Prioritize her background thinking by relevance&rdquo; (attention manager):</strong> Chloe runs at most one background pass per quiet moment &mdash; learning a fact, updating her channel summary, reflecting, recording a moment, tidying memory, or thinking something over. Normally she does whichever is due in a fixed order of importance. With this on, when several are due at once she instead scores them by what the moment calls for &mdash; an overdue pass that keeps getting skipped gets nudged up so it isn&rsquo;t starved, tidying rises when someone&rsquo;s memory is getting cluttered, and reflection-style thinking gets a little lift when the room is quiet and she&rsquo;s curious &mdash; while still letting the standing order of importance dominate, so nothing erratic happens. It never adds an extra pass or an extra AI call (still exactly one per quiet moment); with it off, or when nothing special is going on, she behaves exactly as before. You can watch it in the feed as &ldquo;attend&rdquo; activity when it re-orders something. Off by default. <strong>&ldquo;Count tokens exactly&rdquo; (token budgets, System tab):</strong> Chloe has to fit everything she knows about a moment &mdash; the conversation, what she remembers, who&rsquo;s here &mdash; into a limited request size. By default she now measures that with the <em>same</em> tokenizer Perchance&rsquo;s AI uses, so her budgeting is exact rather than an approximation, which means she packs in as much real context as will actually fit without overflowing. The tokenizer loads quietly in the background the first time; while it loads, or if it ever fails to load, she falls back to a safe character-based estimate and never stalls waiting on it. You can see its status on the System tab. On by default; turn it off to skip the load entirely and always use the estimate. <strong>&ldquo;Know the current date &amp; time&rdquo; (device clock):</strong> with this on, Chloe is told the current date and time from <em>your device&rsquo;s own clock</em> &mdash; including your timezone name (e.g. &ldquo;America/Chicago&rdquo;) so the reading is correct &mdash; and she can state it when someone asks. It reads only your device&rsquo;s clock and locale settings; it does <strong>not</strong> read your IP, GPS, physical address, or any location beyond the timezone you&rsquo;re implicitly sharing by chatting, and she&rsquo;s explicitly instructed never to infer or mention where you are. The reading refreshes itself so it stays current, and it&rsquo;s time-limited internally so a stale clock is dropped rather than asserted. This rides a more general mechanism &mdash; an internal slot for grounding her in arbitrary system facts &mdash; of which the clock is the first use. Off by default. With this on, anyone can also ask <code>!chloe time</code> or <code>!chloe date</code> for an <strong>instant, exact</strong> answer &mdash; these reply straight from the bridge without going through her AI at all, so they can&rsquo;t be misread, rephrased, or delayed; if the panel is closed and the reading goes stale, she says so rather than guessing. <strong>&ldquo;Know her own basics&rdquo;:</strong> with this on, Chloe is grounded in a few true facts about herself drawn straight from her own settings &mdash; her name, that she&rsquo;s an AI assistant, the command prefix people use to reach her, that she can be @-mentioned, and the reaction that summons her. It&rsquo;s the same kind of grounding as the clock (a real fact injected so she doesn&rsquo;t have to guess), built only from what&rsquo;s actually configured, so when someone asks &ldquo;how do I use you?&rdquo; or &ldquo;are you a bot?&rdquo; she can answer plainly instead of deflecting. It states facts, never instructions, and adds nothing she isn&rsquo;t asked about. Off by default. <strong>&ldquo;Tidy her replies&rdquo; (output hygiene, System tab):</strong> language models occasionally leave small mechanical artifacts in their output &mdash; a stray &ldquo;Chloe:&rdquo; name-tag at the front, a sentence cut off mid-thought when the reply hits its length limit, a code block opened but never closed (which would make the rest of the channel render as code), or a stuttered repeated word. With this on, Chloe quietly cleans those at the seams before she sends, so her messages read cleanly. It only removes things that were never meant to be part of the reply &mdash; it never changes what she actually says, and it&rsquo;s careful never to blank out a short valid message like &ldquo;lol ok.&rdquo; On by default; turn it off only if you want to see her completely raw output. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> with this on, anyone chatting with Chloe can pick their own language with <code>!chloe lang fr</code> (or es, de, ja, pt, ru, zh…; <code>!chloe lang off</code> returns to English). From then on she reads <em>their</em> messages in their language and replies back in it, while her actual thinking, memory, and moderation all stay in English under the hood &mdash; translation happens only at the edges, as messages come and go. It uses a free public translation service (no API key); on first enable your userscript manager may ask permission to reach it. It&rsquo;s deliberately best-effort: if the translator is ever slow or unavailable she sends the original English rather than going silent, mentions and emoji are preserved so replies still ping correctly, and each person&rsquo;s choice is remembered until they change it or ask her to forget them. Off by default. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
       </div>
     </div>
     <div class="card">
@@ -1362,7 +1382,16 @@
     var cb = byId('channelsBox');
     if (cb && document.activeElement !== cb) {
       var chans = (s.channels && s.channels.length) ? s.channels : (s.channelId ? [s.channelId] : []);
-      cb.value = chans.join('\n');
+      // Merge stored channel IDs back into the textarea preserving any // comments the user typed.
+      // A line that already starts with a stored ID is left untouched; lines for removed channels
+      // are dropped; IDs not yet in the textarea are appended as bare IDs.
+      var existing = cb.value.split('\n');
+      var merged = [];
+      chans.forEach(function (id) {
+        var found = existing.filter(function (l) { return l.replace(/\/\/.*/, '').trim() === id; });
+        merged.push(found.length ? found[0] : id);
+      });
+      cb.value = merged.join('\n');
     }
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
@@ -1406,6 +1435,7 @@
     var pr = byId('procRules'); if (pr && document.activeElement !== pr) pr.value = JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1);
     var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
     var dt = byId('deviceTimeChk'); if (dt) dt.checked = !!s.deviceTime;
+    var sk = byId('selfKnowChk'); if (sk) sk.checked = !!s.selfKnowledge;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
     var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
@@ -1679,7 +1709,7 @@
       var pr = window.prompt('Reason for permabanning ' + person.name + ' (recorded in the mod log):', 'Chloe permaban');
       if (pr == null) return;  // cancelled here; the userscript will also ask for a final confirm
       call('mod.permaban', { id: person.id, name: person.name, reason: pr, channelId: selChannel() }).then(function (res) {
-        if (res.ok) { log('permaban -> ' + person.name + ': banned + purge verified'); refresh(); }
+        if (res.ok) { var v = res.value || {}; log('prune -> ' + person.name + ': ' + (v.banned ? 'Discord banned + ' : '') + 'blocked + purged' + (v.localOnly ? ' (local only — Discord server ban skipped)' : '')); refresh(); }
         else log('permaban -> ' + (res.reason || 'failed'));
       });
       return;
@@ -1745,7 +1775,11 @@
   // ---- buttons ----------------------------------------------------------------------
   byId('viewChannelSel').addEventListener('change', function () { refresh(); });
   byId('setChannelsBtn').addEventListener('click', function () {
-    var arr = byId('channelsBox').value.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    // strip // comments before parsing — each line: drop anything after //
+    var raw = byId('channelsBox').value.split('\n').map(function (l) {
+      var ci = l.indexOf('//'); return ci >= 0 ? l.slice(0, ci) : l;
+    }).join('\n');
+    var arr = raw.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(Boolean);
     if (!arr.length) { log('enter at least one channel ID (one per line)'); return; }
     call('config.setAllChannels', { channels: arr }).then(function (res) {
       if (res && res.ok) { log('channels saved \u2014 primary ' + (res.value.primary || '?') + (res.value.channels.length > 1 ? ' (+' + (res.value.channels.length - 1) + ' more)' : '')); refresh(); }
@@ -1855,6 +1889,11 @@
     var dateStr = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     call('config.setDeviceClock', { clock: { time: timeStr, date: dateStr, tz: tzName } });
   }
+  (function(){ var t = byId('selfKnowChk'); if (t) t.addEventListener('change', function () {
+    call('config.setSelfKnowledge', { on: t.checked }).then(function (res) {
+      log(res && res.ok ? ('self-knowledge: ' + res.value.selfKnowledge) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  }); })();
   byId('deviceTimeChk').addEventListener('change', function () {
     var on = byId('deviceTimeChk').checked;
     call('config.setDeviceTime', { on: on }).then(function (res) {
@@ -2340,12 +2379,81 @@
   }
   function refreshMods() { call('mod.listMods').then(function (res) { if (res.ok) renderMods(res.value || []); }); }
   byId('addModBtn').addEventListener('click', function () {
-    var v = byId('modInput').value.trim(); if (!v) { log('enter a user ID'); return; }
+    var raw = byId('modInput').value; var ci = raw.indexOf('//'); var v = (ci >= 0 ? raw.slice(0, ci) : raw).trim(); if (!v) { log('enter a user ID'); return; }
     call('mod.addMod', { id: v }).then(function (res) {
       if (res.ok) { log('added mod ' + v); byId('modInput').value = ''; renderMods(res.value || []); }
       else log('add mod failed: ' + res.reason);
     });
   });
+  // ---- export: download all state as a gzip-compressed JSON file ------------------
+  byId('exportBtn').addEventListener('click', function () {
+    call('export-state').then(function (res) {
+      if (!res || !res.ok) { log('export failed: ' + ((res && res.reason) || 'unknown')); return; }
+      var json = JSON.stringify(res.value, null, 2);
+      var ts = new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
+      var filename = 'chloe-backup-' + ts + '.json.gz';
+      // Compress with the browser’s native CompressionStream (gzip), fall back to plain .json
+      if (typeof CompressionStream !== 'undefined') {
+        var encoder = new TextEncoder();
+        var cs = new CompressionStream('gzip');
+        var writer = cs.writable.getWriter();
+        writer.write(encoder.encode(json)); writer.close();
+        new Response(cs.readable).arrayBuffer().then(function (ab) {
+          var blobParts = []; blobParts.push(ab); var blob = new Blob(blobParts, { type: 'application/gzip' });
+          var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+          a.download = filename; document.body.appendChild(a); a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          log('backup exported: ' + filename + ' (' + (ab.byteLength / 1024).toFixed(1) + ' KB)');
+        }).catch(function (e) { log('compression failed: ' + e.message + ' — saving as plain JSON'); downloadPlain(json, ts); });
+      } else { downloadPlain(json, ts); }
+    });
+    function downloadPlain(json, ts) {
+      var blobParts = []; blobParts.push(json); var blob = new Blob(blobParts, { type: 'application/json' });
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'chloe-backup-' + ts + '.json'; document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      log('backup exported (plain JSON)');
+    }
+  });
+
+  // ---- import: read a .json.gz or .json backup file and restore --------------------
+  byId('importBtn').addEventListener('click', function () { byId('importFile').click(); });
+  byId('importFile').addEventListener('change', function () {
+    var file = this.files && this.files[0]; if (!file) return;
+    var isGz = file.name.endsWith('.gz');
+    var self = this;
+    var readPromise;
+    if (isGz && typeof DecompressionStream !== 'undefined') {
+      readPromise = file.arrayBuffer().then(function (ab) {
+        var ds = new DecompressionStream('gzip');
+        var writer = ds.writable.getWriter(); writer.write(new Uint8Array(ab)); writer.close();
+        return new Response(ds.readable).text();
+      });
+    } else {
+      readPromise = new Promise(function (res, rej) {
+        var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsText(file);
+      });
+    }
+    readPromise.then(function (text) {
+      var data; try { data = JSON.parse(text); } catch (e) { log('import failed: invalid JSON — ' + e.message); return; }
+      if (!window.confirm('Import backup from ' + file.name + '?\n\nThis will overwrite current state and settings. The bot will stop; restart after import.')) return;
+      call('import-state', { data: data }).then(function (res) {
+        if (res && res.ok) { log('import complete — stop and start the bot to apply.'); refresh(); }
+        else log('import failed: ' + ((res && res.reason) || 'unknown'));
+      });
+    }).catch(function (e) { log('import read failed: ' + e.message); });
+    self.value = '';
+  });
+
+  // ---- factory reset ---------------------------------------------------------------
+  byId('factoryResetBtn').addEventListener('click', function () {
+    if (!window.confirm('FACTORY RESET?\n\nThis wipes ALL state and ALL settings (token kept).\n\nExport a backup first if you want to recover anything. This cannot be undone.')) return;
+    call('factory-reset').then(function (res) {
+      if (res && res.ok) { log('factory reset complete. Reload the page and reconfigure.'); refresh(); }
+      else log('factory reset failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+
   byId('diagBtn').addEventListener('click', function () {
     call('diag.trace').then(function (res) {
       var ring = (res && res.value) || [];
@@ -2472,6 +2580,42 @@
     });
   });
   refreshWorkers();
+  function renderBanned(rows) {
+    var box = byId('bannedList'); var empty = byId('bannedEmpty');
+    if (!box) return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (!rows || !rows.length) { if (empty) empty.style.display = ''; return; }
+    if (empty) empty.style.display = 'none';
+    rows.forEach(function (b) {
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)';
+      var info = document.createElement('div'); info.style.flex = '1';
+      var name = document.createElement('span'); name.style.fontWeight = 'bold';
+      name.textContent = b.name || b.id;
+      var idEl = document.createElement('span'); idEl.className = 'uid'; idEl.textContent = ' ' + b.id;
+      var meta = document.createElement('div'); meta.className = 'note';
+      meta.textContent = (b.reason ? b.reason : '') + (b.at ? ' · ' + fmtTime(b.at) : '');
+      info.appendChild(name); info.appendChild(idEl); info.appendChild(meta);
+      var btn = document.createElement('button'); btn.className = 'ghost sm';
+      btn.textContent = 'Unban';
+      btn.addEventListener('click', function () {
+        if (!window.confirm('Remove ' + (b.name || b.id) + ' from Chloe’s blocklist?\n\nThis does NOT lift their Discord server ban — do that separately if needed.')) return;
+        call('mod.unban', { id: b.id, name: b.name, channelId: selChannel() }).then(function (res) {
+          if (res && res.ok) { log('unbanned ' + (b.name || b.id) + ' from Chloe’s blocklist'); refreshBanned(); }
+          else log('unban failed: ' + ((res && res.reason) || 'unknown'));
+        });
+      });
+      row.appendChild(info); row.appendChild(btn);
+      box.appendChild(row);
+    });
+  }
+  function refreshBanned() {
+    call('mod.listBanned', { channelId: selChannel() }).then(function (res) {
+      if (res && res.ok) renderBanned(res.value || []);
+    });
+  }
+  (function () { var b = byId('refreshBannedBtn'); if (b) b.addEventListener('click', refreshBanned); })();
+
   byId('modLogBtn').addEventListener('click', function () {
     call('mod.modlog', { channelId: selChannel() }).then(function (res) {
       var l = (res && res.value) || [];
@@ -2507,6 +2651,7 @@
         if (tab) tab.className = (n === name) ? 'tab active' : 'tab';
       });
       if (name === 'system' && typeof refreshWorkspace === 'function') { refreshWorkspace(); if (typeof refreshTokState === 'function') refreshTokState(); }
+      if (name === 'moderation' && typeof refreshBanned === 'function') refreshBanned();
     }
     names.forEach(function (n) { var tab = byId('tab_' + n); if (tab) tab.addEventListener('click', function () { activate(n); }); });
     window.__chloeOpenModule = activate;   // first-run setup focus hook

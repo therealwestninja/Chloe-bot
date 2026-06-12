@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.75.0
+// @version      0.77.2
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -260,6 +260,7 @@
       workingMemory: false,
       semanticInjections: [],   // arbitrary system/operator facts surfaced into context (DESIGN-semantic-inject.md): [{id,text,priority,ttlMs,at}]
       cleanOutput: true,        // scrub model-mechanics noise from replies (DESIGN-clean.md): role-bleed, dangling tail, unbalanced fences
+      globalStore: null,        // optional: a store at root prefix for keys shared across ALL channels (e.g. blocklist)
       deviceClock: null,        // {time, date, tz, at} pushed by the page for instant !chloe time/date (no AI)
       deviceClockStaleMs: 180000,   // a pushed clock older than this is considered stale (panel closed)
       // Idle deliberation (DESIGN-deliberation.md): a ReAct map-reduce reasoning loop. When genuinely
@@ -268,6 +269,7 @@
       // gated (self-limiting: a resolved deliberation lowers curiosity). Opt-in (spends real calls).
       idleDeliberation: false,
       attentionManager: false,   // utility-scored AI-pass selection (DESIGN-attention.md); off = today's fixed ladder
+      selfKnowledge: false,      // ground her in her own basics (name, prefix, summon) from config (DESIGN-selfknow.md)
       deliberateCuriosityFloor: 0.62,   // only think when curiosity is meaningfully above neutral
       deliberateMinGapMs: 600000,       // hard floor between deliberations (10m) so bursts can't chain
       deliberateMaxSubQuestions: 4,     // cap the fan-out (decompose returns up to this many)
@@ -1126,6 +1128,8 @@
       return Math.round(ms / 1000) + 's';
     }
     function ensureIndexed(id) {
+      // Use targeted-add if available to avoid clobbering concurrent writes to the index.
+      if (typeof store.addToIndex === 'function') return store.addToIndex(id);
       return Promise.resolve(store.listIndex()).then(function (ids) {
         ids = ids || [];
         if (ids.indexOf(id) < 0) { ids.push(id); return store.setIndex(ids); }
@@ -1276,6 +1280,9 @@
     }
 
     function removeFromIndex(id) {
+      // Use a targeted-remove via store.removeFromIndex so the write only drops the one id
+      // rather than replacing the full array — concurrent ensureIndexed adds won't be lost.
+      if (typeof store.removeFromIndex === 'function') return store.removeFromIndex(id);
       return Promise.resolve(store.listIndex()).then(function (ids) {
         var next = (ids || []).filter(function (x) { return x !== id; });
         return store.setIndex(next);
@@ -2521,7 +2528,8 @@
     // so future *fetchable* markers can slot in (account-age, guild-verification gates); note that
     // Discord does NOT expose IP, 2FA, or phone to bots, so those markers are intentionally absent.
     var BLOCK_KEY = 'blocklist';
-    function getBlocklist() { return Promise.resolve(store.get(BLOCK_KEY)).then(function (b) { return b || { ids: {}, names: {} }; }); }
+    function blockStore() { return cfg.globalStore || store; }
+    function getBlocklist() { return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (b) { return b || { ids: {}, names: {} }; }); }
     function isBlockedSync(bl, id, name) {
       if (!bl) return false;
       if (id && bl.ids && bl.ids[String(id)]) return true;
@@ -2534,11 +2542,13 @@
       var id = opts.id ? String(opts.id) : null;
       var name = opts.name ? String(opts.name).trim() : null;
       if (!id && !name) return Promise.resolve({ ok: false, reason: 'need a user id or username to block' });
-      return getBlocklist().then(function (bl) {
+      // Re-read immediately before write to minimise stale-snapshot window (dict keys don't collide
+      // for different users, so concurrent blocks of distinct users are safe either way).
+      return getBlocklist().then(function () { return getBlocklist(); }).then(function (bl) {
         var meta = { at: clock.now(), by: opts.byModId || null, reason: opts.reason || null };
         if (id) bl.ids[id] = meta;
         if (name) bl.names[name.toLowerCase()] = meta;
-        return Promise.resolve(store.set(BLOCK_KEY, bl)).then(function () {
+        return Promise.resolve(blockStore().set(BLOCK_KEY, bl)).then(function () {
           // blocking also purges any memory that already formed
           if (id) return purge(id, { targetName: name || id }).then(function () { return { ok: true, value: { id: id, name: name } }; }, function () { return { ok: true, value: { id: id, name: name } }; });
           return { ok: true, value: { id: id, name: name } };
@@ -2553,7 +2563,7 @@
         var changed = false;
         if (id && bl.ids[id]) { delete bl.ids[id]; changed = true; }
         if (name && bl.names[name]) { delete bl.names[name]; changed = true; }
-        return Promise.resolve(store.set(BLOCK_KEY, bl)).then(function () { return { ok: changed, value: { id: id, name: name } }; });
+        return Promise.resolve(blockStore().set(BLOCK_KEY, bl)).then(function () { return { ok: changed, value: { id: id, name: name } }; });
       });
     }
     function listBlocked() { return getBlocklist(); }
@@ -2561,7 +2571,7 @@
     // ---- partition upsert (the per-user system of record) --------------------------------
     function ingestOne(msg, ring, indexSet, touched) {
       // permanent tombstone gate: a blocked author is invisible to ingestion forever
-      return Promise.resolve(store.get(BLOCK_KEY)).then(function (bl) {
+      return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
         if (isBlockedSync(bl, msg.author.id, msg.author.username)) return null;
         return ingestOneCore(msg, ring, indexSet, touched);
       });
@@ -3274,6 +3284,23 @@
       s = s.replace(/^\s+|\s+$/g, '');
       return s || original;   // absolute guard: never return empty for a non-empty input
     }
+    // ---- self-knowledge (DESIGN-selfknow.md): one grounding line built from her own config ---------
+    // She doesn't otherwise know her prefix / that she's a bot / how she's summoned, yet users ask.
+    // Pure, assembled from live config; omits any clause whose config isn't set; never fabricates.
+    function selfKnowledgeText() {
+      var name = cfg.botName ? String(cfg.botName) : 'Chloe';
+      var parts = ['You are ' + name + ', an AI assistant chatting with people in this Discord channel.'];
+      var reach = [];
+      var pfx = cfg.commandPrefix ? String(cfg.commandPrefix) : '';
+      if (pfx) reach.push('they can use commands with ' + pfx + ' (e.g. ' + pfx + ' help)');
+      reach.push('they can @-mention you');
+      var emo = (cfg.summonEmoji && cfg.summonEmoji.length) ? cfg.summonEmoji[0] : '';
+      if (emo) reach.push('reacting ' + emo + ' to their own message also gets your attention');
+      if (reach.length) parts.push('To reach you: ' + reach.join('; ') + '.');
+      parts.push('You can tell someone this if they ask how to use you or whether you\u2019re a bot \u2014 state it plainly rather than deflecting.');
+      return parts.join(' ');
+    }
+
     // Apply cleanReply only when enabled; otherwise pass through (today's behavior).
     function hygiene(text) { return cfg.cleanOutput === false ? text : cleanReply(text, { names: [cfg.botName].concat(cfg.botAliases || []) }); }
 
@@ -3372,6 +3399,10 @@
 
     // Arbitrary semantic-memory injection: surface each operator/system-set fact, skipping any that
     // have expired (ttlMs). One generic slot so a new system fact never needs a new provider.
+    registerProvider({ id: 'selfknowledge', priority: BANDS.IDENTITY,
+      enabled: function (c) { return !!c.selfKnowledge; },
+      gather: function (g) { var t = selfKnowledgeText(); return t ? { text: t, tokens: estimateTokens(t) } : null; } });
+
     registerProvider({ id: 'seminject', priority: BANDS.SITUATION,
       enabled: function (c) { return Array.isArray(c.semanticInjections) && c.semanticInjections.length > 0; },
       gather: function (g) {
@@ -4008,12 +4039,16 @@
       });
     }
     function bumpInteraction(id) {
+      // Re-read the partition immediately before writing so we start from the freshest snapshot.
+      // This minimises (but cannot fully eliminate without a true atomic RMW) the window where a
+      // concurrent ingestOneCore write could be overwritten. bumpInteraction ONLY touches its own
+      // fields (interactionCount, lastChloeReplyTo, trust) — it never clobbers recent/lastSeen/name.
+      affectOnHerReply();   // open the engagement window (own affect) — fire-and-forget, before the read
       return Promise.resolve(store.get(partKey(id))).then(function (pp) {
         if (!pp) return;
         pp.interactionCount = (pp.interactionCount || 0) + 1;
         pp.lastChloeReplyTo = clock.now();
-        applyTrust(pp, cfg.trustReplyGain || 1, clock.now());   // a completed reply is a genuine interaction
-        affectOnHerReply();                                      // open the engagement window (own affect)
+        applyTrust(pp, cfg.trustReplyGain || 1, clock.now());
         return store.set(partKey(id), pp);
       });
     }
@@ -4052,7 +4087,8 @@
         if (sid && idx.indexOf(sid) >= 0) return { known: true, where: 'archive' };
         return getModLog().then(function (log) {
           if (sid && (log || []).some(function (e) { return String(e && e.targetId) === sid; })) return { known: true, where: 'modlog' };
-          return getBlocklist().then(function (bl) {
+          return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
+            bl = bl || { ids: {}, names: {} };
             if (isBlockedSync(bl, sid, name)) return { known: true, where: 'blocklist' };
             return { known: false, where: null };
           });
@@ -4512,6 +4548,27 @@
     function stop() { running = false; deferGen++; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait)
     function isRunning() { return running; }
 
+    // Live config patch: update specific cfg keys in-place on a running engine WITHOUT a full
+    // rebuild. Only safe for values the engine reads at call-time (not ones captured at startup in
+    // closure state). Currently: deviceClock, semanticInjections. Callers must list keys explicitly.
+    // Keys the engine reads at call-time (not captured at startup) — safe to patch in-place on a
+    // running engine without a full rebuild. Structural keys (channelId, addressMode, botUserId,
+    // character/persona, channels list) still require applyConfigChange + rebuild.
+    var LIVE_PATCHABLE = ['deviceClock', 'semanticInjections', 'deviceClockStaleMs', 'cleanOutput',
+      'translate', 'selfKnowledge', 'attentionManager', 'exactTokens', 'workingMemory',
+      'idleDeliberation', 'ownAffect', 'moodAware', 'channelSummary', 'factMemory', 'volunteer',
+      'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
+      'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
+      'proceduralModes', 'ackReactions', 'singleParagraph', 'replyReference', 'backfill',
+      'image', 'imageQueueMax', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
+      'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
+      'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botLoopGrace',
+      'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
+    function updateConfig(patch) {
+      if (!patch || typeof patch !== 'object') return;
+      Object.keys(patch).forEach(function (k) { if (LIVE_PATCHABLE.indexOf(k) >= 0) cfg[k] = patch[k]; });
+    }
+
     return {
       pollOnce: pollOnce,
       getRoster: getRoster,
@@ -4525,7 +4582,7 @@
       botLoopReplyChance: botLoopReplyChance,
       noteAuthorForLoop: noteAuthorForLoop,
       setIntent: setIntent, getIntent: getIntent, clearIntent: clearIntent,
-      estimateTokens: estimateTokens, packByTokens: packByTokens, cleanReply: cleanReply, attentionScore: attentionScore, chooseAttention: chooseAttention,
+      estimateTokens: estimateTokens, packByTokens: packByTokens, cleanReply: cleanReply, attentionScore: attentionScore, chooseAttention: chooseAttention, selfKnowledgeText: selfKnowledgeText,
       parseImageJson: parseImageJson,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
@@ -4535,7 +4592,7 @@
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
-      getUserLang: getUserLang, setUserLang: setUserLang,
+      getUserLang: getUserLang, setUserLang: setUserLang, updateConfig: updateConfig,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
@@ -4985,7 +5042,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.75.0';
+  var VERSION = '0.77.2';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -5007,6 +5064,9 @@
     traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
     return e;
   }
+  // Bootstrap log: console.log + pushEvent so messages appear in both the browser console
+  // and the panel activity feed. Use for anything a mod operator needs to see at a glance.
+  function bLog(msg) { console.log(msg); pushEvent('log', msg); }
   function tokenShape(t) {
     return { len: t ? t.length : 0, parts: t ? t.split('.').length : 0,
              ws: /\s/.test(t || ''), placeholder: !t || t.indexOf('PASTE_') === 0 };
@@ -5017,12 +5077,35 @@
   // D3: per-channel namespacing. The PRIMARY channel keeps the legacy un-prefixed namespace so an
   // existing install keeps its memory; every additional channel lives under 'ch:{id}:'.
   function makeStore(pfx) {
+    var INDEX_GM_KEY = NS + pfx + 'roster:index';
+    function readIndex() { var v = GM_getValue(INDEX_GM_KEY, null); if (!v) return []; try { return JSON.parse(v) || []; } catch (e) { return []; } }
     var s = {
       get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + pfx + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { return null; } }); },
       set: function (k, v) { GM_setValue(NS + pfx + k, JSON.stringify(v)); return Promise.resolve(true); },
       del: function (k) { GM_deleteValue(NS + pfx + k); return Promise.resolve(true); },
-      listIndex: function () { return s.get('roster:index').then(function (a) { return a || []; }); },
-      setIndex: function (arr) { return s.set('roster:index', arr); }
+      listIndex: function () { return Promise.resolve(readIndex()); },
+      // setIndex: UNION write — merges the supplied array with whatever is currently in GM so
+      // concurrent ensureIndexed/addToIndex calls from other paths are never clobbered.
+      setIndex: function (arr) {
+        var cur = readIndex(); var merged = cur.slice(); var set = {};
+        cur.forEach(function (id) { set[id] = true; });
+        (arr || []).forEach(function (id) { if (id && !set[id]) { set[id] = true; merged.push(id); } });
+        GM_setValue(INDEX_GM_KEY, JSON.stringify(merged)); return Promise.resolve(true);
+      },
+      // addToIndex: targeted add — only appends if not present; safe to call concurrently.
+      addToIndex: function (id) {
+        if (!id) return Promise.resolve();
+        var cur = readIndex();
+        if (cur.indexOf(id) >= 0) return Promise.resolve();
+        cur.push(id); GM_setValue(INDEX_GM_KEY, JSON.stringify(cur)); return Promise.resolve(true);
+      },
+      // removeFromIndex: targeted remove — reads live value at call time, drops only the one id.
+      removeFromIndex: function (id) {
+        if (!id) return Promise.resolve();
+        var cur = readIndex(); var next = cur.filter(function (x) { return x !== id; });
+        if (next.length === cur.length) return Promise.resolve();   // wasn't there
+        GM_setValue(INDEX_GM_KEY, JSON.stringify(next)); return Promise.resolve(true);
+      }
     };
     return s;
   }
@@ -5438,7 +5521,7 @@
     var channelId = String(chId || primaryChannel() || '').trim();
     if (!channelId) return null;
     var eng = ChloeT0.createEngine({
-      transport: transport, store: makeStore(prefixFor(channelId)),
+      transport: transport, store: makeStore(prefixFor(channelId)), globalStore: makeStore(''),
       config: {
         channelId: channelId,
         botUserId: cfgGet('botUserId', ''),
@@ -5506,6 +5589,7 @@
         countTokens: countTokensHook,   // exact tokenizer when warm; returns null -> engine's chars/4 fallback
         idleDeliberation: cfgGet('idleDeliberation', false),
         attentionManager: cfgGet('attentionManager', false),
+        selfKnowledge: cfgGet('selfKnowledge', false),
         attentionStaleWindowMs: cfgGet('attentionStaleWindowMs', 600000),
         pollBusyCeilMs: cfgGet('pollBusyCeilMs', 12000),
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
@@ -5630,13 +5714,28 @@
   function resolveGuildId(chId) {
     var cid = String(chId || primaryChannel() || '').trim();
     if (!cid) return Promise.resolve(null);
+    // In-memory cache (survives the session)
     if (guildIdCache[cid]) return Promise.resolve(guildIdCache[cid]);
+    // GM-persisted cache (survives engine restarts)
+    var gmKey = NS + 'guildId:' + cid;
+    var stored = GM_getValue(gmKey, null);
+    if (stored) { guildIdCache[cid] = stored; return Promise.resolve(stored); }
     return transport.getChannel(cid).then(function (ch) {
-      guildIdCache[cid] = (ch && ch.guild_id) || null;
-      return guildIdCache[cid];
+      var gid = (ch && ch.guild_id) || null;
+      if (gid) { guildIdCache[cid] = gid; GM_setValue(gmKey, gid); }
+      return gid;
     }, function () { return null; });
   }
   // config changes must not run on a stale instance: stop, rebuild, and restart if it was live
+  // Push a config patch to all LIVE engines in-place (no rebuild, no restart).
+  // Only for values in LIVE_PATCHABLE (read at call-time by the engine, not captured at startup).
+  function patchEngines(patch) {
+    Object.keys(engines).forEach(function (c) {
+      var eng = engines[c];
+      if (eng && typeof eng.updateConfig === 'function') eng.updateConfig(patch);
+    });
+  }
+
   function applyConfigChange() {
     var wasRunning = Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); });
     eachEngine(function (e) { e.stop(); });
@@ -5653,9 +5752,10 @@
     if (!ch) return Promise.resolve(0);
     return Promise.resolve(transport.getChannel(ch)).then(function (c) {
       var gid = c && c.guild_id;
+      if (gid) { guildIdCache[ch] = gid; GM_setValue(NS + 'guildId:' + ch, gid); }   // cache for permaban
       if (!gid) return 0;
       return transport.getGuildMemberCount(gid).then(function (n) {
-        if (n > 0) { cfgSet('serverMemberCount', n); applyConfigChange(); log('[chloe] detected ~' + n + ' members; reaction significance scaled accordingly'); }
+        if (n > 0) { cfgSet('serverMemberCount', n); patchEngines({ serverMemberCount: n }); bLog('[chloe] detected ~' + n + ' members; reaction significance scaled accordingly'); }
         return n;
       });
     }).catch(function () { return 0; });
@@ -5697,6 +5797,7 @@
       tokenizer: tokLoader.state(),
       idleDeliberation: cfgGet('idleDeliberation', false) !== false,
       attentionManager: cfgGet('attentionManager', false) !== false,
+      selfKnowledge: cfgGet('selfKnowledge', false) !== false,
       goalObjects: cfgGet('goalObjects', true) !== false,
       idleConsolidation: cfgGet('idleConsolidation', true) !== false,
       relationshipTrust: !!cfgGet('relationshipTrust', false),
@@ -5742,21 +5843,21 @@
       case 'config.setMode':
         { var mode = String((args && args.mode) || 'both'); if (mode !== 'mention' && mode !== 'name' && mode !== 'both') mode = 'both'; cfgSet('addressMode', mode); applyConfigChange(); return Promise.resolve({ ok: true, value: { addressMode: mode } }); }
       case 'config.setVolunteer':
-        { var on = !!(args && args.on); cfgSet('volunteer', on); applyConfigChange(); return Promise.resolve({ ok: true, value: { volunteer: on } }); }
+        { var on = !!(args && args.on); cfgSet('volunteer', on); patchEngines({ volunteer: on }); return Promise.resolve({ ok: true, value: { volunteer: on } }); }
       case 'config.setGreet':
-        { var g = !!(args && args.on); cfgSet('greet', g); applyConfigChange(); return Promise.resolve({ ok: true, value: { greet: g } }); }
+        { var g = !!(args && args.on); cfgSet('greet', g); patchEngines({ greet: g }); return Promise.resolve({ ok: true, value: { greet: g } }); }
       case 'config.setMemberCheck':
         { var mc = !!(args && args.on); cfgSet('memberCheck', mc); return Promise.resolve({ ok: true, value: { memberCheck: mc } }); }
       case 'config.setBackfill':
-        { var bf = !!(args && args.on); cfgSet('backfill', bf); applyConfigChange(); return Promise.resolve({ ok: true, value: { backfill: bf } }); }
+        { var bf = !!(args && args.on); cfgSet('backfill', bf); patchEngines({ backfill: bf }); return Promise.resolve({ ok: true, value: { backfill: bf } }); }
       case 'config.setImage':
-        { var im = !!(args && args.on); cfgSet('image', im); applyConfigChange(); return Promise.resolve({ ok: true, value: { image: im } }); }
+        { var im = !!(args && args.on); cfgSet('image', im); patchEngines({ image: im }); return Promise.resolve({ ok: true, value: { image: im } }); }
       case 'config.setPrefixes': {
         var list = (args && args.prefixes);
         if (!Array.isArray(list)) return Promise.resolve({ ok: false, reason: 'prefixes must be an array' });
         var clean = [];
         list.forEach(function (p) { p = String(p || '').trim(); if (p && p !== '!chloe' && clean.indexOf(p) < 0) clean.push(p); });
-        cfgSet('commandPrefixes', clean); applyConfigChange();
+        cfgSet('commandPrefixes', clean); patchEngines({ commandPrefixes: clean });
         return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
       }
       case 'mod.pinNotice': {
@@ -5789,7 +5890,7 @@
           if (b.activeWithinMs != null) o.activeWithinMs = Number(b.activeWithinMs) || 0;
           cleanB.push(o);
         });
-        cfgSet('beats', cleanB); applyConfigChange();
+        cfgSet('beats', cleanB); patchEngines({ beats: cleanB });
         return Promise.resolve({ ok: true, value: { count: cleanB.length, beats: cleanB } });
       }
       case 'config.setPersonality': {
@@ -5851,16 +5952,16 @@
         if (mode !== 'locked' && mode !== 'normal' && mode !== 'open') return Promise.resolve({ ok: false, reason: 'mode must be locked|normal|open' });
         var emCh = chKeyOf(args);
         if (!emCh) return Promise.resolve({ ok: false, reason: 'no channel set' });
-        cfgSet('engageMode:' + emCh, mode); applyConfigChange();
+        cfgSet('engageMode:' + emCh, mode); patchEngines({ engageMode: mode });
         return Promise.resolve({ ok: true, value: { engageMode: mode, channelId: emCh } });
       }
       case 'config.setImageQueue': {
         var n = Math.max(1, Math.min(20, parseInt((args && args.max), 10) || 8));
-        cfgSet('imageQueueMax', n); applyConfigChange();
+        cfgSet('imageQueueMax', n); patchEngines({ imageQueueMax: n });
         return Promise.resolve({ ok: true, value: { imageQueueMax: n } });
       }
       case 'config.setAutoMod':
-        { var am = !!(args && args.on); cfgSet('autoMod', am); applyConfigChange(); return Promise.resolve({ ok: true, value: { autoMod: am } }); }
+        { var am = !!(args && args.on); cfgSet('autoMod', am); patchEngines({ autoMod: am }); return Promise.resolve({ ok: true, value: { autoMod: am } }); }
       case 'config.setAutoModRules': {
         var rules = (args && args.rules);
         if (!Array.isArray(rules)) return Promise.resolve({ ok: false, reason: 'rules must be an array' });
@@ -5874,7 +5975,7 @@
           if (r.reason) o.reason = String(r.reason);
           clean.push(o);
         });
-        cfgSet('autoModRules', clean); applyConfigChange();
+        cfgSet('autoModRules', clean); patchEngines({ autoModRules: clean });
         return Promise.resolve({ ok: true, value: { count: clean.length, rules: clean } });
       }
       case 'bridge.status':
@@ -5889,70 +5990,72 @@
       case 'config.setDMReplies':
         { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
       case 'config.setAckReactions':
-        { var ar = !!(args && args.on); cfgSet('ackReactions', ar); applyConfigChange(); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
+        { var ar = !!(args && args.on); cfgSet('ackReactions', ar); patchEngines({ ackReactions: ar }); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
       case 'config.setSingleParagraph':
-        { var sp = !!(args && args.on); cfgSet('singleParagraph', sp); applyConfigChange(); return Promise.resolve({ ok: true, value: { singleParagraph: sp } }); }
+        { var sp = !!(args && args.on); cfgSet('singleParagraph', sp); patchEngines({ singleParagraph: sp }); return Promise.resolve({ ok: true, value: { singleParagraph: sp } }); }
       case 'config.setLullFiller':
-        { var lf = !!(args && args.on); cfgSet('lullFiller', lf); applyConfigChange(); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
+        { var lf = !!(args && args.on); cfgSet('lullFiller', lf); patchEngines({ lullFiller: lf }); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
       case 'config.setCheckins':
-        { var ck = !!(args && args.on); cfgSet('checkins', ck); applyConfigChange(); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
+        { var ck = !!(args && args.on); cfgSet('checkins', ck); patchEngines({ checkins: ck }); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
       case 'config.setFactMemory':
-        { var fm = !!(args && args.on); cfgSet('factMemory', fm); applyConfigChange(); return Promise.resolve({ ok: true, value: { factMemory: fm } }); }
+        { var fm = !!(args && args.on); cfgSet('factMemory', fm); patchEngines({ factMemory: fm }); return Promise.resolve({ ok: true, value: { factMemory: fm } }); }
       case 'config.setTimeAware':
         { var ta = !!(args && args.on); cfgSet('timeAware', ta);
           if (args && args.offsetMins != null && isFinite(args.offsetMins)) cfgSet('timezoneOffsetMins', Math.max(-840, Math.min(840, Math.round(args.offsetMins))));
-          applyConfigChange(); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
+          patchEngines({ timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) }); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
       case 'config.setMoodAware':
-        { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
+        { var ma = !!(args && args.on); cfgSet('moodAware', ma); patchEngines({ moodAware: ma }); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
       case 'config.setChannelSummary':
-        { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
+        { var csm = !!(args && args.on); cfgSet('channelSummary', csm); patchEngines({ channelSummary: csm }); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
       case 'config.setAdaptivePace':
-        { var apn = !!(args && args.on); cfgSet('adaptivePace', apn); applyConfigChange(); return Promise.resolve({ ok: true, value: { adaptivePace: apn } }); }
+        { var apn = !!(args && args.on); cfgSet('adaptivePace', apn); patchEngines({ adaptivePace: apn }); return Promise.resolve({ ok: true, value: { adaptivePace: apn } }); }
       case 'config.setWorkingMemory':
-        { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); applyConfigChange(); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
+        { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); patchEngines({ workingMemory: wmn }); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
       case 'config.setIdleDeliberation':
-        { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); applyConfigChange(); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
+        { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); patchEngines({ idleDeliberation: idn }); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
       case 'config.setAttentionManager':
-        { var amn = !!(args && args.on); cfgSet('attentionManager', amn); applyConfigChange(); return Promise.resolve({ ok: true, value: { attentionManager: amn } }); }
+        { var amn = !!(args && args.on); cfgSet('attentionManager', amn); patchEngines({ attentionManager: amn }); return Promise.resolve({ ok: true, value: { attentionManager: amn } }); }
+      case 'config.setSelfKnowledge':
+        { var skn = !!(args && args.on); cfgSet('selfKnowledge', skn); patchEngines({ selfKnowledge: skn }); return Promise.resolve({ ok: true, value: { selfKnowledge: skn } }); }
       case 'config.setCleanOutput':
-        { var con = !!(args && args.on); cfgSet('cleanOutput', con); applyConfigChange(); return Promise.resolve({ ok: true, value: { cleanOutput: con } }); }
+        { var con = !!(args && args.on); cfgSet('cleanOutput', con); patchEngines({ cleanOutput: con }); return Promise.resolve({ ok: true, value: { cleanOutput: con } }); }
       case 'config.setTranslate':
-        { var trn = !!(args && args.on); cfgSet('translate', trn); applyConfigChange(); return Promise.resolve({ ok: true, value: { translate: trn } }); }
+        { var trn = !!(args && args.on); cfgSet('translate', trn); patchEngines({ translate: trn }); return Promise.resolve({ ok: true, value: { translate: trn } }); }
       case 'config.setUserLang':
         { var ulE = engineFor(args && args.channelId); if (!ulE) return Promise.resolve({ ok: false, reason: 'no channel' }); return ulE.setUserLang(args && args.id, (args && args.lang) || null).then(function (v) { return { ok: true, value: { lang: v } }; }); }
       case 'config.setDeviceTime':
-        { var dtn = !!(args && args.on); cfgSet('deviceTime', dtn); if (!dtn) semInjectDrop('devicetime'); applyConfigChange(); return Promise.resolve({ ok: true, value: { deviceTime: dtn } }); }
+        { var dtn = !!(args && args.on); cfgSet('deviceTime', dtn); if (!dtn) semInjectDrop('devicetime'); patchEngines({ deviceTime: dtn }); return Promise.resolve({ ok: true, value: { deviceTime: dtn } }); }
       case 'config.setDeviceClock':
-        { var dc = (args && args.clock) ? args.clock : null; if (dc) GM_setValue(NS + 'deviceClock', { time: String(dc.time || ''), date: String(dc.date || ''), tz: String(dc.tz || ''), at: Date.now() }); else GM_deleteValue(NS + 'deviceClock'); applyConfigChange(); return Promise.resolve({ ok: true, value: { set: !!dc } }); }
+        { var dc = (args && args.clock) ? args.clock : null; var dcVal = dc ? { time: String(dc.time || ''), date: String(dc.date || ''), tz: String(dc.tz || ''), at: Date.now() } : null; if (dcVal) GM_setValue(NS + 'deviceClock', dcVal); else GM_deleteValue(NS + 'deviceClock'); patchEngines({ deviceClock: dcVal }); return Promise.resolve({ ok: true, value: { set: !!dc } }); }
       case 'config.setSemanticInjection':
         { var sid = String((args && args.id) || '').trim(); if (!sid) return Promise.resolve({ ok: false, reason: 'id required' });
-          var txt = String((args && args.text) || '').trim(); if (!txt) { semInjectDrop(sid); applyConfigChange(); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }
+          var txt = String((args && args.text) || '').trim(); if (!txt) { semInjectDrop(sid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }
           semInjectUpsert({ id: sid, text: txt, priority: (args && args.priority) || null, ttlMs: (args && args.ttlMs) || null, at: Date.now() });
-          applyConfigChange(); return Promise.resolve({ ok: true, value: { id: sid } }); }
+          patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
-        { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); applyConfigChange(); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
+        { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
       case 'config.setExactTokens':
-        { var etn = !!(args && args.on); cfgSet('exactTokens', etn); if (etn) tokLoader.preload(); applyConfigChange(); return Promise.resolve({ ok: true, value: { exactTokens: etn, tokenizer: tokLoader.state() } }); }
+        { var etn = !!(args && args.on); cfgSet('exactTokens', etn); if (etn) tokLoader.preload(); patchEngines({ exactTokens: etn }); return Promise.resolve({ ok: true, value: { exactTokens: etn, tokenizer: tokLoader.state() } }); }
       case 'work.get':
         { var ew = engineFor(args && args.channelId); if (!ew) return Promise.resolve({ ok: true, value: null }); return ew.workLoad().then(function (w) { return { ok: true, value: w }; }); }
       case 'config.setEpisodeGraph':
-        { var egn = !!(args && args.on); cfgSet('episodeGraph', egn); applyConfigChange(); return Promise.resolve({ ok: true, value: { episodeGraph: egn } }); }
+        { var egn = !!(args && args.on); cfgSet('episodeGraph', egn); patchEngines({ episodeGraph: egn }); return Promise.resolve({ ok: true, value: { episodeGraph: egn } }); }
       case 'config.setIdleConsolidation':
-        { var icn = !!(args && args.on); cfgSet('idleConsolidation', icn); applyConfigChange(); return Promise.resolve({ ok: true, value: { idleConsolidation: icn } }); }
+        { var icn = !!(args && args.on); cfgSet('idleConsolidation', icn); patchEngines({ idleConsolidation: icn }); return Promise.resolve({ ok: true, value: { idleConsolidation: icn } }); }
       case 'config.setGoalObjects':
-        { var gob = !!(args && args.on); cfgSet('goalObjects', gob); applyConfigChange(); return Promise.resolve({ ok: true, value: { goalObjects: gob } }); }
+        { var gob = !!(args && args.on); cfgSet('goalObjects', gob); patchEngines({ goalObjects: gob }); return Promise.resolve({ ok: true, value: { goalObjects: gob } }); }
       case 'config.setReflection':
-        { var rfl = !!(args && args.on); cfgSet('reflection', rfl); applyConfigChange(); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
+        { var rfl = !!(args && args.on); cfgSet('reflection', rfl); patchEngines({ reflection: rfl }); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
       case 'config.setEpisodicMemory':
-        { var epi = !!(args && args.on); cfgSet('episodicMemory', epi); applyConfigChange(); return Promise.resolve({ ok: true, value: { episodicMemory: epi } }); }
+        { var epi = !!(args && args.on); cfgSet('episodicMemory', epi); patchEngines({ episodicMemory: epi }); return Promise.resolve({ ok: true, value: { episodicMemory: epi } }); }
       case 'config.setRelationshipTrust':
-        { var rtr = !!(args && args.on); cfgSet('relationshipTrust', rtr); applyConfigChange(); return Promise.resolve({ ok: true, value: { relationshipTrust: rtr } }); }
+        { var rtr = !!(args && args.on); cfgSet('relationshipTrust', rtr); patchEngines({ relationshipTrust: rtr }); return Promise.resolve({ ok: true, value: { relationshipTrust: rtr } }); }
       case 'config.setOwnAffect':
-        { var oaf = !!(args && args.on); cfgSet('ownAffect', oaf); applyConfigChange(); return Promise.resolve({ ok: true, value: { ownAffect: oaf } }); }
+        { var oaf = !!(args && args.on); cfgSet('ownAffect', oaf); patchEngines({ ownAffect: oaf }); return Promise.resolve({ ok: true, value: { ownAffect: oaf } }); }
       case 'config.setProceduralModes':
-        { var prm = !!(args && args.on); cfgSet('proceduralModes', prm); applyConfigChange(); return Promise.resolve({ ok: true, value: { proceduralModes: prm } }); }
+        { var prm = !!(args && args.on); cfgSet('proceduralModes', prm); patchEngines({ proceduralModes: prm }); return Promise.resolve({ ok: true, value: { proceduralModes: prm } }); }
       case 'config.setReactionSummon':
-        { var rsm = !!(args && args.on); cfgSet('reactionSummon', rsm); applyConfigChange(); return Promise.resolve({ ok: true, value: { reactionSummon: rsm } }); }
+        { var rsm = !!(args && args.on); cfgSet('reactionSummon', rsm); patchEngines({ reactionSummon: rsm }); return Promise.resolve({ ok: true, value: { reactionSummon: rsm } }); }
       case 'config.setProcRules': {
         // Validate + clean: [{ emoji, mode, minutes }] -> [{ emoji, mode (sanitized later by the
         // engine), durationMs }]. Hard caps here so malformed panel input can't smuggle anything in.
@@ -5968,7 +6071,7 @@
           if (!(mins >= 1)) mins = 60;
           cleanPR.push({ emoji: em, mode: mode, durationMs: Math.min(mins, 1440) * 60000 });
         }
-        cfgSet('procRules', cleanPR); applyConfigChange();
+        cfgSet('procRules', cleanPR); patchEngines({ procRules: cleanPR });
         return Promise.resolve({ ok: true, value: { count: cleanPR.length, rules: cleanPR.map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round(r.durationMs / 60000) }; }) } });
       }
       case 'dm.open': {
@@ -6016,6 +6119,9 @@
       case 'context.exciseLast':{ var ex2 = engineFor(args && args.channelId); if (!ex2) return Promise.resolve({ ok: false, reason: 'no channel' }); return ex2.exciseLastFromUser(args && args.id, args && args.n).then(function (v) { return { ok: true, value: v }; }); }
       case 'ring.get':        { var e4 = engineFor(args && args.channelId); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
       case 'reset':           return resetState(true).then(function () { return { ok: true }; });
+      case 'factory-reset':   return factoryReset();
+      case 'export-state':    return Promise.resolve({ ok: true, value: exportState() });
+      case 'import-state':    return importState(args && args.data);
       // ---- T3 moderation: trusted (panel) actions + mod-list management ----
       case 'mod.action': {
         var act = String((args && args.action) || '');
@@ -6024,22 +6130,60 @@
         return e5.applyModAction(act, String((args && args.id) || ''), { durationMs: args && args.durationMs, reason: args && args.reason, byModId: 'panel' });
       }
       case 'mod.listMods': return Promise.resolve({ ok: true, value: cfgGet('modList', []) });
+      case 'mod.listBanned': {
+        // Merge banned users across ALL channel engines (blocklist is per-store).
+        var lbEngs = ensureEngines();
+        if (!lbEngs.length) return Promise.resolve({ ok: true, value: [] });
+        return Promise.all(lbEngs.map(function (eng) { return eng.listBlocked(); })).then(function (allBl) {
+          var seen = {}, rows = [];
+          allBl.forEach(function (bl) {
+            Object.keys((bl && bl.ids) || {}).forEach(function (id) {
+              if (!seen[id]) {
+                seen[id] = true;
+                var meta = bl.ids[id] || {};
+                rows.push({ id: id, name: meta.name || id, reason: meta.reason || '', at: meta.at || null, by: meta.by || null });
+              }
+            });
+          });
+          rows.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+          return { ok: true, value: rows };
+        });
+      }
+      case 'mod.unban': {
+        var ubId = String((args && args.id) || '').trim();
+        var ubName = String((args && args.name) || ubId);
+        if (!ubId) return Promise.resolve({ ok: false, reason: 'no target id' });
+        // Unblock across ALL channel engines — the blocklist is per-store (per channel),
+        // so a ban on any channel must be lifted everywhere to fully unblock the user.
+        var ubEngs = ensureEngines(); if (!ubEngs.length) return Promise.resolve({ ok: false, reason: 'no channels' });
+        return Promise.all(ubEngs.map(function (eng) {
+          return eng.unblockUser({ id: ubId, name: ubName });
+        })).then(function (results) {
+          var any = results.some(function (r) { return r && r.ok; });
+          var e9 = engineFor(args && args.channelId) || ubEngs[0];
+          if (any) e9.appendModLog({ action: 'unban', targetId: ubId, name: ubName, byModId: 'panel', reason: 'panel unban', at: Date.now() }).catch(function () {});
+          return { ok: true, value: { id: ubId, name: ubName, removedFrom: results.filter(function(r){return r&&r.ok;}).length } };
+        });
+      }
       case 'mod.addMod': {
         var idA = String((args && args.id) || '').trim(); if (!idA) return Promise.resolve({ ok: false, reason: 'no id' });
-        var listA = cfgGet('modList', []); if (listA.indexOf(idA) < 0) listA.push(idA); cfgSet('modList', listA); applyConfigChange();
+        var listA = cfgGet('modList', []); if (listA.indexOf(idA) < 0) listA.push(idA); cfgSet('modList', listA); patchEngines({ modList: listA });
         return Promise.resolve({ ok: true, value: listA });
       }
       case 'mod.removeMod': {
         var idR = String((args && args.id) || '').trim();
-        var listR = cfgGet('modList', []).filter(function (x) { return x !== idR; }); cfgSet('modList', listR); applyConfigChange();
+        var listR = cfgGet('modList', []).filter(function (x) { return x !== idR; }); cfgSet('modList', listR); patchEngines({ modList: listR });
         return Promise.resolve({ ok: true, value: listR });
       }
       case 'mod.modlog': {
         var e6 = engineFor(args && args.channelId); if (!e6) return Promise.resolve({ ok: true, value: [] });
         return e6.getModLog().then(function (l) { return { ok: true, value: l }; });
       }
-      // T4 irreversible: the authoritative confirm lives HERE, in the trusted surface (top frame).
-      // Ban FIRST; only purge if the ban succeeds, so we never leave a purged-but-present stranger (F1).
+      // T4 logging helper: console.log + pushEvent so messages appear in BOTH the browser console
+      // and the panel feed (classified as MODERATION by the [chloe.T4] prefix).
+      // T4: Discord ban + local prune. Local prune (block + purge) always runs whether or not the
+      // Discord server ban succeeds — so the operator always gets a clean local state. A failed or
+      // unavailable Discord ban is logged but never blocks the purge.
       case 'mod.permaban': {
         var pid = String((args && args.id) || '').trim();
         var pname = String((args && args.name) || pid);
@@ -6047,23 +6191,17 @@
         if (!pid) return Promise.resolve({ ok: false, reason: 'no target' });
         var e7 = engineFor(args && args.channelId); if (!e7) return Promise.resolve({ ok: false, reason: 'no channel set' });
         var sure = false;
-        try { sure = window.confirm('PERMABAN + PURGE "' + pname + '"?\n\nThis bans them from the Discord server AND permanently deletes everything Chloe remembers about them. This cannot be undone.'); } catch (e) { sure = false; }
-        if (!sure) { log('[chloe.T4] permaban of ' + pname + ' cancelled at confirm'); return Promise.resolve({ ok: false, reason: 'cancelled' }); }
-        return resolveGuildId(chKeyOf(args)).then(function (gid) {
-          if (!gid) return { ok: false, reason: 'could not resolve guild id from channel' };
-          log('[chloe.T4] banning ' + pname + ' (' + pid + ') ...');
-          return transport.banUser(gid, pid, preason).then(function () {
-            log('[chloe.T4] ban ok; purging partition ...');
-            return e7.purge(pid, { targetName: pname }).then(function (pr) {
-              if (!pr.ok) { log('[chloe.T4] PURGE NOT VERIFIED for ' + pname + ': ' + pr.reason); return { ok: false, reason: pr.reason, value: { banned: true, purged: false, verified: false } }; }
-              return e7.appendModLog({ action: 'permaban', targetId: pid, name: pname, byModId: 'panel', reason: preason, at: Date.now() }).then(function () {
-                log('[chloe.T4] permaban complete for ' + pname + ' (banned + purge verified)');
-                return { ok: true, value: { banned: true, purged: true, verified: true, name: pname } };
-              });
-            });
-          }, function (err) {
-            log('[chloe.T4] ban FAILED for ' + pname + ': ' + err.message + ' — partition NOT purged (no purged-but-present)');
-            return { ok: false, reason: 'ban failed: ' + err.message + ' (purge aborted; bot likely lacks Ban Members)', value: { banned: false, purged: false } };
+        try { sure = window.confirm('PRUNE "' + pname + '"?\n\nThis permanently blocks their user ID and deletes everything Chloe remembers about them. This cannot be undone.'); } catch (e) { sure = false; }
+        if (!sure) { bLog('[chloe.T4] prune of ' + pname + ' cancelled'); return Promise.resolve({ ok: false, reason: 'cancelled' }); }
+        // Local prune only: block the user ID + purge memory.
+        // Discord server-level ban intentionally disabled. To re-enable, see ROADMAP.md v0.76.9.
+        return e7.blockUser({ id: pid, name: pname, reason: preason, byModId: 'panel' }).then(function () {
+          return e7.purge(pid, { targetName: pname });
+        }).then(function (pr) {
+          if (!pr || !pr.ok) { bLog('[chloe.T4] PURGE NOT VERIFIED for ' + pname + ': ' + (pr && pr.reason)); return { ok: false, reason: (pr && pr.reason) || 'purge failed' }; }
+          return e7.appendModLog({ action: 'local-prune', targetId: pid, name: pname, byModId: 'panel', reason: preason, at: Date.now() }).then(function () {
+            bLog('[chloe.T4] prune complete for ' + pname + ' (blocked + purged)');
+            return { ok: true, value: { purged: true, verified: true, name: pname } };
           });
         });
       }
@@ -6092,7 +6230,7 @@
         else { TAB_ROLE = 'queen'; }   // no bus/bridge (single-tab) — just reclaim
       } catch (e) {}
       trace('bridge', 'a panel is attached to a worker-roled tab — cleaned stale worker hash and contested the queen election');
-      console.log('[chloe-bridge] this tab hosts the control panel but had a stale worker role; reclaiming.');
+      bLog('[chloe-bridge] this tab hosts the control panel but had a stale worker role; reclaiming.');
     }
     if (d.kind === 'callres') { var cb = callPending.get(d.nonce); if (cb) { callPending.delete(d.nonce); cb(d); } return; }
     if (d.kind !== 'req') return;
@@ -6155,7 +6293,7 @@
         TAB_ROLE = 'queen';
         try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
         trace('bridge', 'PROMOTED to queen' + (cfgGet('autoResume', false) ? ' \u2014 resuming the engine(s)' : ''));
-        console.log('[chloe-bridge] this tab was promoted to QUEEN (the previous queen tab went silent).');
+        bLog('[chloe-bridge] this tab was promoted to QUEEN (the previous queen tab went silent).');
         if (cfgGet('autoResume', false)) { try { ensureEngines().forEach(function (e) { e.start(); }); } catch (e) { trace('bridge', 'auto-resume failed: ' + (e && e.message)); } }
       },
       // D6: a lease conflict said another tab is queen — stand down completely.
@@ -6201,8 +6339,8 @@
   function promptToken() {
     var t = prompt('Paste the BOT token (Developer Portal > Bot). Stored in this browser only.');
     if (t == null) return; t = t.trim(); cfgSet('token', t);
-    var s = tokenShape(t); console.log('[chloe] token saved — shape:', s);
-    if (s.placeholder || s.parts !== 3) console.log('[chloe] warning: does not look like a bot token (expect ~70+ chars, 3 dot-parts).');
+    var s = tokenShape(t); bLog('[chloe] token saved — shape: ' + JSON.stringify(s));
+    if (s.placeholder || s.parts !== 3) bLog('[chloe] WARNING: does not look like a bot token (expect ~70+ chars, 3 dot-parts).');
   }
   function resetState(silent) {
     if (!silent && !confirm('Reset state (cursor, roster, ring) for ALL channels? Token is NOT touched.')) return Promise.resolve();
@@ -6219,13 +6357,130 @@
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
            'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
            'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'arch:index:' + ch,
-           'modlog', 'backfill:' + ch].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
+           'modlog', 'backfill:' + ch, 'blocklist'].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
       });
     });
-    return chain.then(function () { eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null; console.log('[chloe] state reset for all channels.'); });
+    return chain.then(function () { eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null; bLog('[chloe] state reset for all channels.'); });
   }
+  // ---- factory reset (wipes EVERYTHING including cfg, keeps token by default) ----------
+  function factoryReset() {
+    // First do the standard state reset (partitions, cursors, rings...)
+    return resetState(true).then(function () {
+      // Then wipe all cfg keys except the token (keeps the bot connected)
+      var keep = ['token'];
+      var allCfg = [
+        'botUserId','botName','botAliases','channelId','channels','addressMode','engageMode',
+        'volunteer','greet','backfill','image','imageQueueMax','ackReactions','singleParagraph',
+        'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
+        'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
+        'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
+        'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
+        'reactionSummon','autoMod','autoModRules','commandPrefixes','beats','procRules',
+        'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
+        'character','personaAnchor','noticeText','dmReplies','dmSessions','poolSize',
+        'sendBudgetMs','sendMinGapMs','requestTokenBudget','typingRefreshMs','pollBusyCeilMs',
+        'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
+        'reactionTracking','reactionAutoHighlight','gateEmoji','gatePings','gateEveryone',
+        'gateLinks','gateChannelLinks','autoResume','gate:emoji','gate:pings','gate:everyone',
+        'gate:links','gate:channelLinks'
+      ];
+      allCfg.forEach(function (k) {
+        if (keep.indexOf(k) < 0) GM_deleteValue(NS + 'cfg:' + k);
+      });
+      // Wipe top-level non-cfg keys (seminject, deviceClock, guildId cache, bus token, queen lease)
+      GM_deleteValue(NS + 'seminject:map');
+      GM_deleteValue(NS + 'deviceClock');
+      GM_deleteValue(NS + 'blocklist');   // primary channel blocklist (prefix '')
+      // guildId: keys are per-channel — wipe them all via known channels
+      channelList().forEach(function (ch) { GM_deleteValue(NS + 'guildId:' + ch); });
+      eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null;
+      bLog('[chloe] factory reset complete — all state and config cleared (token kept).');
+      return { ok: true };
+    });
+  }
+
+  // ---- export: collect all known GM keys into a snapshot object ----------------------
+  function exportState() {
+    var snap = { _version: VERSION, _exported: new Date().toISOString(), _note: 'Chloe-bot state backup. Token is NOT included. Import via the panel System tab.' };
+    // cfg keys (everything except the token)
+    var cfgKeys = [
+      'botUserId','botName','botAliases','channelId','channels','addressMode','engageMode',
+      'volunteer','greet','backfill','image','imageQueueMax','ackReactions','singleParagraph',
+      'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
+      'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
+      'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
+      'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
+      'reactionSummon','autoMod','autoModRules','commandPrefixes','beats','procRules',
+      'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
+      'character','personaAnchor','noticeText','dmReplies','dmSessions','poolSize',
+      'sendBudgetMs','sendMinGapMs','requestTokenBudget','typingRefreshMs','pollBusyCeilMs',
+      'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
+      'reactionTracking','reactionAutoHighlight','gate:emoji','gate:pings','gate:everyone',
+      'gate:links','gate:channelLinks','autoResume'
+    ];
+    var cfg = {};
+    cfgKeys.forEach(function (k) { var v = GM_getValue(NS + 'cfg:' + k, null); if (v != null) cfg[k] = v; });
+    snap.cfg = cfg;
+    // top-level keys
+    var tl = {};
+    var tlKeys = ['seminject:map','deviceClock'];
+    tlKeys.forEach(function (k) { var v = GM_getValue(NS + k, null); if (v != null) tl[k] = v; });
+    channelList().forEach(function (ch) { var v = GM_getValue(NS + 'guildId:' + ch, null); if (v != null) tl['guildId:' + ch] = v; });
+    snap.topLevel = tl;
+    // per-channel store data
+    var channels = {};
+    channelList().forEach(function (ch) {
+      var pfx = prefixFor(ch);
+      var chData = {};
+      // roster index + all user partitions
+      var idx = []; try { idx = JSON.parse(GM_getValue(NS + pfx + 'roster:index', '[]')) || []; } catch (e) {}
+      chData['roster:index'] = idx;
+      idx.forEach(function (id) { var v = GM_getValue(NS + pfx + 'u:' + id, null); if (v != null) chData['u:' + id] = v; });
+      // archive index + archive partitions
+      var archIdx = []; try { archIdx = JSON.parse(GM_getValue(NS + pfx + 'arch:index:' + ch, '[]')) || []; } catch (e) {}
+      if (archIdx.length) {
+        chData['arch:index:' + ch] = archIdx;
+        archIdx.forEach(function (id) { var v = GM_getValue(NS + pfx + 'arch:' + ch + ':u:' + id, null); if (v != null) chData['arch:' + ch + ':u:' + id] = v; });
+      }
+      // per-channel state keys
+      ['cursor:'+ch,'speaker:ring:'+ch,'rhythm:'+ch,'mood:'+ch,'intent:'+ch,'reminders:'+ch,
+       'afk:'+ch,'highlights:'+ch,'reacttally:'+ch,'lull:'+ch,'checkins:'+ch,
+       'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,
+       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch
+      ].forEach(function (k) { var v = GM_getValue(NS + pfx + k, null); if (v != null) chData[k] = v; });
+      channels[ch] = chData;
+    });
+    snap.channels = channels;
+    return snap;
+  }
+
+  // ---- import: restore a snapshot (merges cfg, restores channel data) -----------------
+  function importState(data) {
+    if (!data || typeof data !== 'object') return Promise.resolve({ ok: false, reason: 'invalid backup data' });
+    try {
+      // cfg keys
+      var cfg = data.cfg || {};
+      Object.keys(cfg).forEach(function (k) { GM_setValue(NS + 'cfg:' + k, cfg[k]); });
+      // top-level keys
+      var tl = data.topLevel || {};
+      Object.keys(tl).forEach(function (k) { GM_setValue(NS + k, tl[k]); });
+      // per-channel data
+      var channels = data.channels || {};
+      Object.keys(channels).forEach(function (ch) {
+        var pfx = prefixFor(ch);
+        var chData = channels[ch];
+        Object.keys(chData).forEach(function (k) { GM_setValue(NS + pfx + k, chData[k]); });
+      });
+      eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null;
+      bLog('[chloe] state imported from backup (v' + (data._version || '?') + ', exported ' + (data._exported || '?') + '). Restart to apply.');
+      return Promise.resolve({ ok: true, value: { version: data._version, exported: data._exported } });
+    } catch (err) {
+      return Promise.resolve({ ok: false, reason: 'import failed: ' + (err && err.message) });
+    }
+  }
+
   GM_registerMenuCommand('Set bot token', promptToken);
   GM_registerMenuCommand('Reset T0 state (keeps token)', function () { resetState(false); });
 
