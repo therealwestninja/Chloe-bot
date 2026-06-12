@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.53.0
+// @version      0.54.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -252,6 +252,10 @@
       // target = assume answered) — trades duplicates for occasional non-resumption.
       replyResume: true,
       replyResumeMaxAgeMs: 600000,  // older than 10 min: a stale answer is worse than silence
+      // Round-trip awareness (DESIGN-roundtrip.md): when a generation COMPLETES, the next queued job
+      // fires via cfg.defer(fn, ms) (host setTimeout) instead of waiting for the next poll tick.
+      // Purely additive: with no defer hook, behavior is exactly the old poll-bound dispatch.
+      typingRefreshMs: 8000,        // Discord's typing indicator lasts ~10s; refresh while generating
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -1628,7 +1632,7 @@
                   // place in line: if something's already painting or ahead, show their number now.
                   if (paint.painting || paint.queue.length > 1) setQueueAck(qItem, queueEmojiFor(paint.queue.length));
                 }
-                if (reply.queue[m.author.id]) delete reply.queue[m.author.id];   // image supersedes a text reply this turn
+                if (reply.queue[m.author.id]) { clearAck(reply.queue[m.author.id].messageId, cfg.ackWorkingEmoji); delete reply.queue[m.author.id]; }   // image supersedes a text reply this turn (and takes its ack)
                 if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
                 imageReqName = m.author.username;
                 return;
@@ -1638,7 +1642,9 @@
               var gi = touched && touched.greetInfo && touched.greetInfo[m.author.id];
               var newUser = !!(gi && gi.brandNew);
               var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser, trusted: !!(gi && gi.trusted) });
+              if (reply.queue[m.author.id] && reply.queue[m.author.id].messageId !== m.id) clearAck(reply.queue[m.author.id].messageId, cfg.ackWorkingEmoji);   // superseded by their newer message
               reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now, priority: pri };
+              ackWorking(m.id, cfg.ackWorkingEmoji);   // \u201cseen you\u201d the moment you're queued, not when your turn starts
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
             } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
@@ -2140,6 +2146,38 @@
     // pollOnce wraps the core so the onPoll hook (page events + T5 maintenance) runs on EVERY
     // poll — the running loop calls pollOnce directly, so the hook must live here, not in a caller.
     // ---- run-lock --------------------------------------------------------------------------
+    // ---- completion-driven dispatch ---------------------------------------------------------
+    // Generation finished -> fire the next queued job as soon as the courtesy gap allows, via the
+    // host-injected defer hook. Both targets fully self-gate (budget, cooldowns, flags), so a
+    // deferred kick that finds nothing to do costs ~zero; the poll tick remains the backstop.
+    // deferGen invalidates outstanding deferred work on stop() — a stopped/demoted engine's
+    // scheduled chains become silent no-ops without coupling chaining to the poll-timer loop.
+    var deferGen = 0;
+    var textChainScheduled = false, imageChainScheduled = false;
+    function scheduleTextChain() {
+      if (typeof cfg.defer !== 'function' || textChainScheduled || !hasPendingReply()) return;
+      textChainScheduled = true;
+      var g = deferGen;
+      var wait = Math.max(50, (cfg.globalCooldownMs || 0) - (clock.now() - lastActAt));
+      cfg.defer(function () { textChainScheduled = false; if (g === deferGen) processReply(); }, wait);
+    }
+    function scheduleImageChain() {
+      if (typeof cfg.defer !== 'function' || imageChainScheduled || !paint.queue.length) return;
+      imageChainScheduled = true;
+      var g = deferGen;
+      var wait = Math.max(50, (cfg.imageCooldownMs || 0) - (clock.now() - lastPaintAt));
+      cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) kickImage(); }, wait);
+    }
+    // Typing keep-alive: Discord's indicator fades in ~10s; refresh while a generation is in flight.
+    function keepTypingWhile(flagFn) {
+      if (typeof cfg.defer !== 'function') return;
+      var g = deferGen;
+      cfg.defer(function tick() {
+        if (g !== deferGen || !flagFn()) return;
+        indicateTyping();
+        cfg.defer(tick, cfg.typingRefreshMs || 8000);
+      }, cfg.typingRefreshMs || 8000);
+    }
     var RUNLOCK_KEY = 'runlock:' + cfg.channelId;
     var PENDING_KEY = 'pending-reply:' + cfg.channelId;   // Gap A: the reply currently being generated
     var runId = cfg.runLockId || ('run-' + Math.random().toString(36).slice(2, 10));
@@ -2172,6 +2210,7 @@
             var answered = (msgs || []).some(function (m) { return m && m.author && m.author.id === cfg.botUserId && snowflakeCmp(m.id, rec.messageId) > 0; });
             if (answered) { log('[chloe.resume] a bot message exists after the target \u2014 assuming it was answered (no double-send)'); return false; }
             reply.queue[rec.authorId] = { messageId: rec.messageId, authorId: rec.authorId, authorName: rec.authorName, content: rec.content || '', at: rec.at, priority: rec.priority || 0 };
+            ackWorking(rec.messageId, cfg.ackWorkingEmoji);
             log('[chloe.resume] resuming a reply a previous engine lost mid-generation (to ' + rec.authorName + ')');
             return true;
           }, function () { return false; });   // verification fetch failed -> conservative: no resume
@@ -2398,7 +2437,8 @@
       delete reply.queue[p.authorId];
       reply.replying = true;
       indicateTyping();
-      ackWorking(p.messageId, cfg.ackWorkingEmoji);   // instant Discord-side ack while the brain generates
+      keepTypingWhile(function () { return reply.replying; });
+      ackWorking(p.messageId, cfg.ackWorkingEmoji);   // idempotent re-ack (already placed at enqueue; covers resumed replies)
       // Gap A: persist what we're answering, so a successor can resume if this engine dies mid-
       // generation. Cleared at EVERY terminal below (empty, sent, error).
       var pendingRec = (cfg.replyResume === false) ? Promise.resolve(null)
@@ -2416,6 +2456,7 @@
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');   // generation produced nothing; give the budget back
             log('[chloe.T1] no reply to ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty generation'));
+            scheduleTextChain();
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
           }
           return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
@@ -2425,12 +2466,13 @@
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
             log('[chloe.T1] replied to ' + p.authorName);
+            scheduleTextChain();   // completion-driven: the next queued reply fires at generation speed, not poll speed
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return intent ? setIntent(intent) : null; }).then(function () {
               return bumpInteraction(p.authorId).then(function () { return text; });
             });
           });
         })
-        .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; }, function () { return null; }); });
+        .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); scheduleTextChain(); return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; }, function () { return null; }); });
     }
 
     // ---- image path ----------------------------------------------------------------------
@@ -2455,6 +2497,7 @@
       if (typeof cfg.noteSend === 'function') cfg.noteSend('image');      // claim the global image slot at start
       if (p.ackEmoji) { clearAck(p.messageId, p.ackEmoji); p.ackEmoji = null; }   // drop its queue-number
       ackWorking(p.messageId, cfg.ackImageEmoji);                        // instant "painting…" ack on the request
+      keepTypingWhile(function () { return paint.painting; });
       renumberQueue();                                                   // the rest of the line ticks down a place
       indicateTyping();
       log('[chloe.img] painting for ' + p.authorName + ' (' + paint.queue.length + ' more queued): "' + p.prompt.slice(0, 60) + '" (' + p.resolution + (p.dm ? ', dm' : '') + ')');
@@ -2465,7 +2508,7 @@
         .then(function (r) {
           var dataUrl = (r && r.ok) ? String(r.value || '') : '';
           if (dataUrl.indexOf('data:') !== 0) {
-            paint.painting = false; lastPaintAt = clock.now();
+            paint.painting = false; scheduleImageChain(); lastPaintAt = clock.now();
             clearAck(p.messageId, cfg.ackImageEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
@@ -2480,14 +2523,14 @@
             var lead = p.dm ? ('here you go, ' + p.authorName + ' \u2014 ') : ('here you go, ' + p.authorName + '! ');
             var caption = lead + (promptCap ? ('\u201c' + promptCap + '\u201d') : '');
             return Promise.resolve(cfg.sendImage(chId, dataUrl, caption)).then(function () {
-              lastPaintAt = clock.now(); paint.painting = false;          // image clock only — do NOT touch lastActAt
+              lastPaintAt = clock.now(); paint.painting = false; scheduleImageChain();          // image clock only — do NOT touch lastActAt
               clearAck(p.messageId, cfg.ackImageEmoji);
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
               return bumpInteraction(p.authorId).then(function () { return { image: true, to: p.authorId }; });
-            }, function (e) { paint.painting = false; clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
+            }, function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
           });
         })
-        .catch(function (e) { paint.painting = false; clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
+        .catch(function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
       paint.lastJob = job;
       return job;
     }
@@ -3245,7 +3288,7 @@
       };
       tick();
     }
-    function stop() { running = false; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait)
+    function stop() { running = false; deferGen++; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait)
     function isRunning() { return running; }
 
     return {
@@ -3301,7 +3344,59 @@
     };
   }
 
-  return { createEngine: createEngine, _snowflakeCmp: snowflakeCmp };
+  // Pure per-kind brain telemetry: Jacobson latency estimation (srtt + 4*rttvar -> adaptive
+  // timeout) and a circuit breaker (CLOSED -> N consecutive failures -> OPEN, instant-fail ->
+  // HALF-OPEN probe after probeMs -> success closes). Host (bootstrap) wires it around brainCall.
+  function createBrainMeter(opts) {
+    opts = opts || {};
+    var alpha = opts.alpha != null ? opts.alpha : 0.125;   // RFC 6298 gains
+    var beta = opts.beta != null ? opts.beta : 0.25;
+    var minT = opts.minTimeoutMs || 10000, maxT = opts.maxTimeoutMs || 90000;
+    var failsToOpen = opts.failsToOpen || 3, probeMs = opts.probeMs || 30000;
+    var nowFn = opts.now || function () { return Date.now(); };
+    var kinds = {};
+    function k(kind) {
+      return kinds[kind] || (kinds[kind] = { srtt: null, rttvar: null, fails: 0, state: 'closed', openedAt: 0, probing: false });
+    }
+    return {
+      // before a call: { allow, probe, timeoutMs, reason }
+      gate: function (kind) {
+        var s = k(kind), now = nowFn();
+        var t = (s.srtt == null) ? maxT : Math.max(minT, Math.min(maxT, Math.round(s.srtt + 4 * s.rttvar)));
+        if (s.state === 'open') {
+          if (now - s.openedAt >= probeMs && !s.probing) { s.probing = true; return { allow: true, probe: true, timeoutMs: t }; }   // half-open: ONE probe
+          return { allow: false, timeoutMs: t, reason: 'brain circuit open for "' + kind + '" (' + s.fails + ' consecutive failures; probing every ' + Math.round(probeMs / 1000) + 's)' };
+        }
+        return { allow: true, probe: false, timeoutMs: t };
+      },
+      // after a call: ok=false means transport-level failure/timeout (a brain that ANSWERED
+      // "no" is a success for the breaker — the wire works).
+      record: function (kind, rttMs, ok) {
+        var s = k(kind);
+        if (ok && rttMs != null) {
+          if (s.srtt == null) { s.srtt = rttMs; s.rttvar = rttMs / 2; }
+          else { s.rttvar = (1 - beta) * s.rttvar + beta * Math.abs(rttMs - s.srtt); s.srtt = (1 - alpha) * s.srtt + alpha * rttMs; }
+        }
+        if (ok) { s.fails = 0; s.state = 'closed'; s.probing = false; }
+        else {
+          s.fails++; s.probing = false;
+          if (s.fails >= failsToOpen) { s.state = 'open'; s.openedAt = nowFn(); }
+        }
+      },
+      snapshot: function () {
+        var out = {};
+        Object.keys(kinds).forEach(function (kk) {
+          var s = kinds[kk];
+          out[kk] = { srtt: s.srtt == null ? null : Math.round(s.srtt), rttvar: s.rttvar == null ? null : Math.round(s.rttvar),
+                      timeoutMs: (s.srtt == null) ? maxT : Math.max(minT, Math.min(maxT, Math.round(s.srtt + 4 * s.rttvar))),
+                      state: s.state, fails: s.fails };
+        });
+        return out;
+      }
+    };
+  }
+
+  return { createEngine: createEngine, createBrainMeter: createBrainMeter, _snowflakeCmp: snowflakeCmp };
 });
 /* chloe-bridge — tab bridge (D1, pure logic).
  *
@@ -3660,7 +3755,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.53.0';
+  var VERSION = '0.54.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -3894,17 +3989,30 @@
   // runs on that worker's tab (its own AI/image brokers — the genuinely parallel resource);
   // otherwise, or on any worker failure/loss mid-job, it runs locally via callPage. The engine
   // never knows the difference: same promise, same {ok, value} shape.
+  var brainMeter = ChloeT0.createBrainMeter({});   // per-kind latency (Jacobson) + circuit breaker
   function brainCall(kind, args, timeoutMs) {
-    timeoutMs = timeoutMs || 40000;
+    // Breaker first: while the brain is down, calls fail INSTANTLY (with one probe per window)
+    // instead of each burning a full timeout — the poll loop stays snappy through an outage.
+    var gateRes = brainMeter.gate(kind);
+    if (!gateRes.allow) { trace('brain', gateRes.reason); return Promise.resolve({ ok: false, reason: gateRes.reason }); }
+    timeoutMs = timeoutMs || gateRes.timeoutMs || 40000;   // adaptive: srtt + 4*rttvar, clamped 10-90s
     if (kind !== 'paint') {
       var dials = cfgGet('personality', null);
       if (dials) args = Object.assign({}, args || {}, { personality: dials });
     }
     function local() { return callPage(kind, args, timeoutMs); }
-    if (tabBridge && TAB_ROLE === 'queen') {
-      return tabBridge.dispatchJob('brain', { kind: kind, args: args, timeoutMs: timeoutMs }, timeoutMs + 5000, local);
-    }
-    return local();
+    var t0 = Date.now();
+    var p = (tabBridge && TAB_ROLE === 'queen')
+      ? tabBridge.dispatchJob('brain', { kind: kind, args: args, timeoutMs: timeoutMs }, timeoutMs + 5000, local)
+      : local();
+    return Promise.resolve(p).then(function (res) {
+      // A brain that ANSWERED (even {ok:false, declined}) means the wire works — breaker success.
+      brainMeter.record(kind, Date.now() - t0, true);
+      return res;
+    }, function (err) {
+      brainMeter.record(kind, null, false);   // rejection/timeout = transport-level failure
+      throw err;
+    });
   }
 
   // ---- engine wiring ------------------------------------------------------------------
@@ -3998,6 +4106,8 @@
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
         recentFetch: function (n) { return transport.getRecentMessages(channelId, n); },
         reactionUsers: function (messageId, emoji) { return transport.getReactions(channelId, messageId, emoji); },   // bounded (limit 10): her messages + positive set only
+        defer: function (fn, ms) { return setTimeout(fn, ms); },   // completion-driven dispatch + typing keep-alive (DESIGN-roundtrip.md)
+        typingRefreshMs: cfgGet('typingRefreshMs', 8000),
         relationshipTrust: cfgGet('relationshipTrust', false),
         ownAffect: cfgGet('ownAffect', false),
         proceduralModes: cfgGet('proceduralModes', false),
@@ -4154,6 +4264,7 @@
       relationshipTrust: !!cfgGet('relationshipTrust', false),
       ownAffect: !!cfgGet('ownAffect', false),
       proceduralModes: !!cfgGet('proceduralModes', false), procRules: cfgGet('procRules', []),
+      brain: brainMeter.snapshot(),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
