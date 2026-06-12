@@ -1,334 +1,130 @@
-# Chloe-on-Discord bridge — roadmap
-
-Adapter A (Tampermonkey userscript ⇄ Perchance generator page over an origin-checked
-postMessage link). Current shipped version: **v0.60.0**.
-
-> **Reconstruction note (2026-06-11):** the live ROADMAP.md was zeroed by a write race during an
-> I/O hiccup. This file = the operator's recovered v0.28-era copy (authoritative for v0.28 and the
-> backlog/mine sections below) + entries v0.29–v0.48.0 rebuilt from session records. **Second
-> reconstruction (2026-06-12):** zeroed again by a truncate-in-place crash in the entry script
-> (see the v0.54.0 entry); recovered by replaying entry scripts verbatim from session transcripts,
-> and the entry pipeline is now atomic (`roadmap_update.py`). Some backlog
-> items below have since shipped (notably F1 facts → v0.44.0, G5 time → v0.45.0, G6 mood → v0.46.0,
-> E1 highlights → v0.39.0, reaction significance → v0.40.0); they're left in place as history.
-
-### Shipped in v0.60.0 (UI refresh: activity feed center, modules over tabs, status bar, soft dark)
-Full presentation-layer restructure per the uploaded brief (calmer, observation-first; IRC/Obsidian/devtools, not SOC/dashboard). Engine/bridge/bootstrap UNTOUCHED — panel-only. Decisions: full restructure, soft-dark base, feed-data my call. Verified structurally (no harness for the panel): every pre-refresh byId target and call() target still resolves (69 + 55, zero lost), all six panes intact, panel <script> passes node --check, audit clean.
-
-- **Activity feed is now the primary surface.** Data source decision: re-render the EXISTING log stream — the engine already emits every meaningful action through log() with a [chloe.X] tag, so the feed is a pure presentation transform at the panel's log() boundary (classify by tag → typed timeline event: RECEIVED/MEMORY/THINKING/RESPONSE/MODERATION/IMAGE/POLL/ABANDON/WARNING/SYSTEM, each icon-less but state-colored). Zero engine changes, zero new plumbing, full behavior coverage because every path already logs. Ring-capped at 200 rows.
-- **Modules over settings tabs.** The six tab panes (Setup/Behavior/Moderation/People/System/About) became a right-rail module list with state dots; clicking one opens its config in a slide-over (scrim + Esc + Close) instead of a permanent tab. The pane bodies moved VERBATIM into the slide-over — every id, listener, and call() reparented untouched. First-run auto-opens Setup so a new user isn't facing an empty feed.
-- **Status bar replaces scattered reads:** one strip — online dot, bridge/token/bot, brain latency (from the v0.54 meter snapshot: ms / 'down' when the breaker's open / 'warming'), workers (queen-only), last poll — all from the SAME status + bridge.status polls already running.
-- **Collapsible Debug** (collapsed by default) holds the raw verbatim log + reset; the old duplicate log card (a second id=log, a latent conflict) was removed in the process.
-- **Visual weight cut:** soft-dark base (#0f1117), ONE surface elevation, no gradients, the radial dot-pattern and purple accent retired, hairline dividers, color = STATE only (green active / amber warn / red attention / blue selected). Light mode kept as a restrained prefers-color-scheme fallback. Retired the Chakra Petch display font (system sans for chrome, mono for feed/debug).
-- DSL traps honored throughout (no braces in HTML body; entities pre-decoded; audit's brace scan + CSS balance + node --check all clean). DESIGN-ui-refresh.md captured the plan and the verification contract.
-
-### Shipped in v0.59.0 (commit-point revalidation: while-if-true abandonment on every slow path)
-Operator framing: logic should re-check its premises and ABANDON when the world changes (new input, moderation, expiry) rather than committing on stale data. Audit found the system already abandons well at the EDGES (deferGen kills zombie chains, run-lock skips polls, adaptive timeout + breaker drop brain calls, poll/procmode expire lazily) but almost nothing revalidated at the COMMIT point: every multi-second AI generation captured its premises at START and committed at END regardless of what moved between. Mined into one principle — *every slow operation re-checks its premises at the moment of commitment, and abandoning is cheap* — applied to all five generation paths (suite 67 green; the lull/check-in/greet harnesses staying green proves no FALSE abandons):
-
-- **Replies** (`revalidateReply`, the shared gate): before the send, re-check the generation epoch (stopped/demoted engine → leave the pending record for the successor, NOT a double-send), supersession (a newer message from the same author mid-generation → drop the stale answer and CHAIN to the new one), lockdown engaged mid-generation (🔒 indicator), and author moderated mid-generation (silence). Harnessed all four; the engine-stopped case makes the Gap A handover airtight (no commit + record survives).
-- **Lull filler:** re-reads the rhythm key before sending — if the room WOKE UP on its own while she composed, the silence she was filling is over, so she stays quiet. The worst stale message in the system, now impossible.
-- **Check-ins:** re-reads the friend's partition — if they came BACK mid-composition, the “haven't seen you in a while” is abandoned with no attempt counted and no gaps touched (the premise vanished, so does the bookkeeping).
-- **Greetings:** re-check suppression — moderated-mid-hello → no greeting.
-- **Images** (the ~14–60s paint, the longest stale window in the system): re-check author state before delivery — a fox drawn for someone blocked mid-paint is abandoned, not delivered.
-- The epoch check (`deferGen`) does double duty as the engine-liveness signal on every path, so stop()/demote abandons in-flight work uniformly. bridge.js + nonce de-dup re-confirmed clean from v0.58.
-
-One test-not-engine note: the supersede assertion first checked a mock's content echo (mock-dependent); corrected to the verifiable invariant (the reply-reference targets the newer message).
-
-### Shipped in v0.58.0 (wider-net legacy pass: page templates · sweep latency · embed gates)
-Second integration audit, wider scope (bridge.js, all page templates, the gate layer). bridge.js and the nonce de-dup came back CLEAN (bounded, pruned). Six findings fixed (suite 66 green incl. golden):
-
-- **Double-render I introduced in v0.57:** routing check-ins through the assembler made the PERSON band carry her facts — while the page still rendered the bespoke `summary` line. Her memories of you appeared TWICE in one prompt. Page now skips the bespoke line whenever assembler context is present.
-- **Greetings and recaps ignored the assembler** (same lag class as v0.57's check-ins/beats): both nest the assembled context as `ctx.recent` but rendered only the transcript from it — mood, time, procedural modes, and the channel arc were dropped on the floor. Both templates now render `ctx.recent.injections`. Every AI template on the page now honors the soft context. (Judge already rode the assembler directly — audited clean.)
-- **Activity-aware reaction sweep:** the fixed every-6th-poll sweep meant a 🗣️ summon could take up to ~3 minutes to land at the slow polling ceiling. Reactions cluster seconds after fresh messages, so the sweep now ALSO runs on the poll right after one that ingested — harnessed: sweep fires one poll after activity, and the next quiet poll does NOT (no fetch storm; quiet rooms keep the cheap cadence).
-- **Embed gate parity:** the output gates (links, channel-links, emoji) ran only on plain `.content` — an AI-written URL inside a recap embed description or a poll option walked straight past them (pings were already safe: allowed_mentions rides every send). `sendEmbed` now scrubs title/description/fields with the same `gateContent`, plus Discord's length caps.
-- **Beats lacked turn-marker stopSequences** — the only AI template without them (a v0.3x lesson); a beat could ramble into fake `[[`… dialogue. Added, matching every other template.
-- Two build notes, honestly: the page-edit script crashed twice on non-unique anchors (the greet preamble line also lives in RECAP — which is how recap's missing injections were FOUND: the collision was the clue) and once on an over-escaped regex; the safe-write discipline left the file untouched all three times, and all six page edits landed in one verified atomic write.
-
-### Shipped in v0.57.0 (legacy integration pass: six lag points, two real bugs)
-Operator ask: find systems lagging behind the rest, tie them in properly, patch legacy bugs. Evidence-first audit found six, all fixed + pinned in harnesses (suite 66 green incl. golden):
-
-- **The v0.54 adaptive brain timeout was DEAD in production** — every one of the 11 brainCall sites passed a hardcoded timeout, silently bypassing the Jacobson meter since the day it shipped. All text-kind sites now pass none (the meter governs: 90s cold, srtt+4·rttvar warm, clamped 10–90s); `paint` keeps its explicit 120s — image latency genuinely exceeds the meter's clamp.
-- **Stale summons fired on cold boot** (the v0.46.3 “cold start treats history as live” class, reborn in v0.56): a 🗣️ reacted while she was offline would summon a reply to a days-old message on the first sweep. `summonMaxAgeMs` (15m) age-guards by message timestamp; harnessed.
-- **Extractor transcripts were unclipped**: 40 lines × up to 1900 chars ≈ the entire 5000-token request ceiling. `recentTranscript` now clips each line to 240 chars — one fix covers facts, channel-summary, episodes, and reflection inputs; harnessed with a 2000-char wall message.
-- **Check-ins and beats never joined the v0.50 assembler** — bespoke legacy context meant an active procedural mode, room mood, time awareness, and the channel arc were all IGNORED by proactive messages. Both now ride `assembleContext`; check-ins pass the ABSENT FRIEND as the addressed person, so her facts, insights, and trust tier arrive via the PERSON band for free. Page templates render the injections (backward compatible: old engines send none → byte-identical prompts). Harnessed end-to-end (a real provider line inside the check-in ctx) — and the first assertion draft was WRONG, not the engine: `injections` attaches only when non-empty by contract (the page's legacy fallback depends on absence), so the test now proves a real line flows instead of demanding an empty array exist.
-- **Command acks were plain sends** — a lone ack now reply-references its command (multi-ack batches stay plain: one send can't reference two messages); harnessed.
-- **`lastReplyAt` was an unbounded per-author map** (the v0.46.3 in-memory leak class) — bounded at 300 with oldest-first eviction.
-
-### Shipped in v0.56.0 (reactions as an input channel: summon · polls · reply references)
-Operator ask: a way to invoke a reply WITHOUT sending more text (reaction-based, monkey-see-monkey-do with her own emojis), reactions used in more systems for passing information, small games, and a survey of other Discord affordances (RESEARCH-DISCORD.md):
-
-- **Reply references (clarity).** Her text replies now attach natively to the message they answer: `message_reference` with `replied_user:false` (the reply itself never pings) and `fail_if_not_exists:false` (deleted target degrades to a plain send). `cfg.send` grew an opts arg — backward compatible; `replyReference:false` escape hatch.
-- **Reaction summon (opt-in toggle + About).** The AUTHOR reacting to their OWN message with one of her own indicators (🗣️ ❗ 🤖 — deliberately NOT ❤️: hearts are warmth and casual) makes it an explicit address through the NORMAL reply pipeline; mods can summon her onto anyone's message. A summon is a request, never an override — harnessed: lockdown holds (with the 🔒 indicator), quiet moderation stays quiet (a soft-banned summoner gets nothing, not even a reaction), bystander reactions don't count, one summon per message, her own messages can't be targets. Completion-chained, so a summon answers at generation speed.
-- **Reaction polls (mod command).** `!chloe poll <q> | <a> | <b> […]` posts a ballot embed, seeds 1️⃣… number reactions, one active poll per channel; `poll close` (or auto-close after pollMaxAgeMs 24h, checked lazily once per poll tick OUTSIDE the one-AI-pass ladder — my first placement was unreachable behind the affect rung, caught in self-review) tallies from the counts the message object already carries, subtracting her own seeds via `reaction.me`, and posts ranked results with the winner or a tie called out. New `transport.getMessage` + `cfg.fetchMessage` for ballots older than the recent window.
-- **RESEARCH-DISCORD.md:** the leverage-ordered map of what REST-only can still do — threads (games + long answers without channel spam), webhook personas (anchored characters get their own name+avatar), edit-streaming (perceived-latency collapse via editMessage), native Discord polls (the upgrade path), pins, scheduled events — and the honest impossibilities: buttons/selects/modals can be SENT but their clicks only arrive via Gateway/webhook, so reactions stay our input channel; reaction latency is sweep-bound, which scopes games to turn-based (RPS + trivia recommended first, in threads).
-- README: §Reactions gained the summon contract + reply-reference note; the command table gained `poll`. Suite 66 green (harness-summon, harness-polls).
-
-### Shipped in v0.55.0 (reaction vocabulary: truthful status indicators + README §Reactions)
-Operator ask: replace the ambiguous 👀 “seen you” with indicators that say WHAT she's doing or WHY she didn't answer, and document the vocabulary in the README like the command table. New scheme (all under the existing ackReactions toggle):
-
-- **🗣️ generating your text reply** — placed at generation start (the v0.54 enqueue-time ack is reverted: queueing alone places nothing; the indicator now means “speaking NOW”, not “noticed”). **🖼️ painting** replaces 🎨 (image queue numbers unchanged). **🔍 looking something up** — wired onto `recap` (the command context now carries the triggering messageId so handlers can ack).
-- **Why-not indicators, auto-clearing (ackClearMs 30s):** ⏳ = saw you but throttled — placed on per-author-cooldown skips and send-budget denials, hands over to 🗣️ when the turn comes; 🔒 = mods-only lockdown, placed only on messages that actually ADDRESS her. **Deliberate scope:** no indicator for quiet moderation (ignore/softban/block) — reacting would announce it; only benign, temporary, or already-public reasons get a reaction.
-- README gained a §Reactions table (what she places AND what she reads: 📌 persona anchor, mod mode rules, the positive set feeding relationship warmth) mirroring the command-table treatment.
-- harness-dispatch-chain rewritten to the new semantics + two new scenario blocks (⏳ throttle with WHY + self-clear; 🔒 on the addressed message only, bystanders untouched). Suite 64 green.
-
-**Also this cycle:** the surrogate bug class bit a THIRD time — my edit script's comment strings contained split-surrogate emoji and truncated engine.js to 0 bytes in place (restored from the verified delivered copy; `node --check` passes VACUOUSLY on an empty file — noted). All source edits now follow the roadmap_update discipline: encode-check before any file opens, temp-write + fsync + atomic os.replace, never truncate-in-place.
-
-### Shipped in v0.54.0 (round-trip awareness: completion-driven dispatch · queue acks · brain telemetry + breaker)
-Operator ask: know when the Perchance backend COMPLETES so the next request fires sooner; queue text like images with the emoji-ack treatment; hunt other waiting-on-round-trips. Investigation found replies and images were POLL-BOUND (a finished generation idled up to a full poll tick before the next queued job started), queued-but-waiting authors got no ack at all, and the typing indicator (~10s on Discord) went cold during long generations. RESEARCH-ADAPTIVE.md + DESIGN-roundtrip.md:
-
-- **Completion-driven dispatch.** New host hook `cfg.defer(fn, ms)` (engine purity preserved — injected like clock; harnesses inject a manual queue). Every text/image terminal schedules the next kick at the earliest legal moment (remaining courtesy gap only). Both targets fully self-gate, so chaining is safe by construction; queues now drain at GENERATION speed — harnessed: three queued replies, three sends, ZERO additional polls. `deferGen` invalidates outstanding chains on stop()/demote (no zombie work). No defer hook ⇒ byte-identical legacy behavior.
-- **Enqueue-time acks.** 👀 lands the moment a message is QUEUED (everyone knows they're seen), cleared at terminals; superseded entries (newer message, image-over-text) hand their ack over. Deliberate non-parity with image queue NUMBERS, documented: the reply queue is PRIORITY-ordered (DM > mod > ping), so place-numbers would lie as the line reorders — a steady 👀 is honest.
-- **Brain telemetry + circuit breaker.** `createBrainMeter()` (pure, module-level, harnessed): per-kind Jacobson estimation (srtt + 4·rttvar → adaptive timeout clamped 10–90s — a ~12s respond kind earns a ~17s timeout instead of the blanket 40s) and a breaker: 3 consecutive TRANSPORT failures → OPEN (instant-fail with a clear reason; the poll loop stays snappy through a dead page) → one HALF-OPEN probe per 30s window → success closes. A brain that ANSWERED {ok:false} is breaker-SUCCESS (the wire works). Wired around the single brainCall funnel; per-kind stats in `status.brain`.
-- **Typing keep-alive.** Re-typing every 8s while a generation is in flight; silent no-op after terminals.
-
-Root-caused during the build (trace, don't patch): chains were first gated on `running`, forcing harnesses through start()'s REAL poll timer — replaced with the deferGen generation counter; the harness's zero-acks came from the un-set `ackReactions` gate, and its “chain delay” filter was catching the 8000ms typing keep-alive. Suite 64 green.
-
-**Also this cycle (pipeline, the hard way — second roadmap loss):** the v0.54.0 roadmap script crashed on a UnicodeEncodeError (an emoji written as SPLIT SURROGATE HALVES in a heredoc) AFTER opening ROADMAP.md for writing — truncating it in place; deliver.sh then copied the 0 bytes (it verified size MATCH, not size SANITY). Recovered by replaying the entry scripts verbatim from session transcripts. Class killed: `roadmap_update.py` (the only sanctioned entry path — entry from a real UTF-8 FILE, built in memory, temp-write + fsync + size-verify + atomic os.replace; the original is never opened for writing), and deliver.sh v2 (refuses empty sources and catastrophic shrinks).
-
-**Designed, building next (DESIGN-roundtrip.md §E + RESEARCH-ADAPTIVE.md):** the pace core — per-channel Jacobson estimation over inter-message gaps feeding rhythm-relative debounce, AIMD polling, z-score quiet detection, and time-floored AI-pass cadences. Later clusters: FSRS-lite retrieval-strengthened memory; habituation + leaky volunteer; foraging give-up.
-
-### Shipped in v0.53.0 (Gap A: reply resumption with a no-double-send gate)
-The last open item from the failover audit. A TEXT reply that was mid-generation when a queen died is no longer lost — and can never be doubled:
-
-- The instant a reply job starts, `pending-reply:{ch}` ({messageId, author, content, priority, at, runId}) persists to the shared store; it is cleared at EVERY terminal (empty generation, send success, error).
-- On `start()`, a successor consumes any record (resume-once — deleted BEFORE acting; if this attempt also dies, ITS run's record covers the next resumption). Resumption is age-capped (10 min — a stale answer is worse than silence) and gated on a VERIFICATION fetch: any bot-authored message with a snowflake newer than the target means “assume answered” — which deliberately also covers the send-then-crash window, because her just-sent reply IS a bot message after the target. No `recentFetch` hook → never resume unverified. Verified-clean → the record re-enters `reply.queue` at its original priority and the NORMAL pipeline (budget, gates, cooldowns) takes it from there.
-- **The asymmetry is the design:** every double-send path is gated; some legitimately-resumable replies are dropped (e.g. she answered someone ELSE after the target). Correct side to err on. Images stay fire-and-forget (decorative; documented acceptable loss).
-- Default ON (`replyResume: false` escape hatch) — correctness class, like the run-lock. `harness-reply-resume.js`: happy path leaves no record; crash mid-generation → successor resumes exactly once; bot-message-after-target blocks; stale dropped; unverifiable dropped; escape hatch. Suite 62 green. (The harness's own crash simulation initially awaited a poll that by design never resolves — fixed to fire detached.)
-
-**The failover audit is now fully retired:** every lifecycle transition handled + tested, Gap B fixed (v0.47.3), handshake election (v0.48.0), run-lock (v0.52.0), Gap A resumption (v0.53.0).
-
-### Shipped in v0.52.0 (engine run-lock: the hard close for the two-queen polling window)
-The twice-deferred correctness sub-system from FAILOVER-ANALYSIS.md §6, now designed exactly and landed:
-
-- Before EVERY poll the engine must hold `runlock:{ch}` in the shared per-channel store ({id, at, nonce}). A non-holder **skips the poll entirely** — no cursor read, no fetch, no sends (summary carries `lockSkip`; throttled log explains why). Claiming writes then READS BACK the nonce, so two engines grabbing a stale lock in the same instant resolve to at most one proceeding (the tab-lease trick, applied at the engine layer).
-- **The TTL inequality that makes it safe (45s):** < queenDeadAfterMs (90s) so a frozen queen's lock is guaranteed stale before any worker can even promote — a corpse never blocks the successor; and > any healthy poll cadence so a live queen never loses its own lock between renewals (every successful acquire renews). Wake sequence: frozen queen stops renewing → worker promotes ≥ 90s later onto a stale lock → old queen wakes, sees a FRESH foreign lock, skips (cursor untouched) → the v0.48.0 handshake demotes it. The two-queen POLLING window is closed even while the two-queen TAB window briefly exists.
-- `stop()` releases the lock if held, so a clean demote hands over instantly (no TTL wait). Default ON — a correctness lock, not a behavior feature; `runLock:false` is a debugging escape hatch.
-- `harness-runlock.js`: solo claim+renew; intruder skips with ZERO side effects; stale takeover; the wake scenario; same-tick contention resolving to exactly ONE poller; instant clean handover; the escape hatch. Suite 61 green incl. golden — the lock is invisible to every single-engine path.
-- Residual risk stated honestly in FAILOVER-ANALYSIS.md: GM propagation isn't transactional; the read-back bounds the worst case to one overlapping poll cycle (rare, idempotent-leaning), versus minutes of unbounded double-polling before.
-
-This retires the last structural item from the failover audit. Still open there: Gap A (mid-generation reply lost on queen death — needs persisted intent + no-double-send resumption).
-
-### Shipped in v0.51.0 (first wave on the keystone: episodes · trust · own affect · procedural modes)
-The four DESIGN §7 systems, each a data-store → background-pass → provider unit on the v0.50.0 assembler, each default-off with a Behavior toggle + About doc + dedicated harness (suite now 60 green):
-
-- **Episodic memory (§7a, RECALL band).** Gated extraction turns recent activity into short EVENT records ({text≤120, topics, participants, importance}, ring cap 40/channel, `epi:{ch}`); the page extractor refuses sensitive categories like facts. Recall = keyword-overlap × importance × 7-day-half-life recency, top-2, injected ONLY when the conversation relates (zero cost otherwise — harnessed both directions). `forget me`/purge erase episodes the person took part in, including the moderated branch.
-- **Relationship trust (§7b, PERSON band).** `p.trust` 0–100, earned ONLY through positive signals: +1 per completed reply, +2 per positive reaction on HER message (attributed via the bounded `getReactions` fetch — her messages, positive set, increased counts only), daily cap 5, absence decay alongside familiarity, reset by forget. Tier-phrased tone hint (the number NEVER appears) + the new-user-sized priority tiebreak. Mods always outrank trust; never penalizes; never touches moderation/gates. Found+fixed in review: the crediting promise was fire-and-forget — split scoreMessageReactions out and JOINED the chain for deterministic sweeps.
-- **Own affect (§7d, AMBIENCE band; reordered before §7c — self-contained).** {curiosity, confidence, warmth}, front-end only: positive reactions on her messages lift confidence+warmth; engagement within 10m of her reply lifts confidence; 30m of silence after she speaks lowers it to a HARD floor (0.3 — quieter, never despondent); vocabulary novelty lifts curiosity; everything relaxes toward neutral (0.8/hour). Provider: silent near neutral, whitelist phrasing with the never-state-it guard, self-demotes −5 when room mood reads quiet (visible in injectionMeta).
-- **Procedural modes (§7c, DIRECTIVE band).** Operator-defined emoji→mode rules (panel JSON-textarea CRUD matching the auto-mod convention; bootstrap validates+caps: ≤12 rules, mode≤100ch, ≤1d). Only a MODERATOR's reaction triggers (modOnly fixed v1 — reactions are unauthenticated input); persona-note sanitation; lazy clock expiry; `!chloe mode` (anyone) / `mode clear` (mods); the injected line carries the it-never-changes-your-rules guard. The audit caught a brace parser-trap in the panel placeholder during the build (entities don't dodge the platform's pre-decode scan) — fixed with a brace-free placeholder.
-
-With this, the GAP-ANALYSIS Tier-B first wave chosen by the operator is fully landed on the validated keystone.
-
-### Shipped in v0.50.0 (keystone: prioritized context assembler)
-The approved DESIGN-context-assembler.md keystone, executed in full with golden-parity discipline (PLAN-context-assembler.md):
-
-- **Assembler core:** one provider registry + one budget policy inside the engine. Providers are pure ({id, priority, enabled(cfg), gather(gctx)}); failures are isolated to a logged null (a broken provider can never take down the reply path); admission is greedy by priority under the 5000-tok whole-request budget with whole-injection drops (every drop logged) and a hard transcript floor; admitted lines render ASCENDING so the highest-priority text lands LAST, nearest the generation point. Seven bands: IDENTITY 90 / DIRECTIVE 80 / PERSON 70 / RECALL 60 / SITUATION 50 / AMBIENCE 40 / HYGIENE 30. `harness-injections.js` (13 assertions).
-- **Golden parity contract:** `harness-golden-context.js` + `golden-context.json` freeze every soft-context field + budget accounting across 7 toggle matrices, captured BEFORE the refactor and green after EVERY step — including the final state. The capture step itself caught two harness bugs (intent seeded past its 30-min TTL; wrong field names) before the contract froze.
-- **Six slot-line conversions** (time, mood, channel-summary, intent, highlights, person-summary): each provider renders the page's exact line template, reports the LEGACY token figure, and dual-emits its legacy ctx field via gctx.legacyOut so the page worked unmodified throughout. Converted one at a time on a verified-inert flattened scaffold; golden + full 56-harness suite green after each.
-- **DESIGN §4a scope finding:** persona note (identity preamble) and anti-repeat (post-transcript craft guidance) are template-STRUCTURAL, not slot lines — they keep their positions + inline accounting; band seats reserved for v2.
-- **Page slot switch:** respond() now renders `ctx.injections` at the soft-context slot (the designed ascending reorder — intent now sits nearest the transcript), with the legacy per-field lines kept as fallback for older engines; engine keeps dual emission for older panels (one-version deprecation both directions).
-
-Shipping decision: the keystone ships ALONE so the refactor validates in production before the first-wave systems (episodes, trust, procedural modes, own affect — designed in DESIGN §7) land as v0.51+.
-
-### Shipped in v0.49.0 (Tier-1 memory cluster: importance · rolling summary · reflection)
-The three reinforcing memory upgrades from RESEARCH-IMPROVEMENTS.md (Generative Agents + SillyTavern patterns), all opt-in/default-off, gated AI passes, harnessed:
-
-- **Fact importance (poignancy).** The facts extractor now emits `{t, i}` with a 1–10 importance per fact (tolerant of bare strings; old facts default 5). `addFacts` stores it; `factSummary` ranks by importance + mild recency instead of recency-only — so a trim keeps what's CENTRAL to a person, not just what's newest (harnessed: a 9-importance older fact survives a flood of 1-importance newer ones). Importance also feeds the reflection accumulator. Rides the existing factMemory toggle.
-- **Rolling channel summary.** Every `channelSummaryEveryPolls` (30) polls, fold the recent transcript into a running ≤`channelSummaryWords` (60) summary, feeding the PRIOR summary back in (recursive, SillyTavern-style) so the channel's arc accretes past the raw context window. Stored at `chansum:{ch}`; injected token-accounted as one soft line ("the story so far"). Cadence uses the (every−1) form — fires on the Nth poll, never the first (cold-start backlog). Behavior toggle + About doc. `harness-channel-summary.js`.
-- **Reflection.** When a person's accumulated fact-importance crosses `reflectionImportanceThreshold` (20), one synthesis pass turns their facts (+ prior insights) into 1–2 durable higher-level insights, stored on the partition (archive/restore free, capped 3), accumulator reset even on empty results. Insights LEAD the person-summary above raw facts. Page `reflect` extractor grounds insights strictly in given facts, refuses sensitive categories. Behavior toggle + About doc. `harness-reflection.js`.
-
-**Also this cycle (pipeline + recovery):** ROADMAP.md was zeroed by a write race — reconstructed from the operator's recovered v0.28-era copy + session records (see reconstruction note). Patched the class: `audit.py` leads with a critical-file integrity check; `deliver.sh` replaces blind cp with size-verified copies. (And this very entry initially failed to insert because an idempotency guard matched the bumped header version instead of the entry heading — caught by size-verification, guard fixed to match the heading.)
-
-### Shipped in v0.48.0 (explicit, capability-aware handshake election)
-Front-ended the queen/worker election with a real handshake: every tab broadcasts `hello` ({role, hasPage}) on start; the queen answers with a capability-bearing `ping` (newcomer discovers the queen in ONE round-trip); workers answer `here` so a fresh queen learns its pool immediately; a second-started queen stands down in a round-trip via queenConflict. `rankDelay` is now capability-preferential — a page-having tab claims the lease sooner, so the natural queen is the tab the user is looking at. New `queenHasPage()` / `capablePeers()` / `hello()` API. Shrinks (does not fully close) the sleep/wake two-queen window; hard close = the deferred engine run-lock (FAILOVER-ANALYSIS.md).
-
-### Shipped in v0.47.3 (failover audit + Gap B: page-less workers swallowed brain calls)
-Full lifecycle audit (FAILOVER-ANALYSIS.md). Fixed Gap B: dispatchJob only fell back on a REJECTED job, but a page-less worker RESOLVED `{ok:false, no control page}` — a successful-looking empty answer — silently dropping the reply/paint. Fix: workers advertise page-capability (capable() → hasPage) in register/pong and the queen routes brain jobs only to page-capable idle workers; the worker brain handler now REJECTS without a page so the local fallback fires. Deferred + documented: Gap A (reply mid-generation lost on queen death) and the sleep/wake two-queen polling window (engine run-lock).
-
-### Shipped in v0.47.2 (fix: worker-role tab capture — a likely banner contributor)
-`onDemote` wrote `location.hash = '#chloe-worker'` into the tab URL whenever a tab lost the election; since the userscript matches all of perchance.org, every non-queen perchance tab got stamped, and the hash is STICKY (TAB_ROLE reads it at load) — so the generator itself could boot as a worker that answers status but can never start the engine ("present but dead", and the two-cursors seen in logs). Fixes: onDemote never touches the URL (role is in-memory; only deliberate spawnWorker sets the hash); self-heal — a worker-roled tab that receives a page message strips a stale hash and contests the election via new `tabBridge.standForQueen()` (promotes if no live queen, backs off if one exists); harnessed incl. a bridge purity check (bridge.js never references location/URL).
-
-### Shipped in v0.47.1 (archive-boundary race/durability fixes)
-(A) restoreFromArchive deleted the COLD copy before the hot write landed → crash mid-restore lost the user's history; now hot-write + re-index FIRST, delete cold last (worst case a harmless duplicate). (B) Restore was gated on `archiveStale`, so toggling archiving off stranded returning users as empty "new" partitions while cold data lingered (split-brain); restore is now unconditional — archiveStale only gates CREATING archives. (C) purge/block never cleared the archive → blocking an archived user left their cold record (incomplete erasure, and the novelty check would cite it); added dropFromArchive(id) into purge. Audited clean: sweep-after-ingest ordering, single decay-on-return, index hygiene, reaction-sweep cursor safety, JSON degradation, no stuck reply/paint flags.
-
-### Shipped in v0.47.0 (response priority + surface-aware novelty)
-**Priority:** replyPriority with order-of-magnitude weights — DM lane (1000) > mod (100) > @-ping (10) > new-user tiebreak (1) > casual name-drop (0); processReply selects highest-priority settled author (oldest as tiebreak) instead of FIFO; the cross-channel send budget became priority-aware so a DM preempts a regular channel's slot. **Novelty (bug fix):** "new" was decided from hot roster + archive only; added knownFromOtherSurfaces(id,name) checking the MOD LOG and BLOCKLIST/tombstones before calling anyone new — a previously-moderated or purged-but-banned user reads as returning, not a first-timer (affects greetings + the priority bump). KNOWN LIMITATION: per-channel store namespacing means cross-CHANNEL novelty (known in A, new to B) needs a bootstrap-level shared index — not addressed.
-
-### Shipped in v0.46.3 (startup observe-only hardening + Reset State completeness)
-Generalized the v0.46.2 image-flood class ("cold start treats history as live"): auto-mod no longer re-moderates backlog; old !chloe commands don't replay (EXCEPT image, which keeps the 5-recent clamp); stale @mentions in backlog get no reply; reaction auto-highlights skip the backlog; lull/check-ins/beats respect a startup settle (reusing the greeting settle) so "it got quiet" isn't fired about the bot's own downtime; Reset State now clears the FULL per-channel key set incl. archived users (was leaving mood/intent/reminders/afk/highlights/reacttally/lull/checkins/beats/arch behind). Critical refinement (root-caused after 19 harness failures): a backlog is signalled by SIZE — startupBacklogThreshold (8) so a fresh channel's first live messages behave normally; warm restarts never clamped. Bounded reactionSeen + afkNoticed maps (slow leaks).
-
-### Shipped in v0.46.2 (fix: image-gen flood on startup / after Reset State)
-Cold start = empty cursor → first poll pulls a history backlog → every image request fired at once across all channels. Per-channel startup clamp: the first cursorless poll restricts image gen to the startupImageMax (5) most-recent USER messages; older backlog ingested but never painted; normal behavior resumes next poll; warm starts never clamped. Gates BOTH image sites (!chloe image + auto-request) via mayPaint(m).
-
-### Shipped in v0.46.1 (fix: Validate Token threw — a v0.45.1 regression)
-The fan-out de-dup replied to duplicate request copies with `{ok:true,value:null,dup:true}`; the page resolves on the FIRST reply, so the fake success could beat the real result → panel read res.value.username on null. Three-part fix: duplicates dropped SILENTLY (only the first copy replies); panel guards res.value; validate() guards a null/identity-less getMe. Locked in harness-origin.
-
-### Shipped in v0.46.0 (disabled the false 'not detected' banner + G6 mood)
-Banner disabled per operator call after two unverifiable fix attempts (logs showed the OLD build still running — line :3135 unchanged — so the fixes were never exercised); kept a quiet dot (green linked / amber waiting), brain calls are ground truth. **G6 mood:** front-end room-tenor read on two SAFE dimensions — energy (quiet..buzzing) + playfulness (subdued..joking) — from pace + lexical signals; decayed blend (moodDecay 0.7); deliberately NO anger/conflict dimension; soft tone guidance ("match the energy, don't name it"); off by default.
-
-### Shipped in v0.45.1 (fix: 'not detected' banner — status ping lost in frame topology)
-Bot fully worked but the page's status ping died: the panel posted ONLY to window.top, which in Perchance's embed can be the outer shell frame while the userscript listens elsewhere; brain calls worked because they're userscript-initiated. Fix: postToHosts() fans every request to window.top + window.parent + the frame chain with both the perchance origin and '*'; nonce-matched replies make duplicates harmless; userscript de-dupes inbound nonces. [The de-dup reply introduced the v0.46.1 regression — fixed there.]
-
-### Shipped in v0.45.0 (G5 time awareness)
-timeContext() derives part-of-day / day-of-week / weekend / quiet-duration from the clock + timezoneOffsetMins (panel input, clamped ±14h); rides into reply + lull context as soft guidance; off by default.
-
-### Shipped in v0.44.1 (fix: false "userscript not detected" in sandboxed embeds)
-Sandboxed iframes report postMessage origin "null"; ORIGIN_OK now accepts it; replyTarget maps null→'*'; 2-miss banner hysteresis; harness-origin.js.
-
-### Shipped in v0.44.0 (F1 fact memory + panel fixes)
-Per-user facts[] on the partition (archives/restores free); gated silent extraction processFacts (one due regular per pass, factMinInteractions 4, gap 1d, every 12 polls); page facts(ctx) extractor REFUSES sensitive categories, JSON-array primed; populates the previously-empty summary hook in reply + check-in context; !chloe aboutme / forget <words> / forget. Panel: text-align fix vs host-page centering; escaped curly braces in <code>; audit gained an HTML-body brace scan.
-
-### Shipped in v0.43.0 (give-up + data tiering)
-Check-ins cap at checkinMaxAttempts (2, ~28d) then archive the user; historical-friends archive (arch:{ch}:u:{id} cold keys + arch:index); quietSweep archives long-cold users with favorite-aware thresholds (archiveAbsenceMs ~60d + favorite bonus); restore on return in ingest (zero hot-path cost); emergent: returning friend's T5 decay softens familiarity (intended).
-
-### Shipped in v0.42.0 (lull recalibrated to days + favorite check-ins)
-Lull window moved to DAYS (Discord ≠ Twitch). processCheckin @mentions an absent favorite (interactionCount≥8, absent≥3d); per-user gap ~14d, global ~1d; pings only if the gate allows.
-
-### Shipped in v0.41.0 (lull filler)
-Neuro-sama PATIENCE pattern: proactively break silence after an active room goes quiet; gated; mod opt-in.
-
-### Shipped in v0.40.0 (size-relative reaction significance)
-Threshold = max(reactionMinUsers 2, ceil(memberCount × reactionFraction 0.01)); significant top reaction → tally + auto-highlight; idempotent (acts only on INCREASED counts); member count auto-detected (GET /guilds/{id}?with_counts=true); reaction sweep every 6th poll re-fetches recent 30.
-
-### Shipped in v0.39.0 (E1 highlights)
-!chloe highlight/highlights/highlights clear (mod-only clear); reply-capture via referenced_message, quoted text, or bare; a few recent highlights ride in context (token-accounted, cap 50/3).
-
-### Shipped in v0.29.0–v0.38.x (reconstructed, condensed)
-Agentic observe/act split; global send budget ("one voice, many eyes"); bot-loop damper; fast ack reactions 👀/🎨; image-queue place-in-line reactions; standing intention (INTENT:); whole-request 5000-tok chunker (operator-confirmed real ceiling, vs the docs' 6000); AICC turn-marker stopSequences; !chloe image {json}; local volunteer pre-filter; poll-driven reminders; AFK. (Full per-version detail for this stretch was lost with the original file; the feature set above is complete and live-confirmed.)
-
-### Shipped in v0.28.0 (a batch of fixes + safety features from real-session logs)
-- **DM sessions (two-way DMs).** Any DM Chloe opens registers as a pollable channel (`dmReplies` toggle); a DM channel runs with `addressMode:'always'` so she replies to every line without a mention. Cold inbound DMs remain Gateway-blocked (documented, not faked). `harness-dm.js`.
-- **Permanent blocklist / tombstone.** `!chloe block @u` (and `unblock`) tombstones a user by id + username at a partition-independent key, checked at the top of `ingestOne` — a blocked user is never re-scanned or re-rostered again, and survives unrelated purges. Fixes the gap where `forget` left no tombstone. `harness-blocklist.js`.
-- **Output gates (mod-toggleable).** Five independent toggles — emoji / pings / @everyone / links / channel-links — enforced at the single transport chokepoint. Pings use Discord's native `allowed_mentions`; the rest scrub outgoing content. Defaults: emoji on, the rest off. A jailbroken Chloe still can't mass-ping/spam/@channel without mod opt-in. `harness-gates.js`.
-- **Persona NAME, not just style.** A pinned note that names a character makes Chloe answer to that name and speak as them in first person (parser + alias + prompt reframe). `harness-persona-name.js`.
-- **Image prompt travels with the image,** sanitized for caption (mentions/mass-pings/links/markdown stripped, length-capped).
-- **404 Unknown Channel self-heals.** A poll 404 pauses that engine via `onChannelGone` instead of spamming the log forever; dead DM channels auto-drop, guild channels warn. (This was the only Chloe-side error in the logs; the ~6,700 `.style` crashes were weld-companion operating on Chloe's frame — noted for the weld side.)
-- **`allowed_mentions` on every send** (latent bug fix: captions/replies with `@everyone` could previously ping).
-
-
-## Shipped (live-confirmed)
-- **T0** read-only presence (poll → parse → per-user partitions → speaker ring → rhythm)
-- **T1** reply when addressed (debounce + cooldown, Tier-C context)
-- **T2** volunteer gate (deterministic pre-filter → AI judge, F4-safe ignore)
-- **T3** reversible moderation (ignore / timeout / softban / clear / note; state gates *before* judgment; mod-list auth; `forget me` opt-out)
-- **T4** irreversible permaban (human-confirmed ban → verified partition purge, F1 ordering, surviving modlog)
-- **T5** presence depth (greeting tiers + cooldown + settling debounce, decay, lifecycle, 404 departure sweep, backfill)
-- **Extras**: typing indicator, `!chloe recap`, page-side `[chloe-page]` diagnostics, adaptive polling, onPoll hook (fixes loop-bypass of page events + T5 maintenance), name aliasing (`chloe-bot`→`chloe`), greeting/reply de-dup, stable `@name` for clean Tampermonkey updates.
-- **v0.9.0**: start-settling greeting guard (people already in the room at startup aren't greeted as arrivals; `greetSettleMs`) + per-author reply throttle (single pending slot → per-author queue, per-author `cooldownMs` + light `globalCooldownMs`, so one chatty user can't starve replies to others).
-- **v0.10.0**: image generation. Ask her to "draw/paint ..." and the page generates via `text-to-image-plugin` (awaited `root.textToImagePlugin`, which runs the plugin's `$output` in the top-panel sandbox — the broker-iframe "song-and-dance" — and returns a `.dataUrl` across the bridge); the userscript posts it as a native Discord attachment to the channel/thread, or to a DM on request. Orientation→resolution, per-image cooldown, empty-prompt guard (an empty prompt hangs the plugin), text fallback on failure. `harness-image.js` pins it.
-- **v0.10.1**: image gen corrected to run from the **top-panel DSL** (`paintImage` in `chloe-control-dsl.txt`) and hand the `.dataUrl` back via a shared-`window` Map — `.dataUrl` must be read inside the plugin's own scope before it crosses the `root` proxy.
-- **v0.10.2 (code wins, mined from weld-companion + live logs)**: prompt hygiene — scrub all Discord tokens (user/**role**/channel mentions, custom emoji) + leading/trailing filler so the model gets "cat", not the raw `<@&role> , can you draw me a cat?` (live-log bug); storage hardening — `store.get` now try/catches `JSON.parse` so one corrupt key can't break a poll (weld `gget` pattern); clearer logging — image requests log as image, not "reply queued".
-- **v0.11.0**: **command registry (#4)** — `KNOWN_CMDS` + the `execCommand` switch + `CMD_ACTION` + hand-written help collapsed into one declarative `COMMANDS` table (verb, modOnly, needsTarget, takesDuration, action|handler, help, optional aliases); `parseCommand`/`execCommand`/help all generate from it, killing the three-place drift and laying the groundwork for per-command throttle (#5) and emoji aliases (#10). Plus **context mention-scrub (#16)** — the Tier-C transcript and addressed message handed to the brain are now token-scrubbed, so she won't echo `<@123>` in text replies.
-- **v0.12.0**: **per-command throttle (#5)** — `cooldownMs` per `COMMANDS` entry (recap 20s, help/status 5s), silently suppressed within the window (pump19 `Limiter`); moderation verbs stay unthrottled. **Auto-moderation (#6)** — optional, panel-editable rule list checked before reply/greet: types `text` / `regex` / **`confusables`** (Unicode homoglyph fold so "fr\u0435\u0435 nitro" can't dodge "free nitro"); first match halts → applies a **reversible action only** (ignore/timeout/softban — an irreversible rule action is downgraded, never an auto-permaban, F1); mods exempt; rules settable only from the trusted panel. `harness-commands.js` + `harness-automod.js` pin both.
-- **v0.13.0**: **threaded image lane + real-world timings.** Text and images run on separate Perchance brokers, so the image lane is now **fire-and-forget** (`kickImage`) — a 15-30s generation no longer blocks the poll loop or text replies; the two proceed concurrently. Image timing is governed only by its **own clock** (`lastPaintAt`), fully decoupled from the text clock (`lastActAt`). Images use a **global FIFO queue** (`paint.queue`, depth `imageQueueMax`, default 8, adjustable in the panel 1-20) instead of a single latest-wins slot — bursts wait their turn instead of being dropped; one in flight at a time; overflow past the cap is turned away with a note. The per-image cooldown dropped from an artificial 30s ceiling to a 2s courtesy gap, since generation time itself (plus the one-at-a-time broker) is the real pace — no point gating shorter than, or stacking on top of, the actual generation time. `harness-image.js` extended with a deferred-paint queue test (FIFO drain + cap overflow). *Known follow-on:* the **text** lane is still awaited in-poll, so text replies to messages arriving mid-text-generation are briefly delayed; backgrounding the text lane too is possible but carries harness-timing risk and is left for later.
-- **v0.14.0**: **lockdown + engagement mode (#7).** A single `engageMode` axis — `normal` (reply when addressed + volunteer gate), `locked` (raid panic: ignore everyone but mods, no greeting/volunteering, **auto-mod still runs**), `open` (reply to everyone in the channel — the stream toggle, addressing no longer required). Driven in-channel by mods (`!chloe lockdown` / `unlock` / `open`, with `lock`/`openchat` aliases) for mid-raid speed, or from a panel selector; command-driven changes persist through the `onPoll`→summary→`cfgSet` channel so they stick and the panel reflects them. `harness-engage.js` pins all three modes + authorization.
-- **v0.15.0**: **emoji aliases + multi-prefix (#10).** The registry's `aliases[]` now carries emoji/short forms (🔒/🔓/📢 for lockdown/unlock/open, 📜 recap, 📊 status, 🆘 and `?` for help), and `commandPrefixes[]` lets extra prefixes like `!c` resolve to the same commands (matched longest-first so `!chloe` always wins over a shorter `!c`). Both editable from the panel. Built entirely on the v0.11.0 registry — no new command plumbing. `harness-commands.js` extended.
-- **v0.16.0**: **mod-action context (#11).** `applyModAction` now logs *every* action (not just permaban) to the purge-surviving modlog, each entry carrying a snapshot of the target's most recent lines (`modLogContextLines`, default 5, scrubbed of Discord tokens) — so a mod reviewing the log sees what the person was actually saying, and auto-mod actions leave an audit trail tagged `auto`. The panel's Mod log renders the captured lines beneath each entry. Context stays in the mod-only panel, never posted in-channel. `harness-modcontext.js` pins it. *(The audit caught a `[auto]` panel parser-trap during this build — switched to `(auto)`.)*
-- **v0.17.0**: **pinned transparency notice (#9).** A panel "Post & pin notice" button posts an editable disclosure and pins it (`transport.pinMessage` → `PUT /channels/{id}/pins/{id}`, needs Manage Messages). Idempotent — one-time unless re-pin is confirmed — with pinned state shown in the panel. Transport/panel only; no engine change.
-- **v0.18.0**: **diagnostics trace ring (#17).** A 60-entry ring in the userscript captures link, transport, and poll events (origin rejects, HTTP errors + 429 back-offs, dispatch failures, compact per-poll lines tagged with the engagement mode); a panel "Diagnostics" button reads it via `diag.trace`, prints it, and copies it to the clipboard — so the link's timing-dependent failure modes are diagnosable after the fact instead of only live in the console.
-- **v0.19.0**: **rich embeds (#8).** A `sendEmbed` path (`transport.sendEmbed` → POST messages with an `embeds` array) lets `help`, `status`, and `recap` render as Discord embeds — help as Mods/Anyone command fields, status as engagement/replies/images/auto-mod fields, recap as a titled body — with the plain-text ack kept as a fallback when the transport can't embed. Moderation acks stay plain text. `harness-embeds.js` pins both paths.
-- **v0.20.0**: **scheduled proactive beats (#12).** Interval-based, heavily activity-gated time presence: a beat (`id` + `intervalMs` + `text`/`texts[]`/`prompt`) is seeded on first sight, then fires at most one per poll — only when the room has been active within a window (never into a dead channel), never during lockdown, never mid reply/image, with a global min gap. Last-run is persisted per-channel; beats are edited from a panel JSON editor. The engine's `prompt`+`beatFn` path is ready for in-character generation once a page `beat` brain handler is added; v1 ships fixed/random-`texts` beats. `harness-beats.js` pins the lifecycle and every gate.
-- **v0.21.0**: **link/transport hardening.** Outbound send cap (#3) — a transport-level pacer serializes every post through one queue with a min gap, a hard floor under the engine cooldowns. `unsafeWindow` link binding (#14) and `'null'`-origin reply fallback (#15) make the postMessage link portable to userscript managers that sandbox `window` or report a `'null'` origin (Tampermonkey unaffected).
-- **v0.22.0**: **backlog close-out.** A `link` auto-mod rule type (URL-token extraction + confusables-folded match; redirect-following deliberately declined for SSRF/permission reasons). In-character **generated beats** — a beat `prompt` now routes through a page `beat` brain handler. **Text-lane backgrounding** — opt-in `backgroundText` (on in production) makes the reply/volunteer/greet/beat lane fire-and-forget (exposed as `summary.textJob`) so a 15-30s generation never stalls the poll loop; the per-lane locks still prevent overlap, and all existing harnesses run with it off (default) so nothing regressed. `harness-bgtext.js` pins the backgrounded path. The backlog is now clear.
-
-## Blocked
-- **T6** Gateway features (live join/leave/ban events, real slash commands, push) — needs a Gateway transport for the in-page loop or a move to Adapter B (Node + discord.js). Architectural decision, not a build-now item.
-
-## Backlog (prioritized)
-
-### Near-term — small, engine-local, fix behaviors we've watched misfire
-1. ~~**Start-settling greeting guard**~~ — ✓ **shipped v0.9.0**. *(lrrbot `join_filter.py`)*
-2. ~~**Per-author throttle**~~ — ✓ **shipped v0.9.0** (per-author queue + per-author cooldown + light global gap; `harness-fairness.js` pins it). *(lrrbot `throttle_base`)*
-3. ~~**Proactive outbound send cap**~~ — ✓ **shipped v0.21.0**. A transport-level pacer serializes ALL outbound posts (messages, embeds, image attachments) through one queue with a minimum gap (`sendMinGapMs`, default 1100ms) — a hard floor under the engine cooldowns so greet/reply/image/beat lanes and multi-ack batches can't burst past Discord's per-channel rate; 429 back-off (now traced) stays the backstop. *(lrrbot `twitch_throttle`, pump19 `Limiter`)*
-
-### Mid — meatier, clear wins
-4. ~~**Command registry — single source of truth**~~ — ✓ **shipped v0.11.0**. *(pump19 `command.py` + lrrbot)*
-5. ~~**Per-command throttle**~~ — ✓ **shipped v0.12.0** (`cooldownMs` per `COMMANDS` entry; moderation verbs unthrottled). *(pump19 `Limiter`)*
-6. ~~**Auto-moderation rule list**~~ — ✓ **shipped v0.12.0** (text/regex/confusables, reversible-only, mods exempt, panel-editable). v0.22.0 adds a **`link`** rule type (extracts URL tokens and matches the pattern inside them, confusables-folded) so a rule can target a domain precisely. Full redirect-following canonicalization is **declined**: it would mean the user's browser fetching arbitrary URLs from chat (SSRF/tracking) behind a wildcard `@connect`, not worth it for raid defense. *(lrrbot `spam.py` + `linkspam.py`)*
-7. ~~**Lockdown + global access mode**~~ — ✓ **shipped v0.14.0**. `engageMode` ∈ locked/normal/open. `!chloe lockdown` (raid panic: ignore everyone but mods; greeting + volunteering off; auto-mod stays on), `!chloe unlock` (→ normal), `!chloe open` (reply to everyone — the stream toggle). Mods-only; settable in-channel or from the panel selector; command changes persist via the `onPoll`→summary channel. `harness-engage.js` pins it. *(lrrbot `commands/lockdown.py` + bot-wide `access`)*
-
-### Polish
-8. ~~**Rich embeds**~~ — ✓ **shipped v0.19.0**. `transport.sendEmbed` + `cfg.sendEmbed` added; `help` (Mods/Anyone fields), `status` (engagement/replies/images/auto-mod fields), and `recap` (title + body) render as embeds when the transport supports them, with the existing text ack as fallback. Moderation acks stay plain text. `harness-embeds.js` pins it. *(§7.3)*
-9. ~~**Pinned transparency notice**~~ — ✓ **shipped v0.17.0**. Panel "Post & pin notice" button posts an editable disclosure ("Chloe is a roleplay bot character who remembers people here…") and pins it via `PUT /channels/{id}/pins/{id}` (needs Manage Messages); idempotent (one-time unless forced), state surfaced in the panel. *(§7.6)*
-10. ~~**Emoji command aliases + multi-prefix**~~ — ✓ **shipped v0.15.0**. `aliases[]` populated with emoji/short forms (🔒 lockdown, 🔓 unlock, 📢 open, 📜 recap, 📊 status, 🆘/? help); `commandPrefixes[]` adds extra prefixes (e.g. `!c`) resolved longest-first alongside `!chloe`. Settable from the panel; `harness-commands.js` covers both. *(pump19)*
-11. ~~**Mod-action context**~~ — ✓ **shipped v0.16.0**. Every mod action *and* every auto-mod action now writes a modlog entry that captures the target's most recent lines (capped at `modLogContextLines`, scrubbed of Discord tokens); the panel's Mod log renders the captured lines under each entry, and auto actions are tagged. Never dumped in-channel. `harness-modcontext.js` pins it. *(lrrbot `moderator_actions.py` / `chatlog.py`)*
-
-### Later / bigger
-12. ~~**Scheduled proactive beats**~~ — ✓ **shipped v0.20.0**. Interval-based beats (`{ id, intervalMs, text | texts[] | prompt, activeWithinMs? }`), seeded (not fired) on first sight, then fired at most one per poll — gated by recent room activity (never to a dead/empty channel), never during lockdown, never while replying/painting, with a global min gap. Panel JSON editor; persisted per-channel. In-character generation is wired (v0.22.0): a beat with a `prompt` calls a page `beat` brain handler; `text`/`texts` beats stay fixed/random. `harness-beats.js` pins lifecycle + gating. *(lrrbot `timers.py`, §7.11)*
-13. ~~**Image posts**~~ — ✓ **shipped v0.10.0**. Resolved the top-panel routing: awaiting `root.textToImagePlugin` from the panel runs the plugin's `$output` in the top-panel context (attaching the broker iframe there), and `.dataUrl` crosses the bridge — no manual iframe injection (that's what hangs from the panel). Posted as a native multipart attachment rather than via upload-host + URL unfurl. *(§7.5)*
-
-### Hardening (mined from weld-companion's skybridge anchor — portability, not bugs today)
-14. ~~**`unsafeWindow` link binding**~~ — ✓ **shipped v0.21.0**. The message listener and outbound posts bind to `unsafeWindow` when present (`unsafeWindow || window`), so the link survives managers that sandbox the wrapped `window`. Added the `@grant unsafeWindow` header.
-15. ~~**`'null'`-origin reply fallback**~~ — ✓ **shipped v0.21.0**. `replyTarget(o)` returns `'*'` only when the inbound origin is `'null'` (a sandboxed frame), else the exact origin; responses stay nonce-matched so this remains safe.
-16. ~~**Context mention-scrub**~~ — ✓ **shipped v0.11.0** (transcript + addressed message scrubbed before the brain sees them).
-17. ~~**Diagnostics trace ring**~~ — ✓ **shipped v0.18.0**. A 60-entry in-memory ring in the userscript records link (connect / disallowed-origin / dispatch-fail), transport (HTTP errors, 429 back-offs), and compact poll events; readable via the `diag.trace` dispatch and a panel "Diagnostics" button that dumps the ring to the log and copies it to the clipboard. *(weld skybridge trace ring)*
-
-## Distributed tab bridge (Queen/worker) — design accepted with corrections
-Spec reviewed and adopted with these binding decisions: (a) heartbeat is EVENT-DRIVEN — the queen pings, workers pong in the handler, because Chrome's intensive throttling clamps background-tab timers to ~1/min, so worker-owned heartbeat timers falsely die; (b) the Discord transport and bot token live ONLY in the queen tab — one token is one rate budget, and GM storage is script-global so the queen/worker split is a scheduling boundary, not a security boundary; (c) the genuinely parallel resource is each tab's AI/image brokers, so workers are brains; (d) envelopes are authenticated with a GM-stored bus token (page code can't read GM storage, so it can't join the channel); (e) **chat-submitted JavaScript execution is DECLINED permanently** — any eval surface in the userscript context can reach GM storage (the token) and GM_xmlhttpRequest; the declarative JSON job grammar (whitelisted verbs, no code) is the replacement.
-
-D1. ~~**Tab bridge layer**~~ — ✓ **shipped v0.23.0**. `bridge.js`: pure queen/worker messaging module (engine.js pattern — injected bus + clock, Node-testable). Register / queen-initiated ping-pong / silent-worker reaping / `request()` RPC with timeouts and busy-idle tracking / clean shutdown+bye. Bootstrap wires it: role from `#chloe-worker` URL hash (default queen — today's single tab IS the queen), BroadcastChannel bus with GM value-change fallback, worker tabs refuse `start` (engine + transport stay queen-only), worker registers `echo` + `brain` jobs (`brain` → this tab's `callPage`), `bridge.status`/`bridge.spawn`/`bridge.shutdown` dispatches, spawn via `GM_openInTab` (+ grants). `harness-bridge.js` pins the contract.
-D2. ~~**Brain offload scheduler**~~ — ✓ **shipped v0.24.0**. `bridge.dispatchJob(jobType, payload, timeoutMs, fallback)`: round-robin over idle workers (one-in-flight per worker via busy/idle), local fallback when none, and FAST failover — a worker lost mid-job rejects its pending requests on reap/bye, not at the request deadline, so the fallback completes the job promptly. Bootstrap `brainCall()` routes all six brain fns (`respond`/`judge`/`recap`/`greet`/`beat`/`paint`) through it; the engine sees the same promise + `{ok, value}` shape either way. Panel Tabs row: role display, Spawn worker, worker list with shut-down buttons. Harnessed in `harness-bridge.js` (D2 section).
-D3. ~~**Multi-channel Chloe**~~ — ✓ **shipped v0.25.0**. One engine per channel in the queen (`engines{}` registry), each with a namespaced store: the PRIMARY channel keeps the legacy un-prefixed namespace (existing installs keep their memory — zero migration), extras live under `ch:{id}:`. Shared paced transport (one token, one send budget) + all brains through the D2 scheduler. Per-channel: cursor/roster/modlog/beats (via the store), engageMode (`engageMode:{ch}` keys, so `!chloe lockdown` in one channel doesn't lock the others), guild-id cache, backfill completion. `config.setChannels` dispatch; panel gets an extra-channels input + a channel selector (auto-hidden with one channel) scoping the roster, mod log, mode selector, mod actions, pin notice, and permaban. `forget me` and moderation are per-channel by construction. `harness-multichannel.js` pins isolation: independent replies over one transport, roster isolation, the same user id with independent moderation state per channel, and no legacy-namespace leakage. Known simplification: persona/rules/mods are shared across channels (per-channel overrides can come later if needed).
-D4. ~~**Personality dials + mod reaction anchor**~~ — ✓ **shipped v0.27.0**. Six bounded dials (kindness/sarcasm/curiosity/playfulness/formality/verbosity, 0..1, clamped + key-whitelisted in the dispatch) attached at the `brainCall` seam for every text kind (never paint), so worker tabs always see fresh values; the page's `personaStyle(ctx)` renders only dials that deviate from neutral (0.45–0.55 silent) into the respond/beat/recap/greet prompts — `judge` is deliberately excluded so style can't bias the participation decision. Mod 📌-reaction anchoring: REST can't see reaction events, so a maintenance sweep (every ~10 polls, gated by `personaAnchor`) re-fetches the last 20 messages, finds 📌-bearing ones, fetches WHO reacted (`GET .../reactions/{emoji}`), and the newest MOD-anchored message becomes the channel's persona note — scrubbed (tokens/mentions/emoji codes), capped at 200 chars, stored per-channel, framed in the prompt as style-only guidance that never overrides rules. `!chloe persona` shows it, `!chloe persona clear` clears it; panel Personality card has the sliders, the anchor toggle, the current note, and a clear button. `harness-persona.js` pins anchoring (mod-gated, newest-wins, no-churn, sanitization, cap), ctx delivery, and the command.
-D5. **JSON job grammar + lifecycle polish** — declarative user-submitted jobs validated against a whitelist of task verbs (summarize, monitor, recap...); spawn backoff; worker-mode panel banner.
-D6. ~~**Queen failover (election)**~~ — ✓ **shipped v0.26.0**. Pure election in `bridge.js`, enabled by an injected lease adapter (GM `queen:lease` in production, in-memory in tests): a worker that hasn't heard the queen for `queenDeadAfterMs` (default 90s; coarse watchdog survives background-tab timer throttling) waits a rank-jittered delay, claims the lease, waits a settle window, and promotes ONLY if the read-back still shows its own claim (last-write-wins → one winner). Wake/sleep clock jumps between watchdog ticks RESET the watchdog (a suspended laptop must not elect a second queen). If two queens ever coexist (revival), the lease is the tiebreaker — the non-holder demotes, stops its engines, and re-registers as a worker. A promoted queen adopts surviving workers via ping→pong (pong-from-unknown auto-registers), strips `#chloe-worker` from its URL, and auto-resumes the engines iff `autoResume` (set true on `start`, false on `stop`). Every tab registers `echo`/`brain` handlers so a demoted ex-queen serves jobs immediately. `harness-failover.js` pins all four races; `harness-bridge.js` proves the feature is dormant without a lease (exact back-compat).
-D7. **Pool autosizing + discard resilience** — `poolSize` target maintained on the queen's tick (spawn when busy, don't replace when quiet), spawn backoff for pop-up heuristics, and "expected N, have M → respawn" recovery from Memory-Saver tab discards. README note: exempt perchance.org from Memory Saver for a stable pool.
-D-never. Chat-submitted JS execution, in any mode (see decisions above).
-
-## Panel UI v2 — "mission console" (panel-only; no userscript change)
-The control panel was reorganized from one long scroll of accreted cards into a console: a sticky **command bar** (Chloe wordmark with a heartbeat dot that pulses while she runs, link/run pills, the multi-channel selector, Start/Stop/Poll/Refresh) over a five-tab rail — **Setup** (channels, token), **Behavior** (engagement, abilities, beats, personality), **Moderation** (auto-mod rules, mods, transparency notice), **People** (roster), **System** (worker tabs, diagnostics) — with the log always docked below. Visual identity: deep-ink navy + the violet from her embed color (#8b5cf6), Chakra Petch display type over IBM Plex Sans, a faint dot-grid backdrop, and restrained micro-motion (heartbeat, tab underline glow, pane rise). Implementation was surgical: only the HTML/CSS region before the `<script>` was rewritten plus a small in-memory tab switcher appended to the script (it never touches `location.hash` — the worker role lives there); every one of the 65 original element ids was verified present so all existing JS wiring is untouched, and the parser audit stays clean (no square brackets in CSS selectors, no template literals).
-
-## Backlog — Carl-bot mining (botlabs-gg/carlbot-docs)
-Carl-bot is a Gateway/dashboard/slash bot, so most of it (slash commands, web config, leveling, starboard, reaction/auto roles, feeds, gateway-event logging, music/games) is out — wrong architecture or orthogonal to an AI-presence-plus-light-mod bot. These moderation ideas fit Chloe's reversible-first, human-in-loop model and refill the backlog:
-
-C1. ~~**Strike ladder with escalation**~~ — ✓ **shipped v0.23.0**. Per-user `strikes` decays (`strikeDecayMs`, default 24h/strike) then increments; the count walks `strikeLadder` by index (default ignore → 10m timeout → 1h timeout → soft-ban), capped at the last step — an irreversible ladder step is downgraded (F1: strikes never permaban). A rule `action:'warn'` and `!chloe warn @u [reason]` both escalate; `!chloe warns @u` reports the count; any `clear` resets to a clean slate. Auto-mod now scans BEFORE the suppression gate (skipping only terminal soft-ban) so an already-ignored repeat offender still escalates. Strike counts shown in the panel roster. `harness-strikes.js` pins it. *(Carl warn-threshold)*
-C2. **Rate / mention rule types** *(Carl message/mention/link spam)* — orthogonal to content patterns: `mentions` (≥N pings in one message → ping-raid) and `rate` (N messages within a window, read off the partition's `recent` timestamps). Both drop into the `autoModRules` array. Plus a cheap `caps` ratio heuristic.
-C3. **`defer` action** *(Carl drama channel)* — instead of auto-acting on a borderline match, post the offender + captured context + a jump link to a mod channel; optionally poll for a mod ✅/❌ reaction to apply/dismiss. The most Chloe-aligned idea in the repo.
-C4. **`delete` action + multi-action rules** *(Carl default-delete + comma punishments)* — add `DELETE /channels/{cid}/messages/{mid}` as an action (and "delete the triggering message"); allow a rule to carry an action *list* (e.g. delete + timeout + dm).
-C5. **`report` + jump links** *(Carl report channel)* — `!chloe report <thing>` posts to a mod channel with a jump link; retrofit jump links (`/channels/{guild}/{chan}/{msg}`) into modlog / mod-action-context entries.
-C6. **Smaller:** timestamped user-notes list (vs single `modNote`); per-rule allowlist beyond mods (trusted regulars exempt); raid `purge` via bulk-delete (gated by confirm like permaban); permission-based channel lockdown (distinct from engagement-lockdown).
-
-## Not worth porting (from the mines)
-- lrrbot's DB / web app / EventSub layers, and its command mega-regex (our prefix+verb model is simpler).
-- Atomic file-rename save — GM storage is already per-key.
-
-## Backlog — wide feature mine (Carl-bot, Dyno, MEE6, Red cogs, Shapes.inc, SillyTavern, Character.AI)
-Mined against Chloe's hard constraints: REST-polling only (no Gateway events — no real-time reactions/edits/deletes/voice/member-joins), browser-only + free, safety-first (no user code, no non-mod behavior changes, reversible-by-default). Grouped by fit. Sources noted inline.
-
-### E-batch — high-fit quick wins (each reuses the previous one's plumbing)
-- **E1. Highlights / keyword paging** (Carl-bot `highlight`/`hl`, Dyno Highlights). Users register keywords; Chloe DMs them context + a jump link when the word appears while they were away. Anti-spam from both sources: ~5-min per-user notify cooldown + suppress if the subscriber posted in that channel recently (computable from polled history). Matching bounded to her already-polled batches (Dyno disabled theirs server-wide for perf — don't scan everything). Low complexity. Deepens "she's watching the room for you."
-- **E2. AFK / away** (Red `away`, Seina `afk`). User marks away (+reason); on a ping Chloe answers in-character and optionally DMs the mention; auto-clears on their next post. Shares E1's "recently active?" calc + DM path. Low.
-- **E3. Reminders** (Red `reminder`, near-universal). `remind me in 2h to…` → stored due-time checked on the poll tick. Reuses the scheduled-beats scheduler. Cap per-user (existing throttles). Low.
-- **E4. Birthdays / anniversaries** (MEE6-alt standard). Opt-in date → daily tick → in-character greeting folded into the familiarity-greeting system. On-theme for a memory companion. Low.
-- **E5. Image alt-text** (Discord `attachments[n].description`). Chloe wrote the image prompt, so she already knows the description — pass it as alt text. Trivial, pure accessibility win.
-- **E6. "What did I miss?" recap-since-last-seen** (Red `convocompact`, brandons209 TLDR). Generalize the shipped recap embed to "since you left." Pairs with E1/E2 for a welcome-back moment. Low–med.
-
-### F-batch — high-value character-depth builds (the real differentiator)
-- **F1. Fact-extraction memory** (Mem0 ADD/UPDATE/DELETE/NOOP loop, arXiv 2504.19413; Google RecLLM salient-facts; MemBuilder). Enrich each roster entry with extracted enduring facts (plays guitar, writing a thesis), injected into prompts. Use summarization/fact-lists, NOT a vector DB (RecLLM + SillyTavern Qvink show pure-summary memory works and fits GM storage). Conflict-resolution is the hard part — adopt the four-op contract. Med–high. **Biggest privacy surface: must be transparent, user-viewable, and fully covered by the existing forget-me + permaban purge before shipping.**
-- **F2. Hierarchical memory (short→long summaries)** (SillyTavern Qvink MessageSummarize; MemoryBooks scene→arc). Per-message rolling summaries, important ones promoted to durable memory; avoids "lost in the middle" whole-history summaries and unbounded prompt growth on long channels. Extends F1; mods can correct/anchor summaries via the existing 📌 mechanism. Med–high.
-- **F3. Free Will / proactive presence — BOUNDED** (Shapes.inc Free Will: introverted/chill/outgoing tiers + interest keywords + hard rate limits; Dead-Chat-Reviver bots: inactivity threshold + Nightmode + timezone). Fusion of shipped AI-volunteering + beats + E1 keyword matching + familiarity check-ins. Intensity reuses the personality-dial architecture, **defaults to "chill" (wait until mentioned)**. Med. **Highest annoyance risk — hard per-channel/per-user caps, Nightmode window, respect lockdown/open, never DM-spam. If anyone says "stop," drop intensity immediately.**
-- **F4. Poll-derived starboard / "Hall of Fame"** (Starboard ecosystem). No reaction events, but Chloe can REST-fetch reactions on a bounded set of recently-polled messages; promote ⭐≥N to a showcase channel as an embed + an in-character one-liner of praise. Needs a dedup ledger + reaction-fetch budgeting. Med. Proves the "re-fetch reactions on recent set" pattern.
-- **F5. Polls / suggestions with tallies** (Carl-bot suggestions). Post a message, read reaction counts via REST (same pattern as F4), tally polled (slightly delayed, fine). Mod-gated approval, reversible. Med.
-- **F6. Leveling / recognition — HOLD unless asked** (MEE6/Lurkr). XP from polled message counts is approximate (misses bursts between polls) — frame as "Chloe's sense of who's around," bias to *noticing/praising* over competitive grind; rank cards could use the browser **canvas** (no new network perms). Role rewards stay mod-gated. Med.
-
-### G-batch — conversation quality / prompting (NO new infrastructure; do these alongside everything)
-- **G1. Anti-repetition guard** (Antislop, arXiv 2510.15061; layered "prompt + recent-reply cache" approach). Inject "avoid your recent phrasings" + Chloe's last few replies; optional regen on n-gram overlap. Low. Biggest quality-per-effort win — do first.
-- **G2. Lean character-card discipline (C.O.R.E.)** (HammerAI/ParasiticRogue; "lean cards beat lore-heavy"). Refactor the persona prompt into Core/Output/Rules/Examples with 2–3 short example exchanges. Low.
-- **G3. In-character refusal / anti-OOC** (MegaNova OOC analysis; C.AI over-caution failures). Decline *as Chloe*, no "as an AI language model" boilerplate — but she's openly a bot (transparency notice), so don't deny it; just decline gracefully in-voice. Keep real moderation behavior. Low; improves safety UX.
-- **G4. Multi-speaker handling + explicit silence policy** (C.AI group-chat guidance; Shapes "read the room"). Format polled history as labeled turns (`User: msg`); sharpen the shipped AI-volunteering with an explicit "stay quiet when not addressed / topic doesn't need you / you just spoke" policy. Low.
-- **G5. Time-awareness callbacks** (companion episodic-recall design). Inject last-seen deltas + a recent fact (needs F1) into greetings — "you've been quiet three days," "how'd the exam go?" Low (high value once F1 exists). Keep warm, not surveillant.
-- **G6. Mood continuity** (companion mood-state design; tempered by Princeton CITP / Frontiers over-reliance findings). Small mood/valence state injected into prompts, modulated by the trait dials. Low–med. Values call: warm but not attachment-maximizing; encourage real-world connection.
-
-### Rejected from this mine (wrong architecture / safety / scope)
-- Reaction-role self-service pickers (Carl/YAGPDB) — needs real-time reaction events; grants non-mod role changes (against our gating).
-- Music / voice (Red, Rythm) — no voice, no Gateway. Hard wall.
-- Real-time edit/delete "who deleted what" logging (brandons209) — needs edit/delete + audit-log events we can't see. Our poll-time mod-log context is the best approximation.
-- Arbitrary custom commands / TagScript / code execution (YAGPDB, BotGhost) — permanent no; the planned whitelisted JSON job grammar is the safe substitute.
-- Economy / virtual currency (vrt-cogs, OwO) — generic utility, grind dark-patterns, low character value. Skip unless asked.
-- NSFW / "unfiltered" modes (Shapes unfiltered) — against safety philosophy + Discord policy.
-- Auto-kick/ban on join via global lists (PhasecoreX BanCheck, Beemo) — needs join events + irreversible auto-ban; our human-confirmed permaban covers the safe case.
-- Web config dashboard — requires hosting we deliberately avoid; config stays in-Discord + in-script.
-
-### Cross-cutting notes for the whole mine
-- REST budget: Discord caps 50 req/s; 10k invalid (401/403/429) per 10 min → 24h ban. Reaction-fetch features (F4/F5) must bound their re-check window and honor `Retry-After`.
-- Browser advantages worth exploiting (no new network perms): **canvas** for rank/recap/birthday image cards; the **worker pool** to offload F1/F2/E6 AI work off the queen's poll loop (perfect "lend me your AI" jobs).
-- Privacy: F1/F2 + memory are the biggest trust surface — transparent, user-viewable, purge-complete; resist attachment-maximizing design (companion over-reliance literature).
+# Chloe — Consolidated Feature Roadmap (forward / unbuilt)
+
+The single source of truth for what's LEFT to build, as of v0.69.0. Consolidates every remaining item
+from: the cognitive-architecture roadmap (uploaded), the design docs on disk that aren't yet shipped,
+the RESEARCH-IMPROVEMENTS electives, the Weld mining survey, and the cross-discipline GitHub scan
+(game-AI / actor / rate-limiter patterns). Anything already shipped (importance, reflection, rolling
+summary, goals, episodic, event-graph, affect, consolidation, pace, People-CRUD, excise, working
+memory, deliberation) is intentionally OMITTED — see ROADMAP.md for those.
+
+Each item: source, what's missing, the borrowed technique, fit/risk, and readiness (DESIGN EXISTS =
+ready to build; DESIGN NEEDED = design pass first). Ordered within tiers by leverage-to-risk.
+
+---
+
+## Tier 1 — ready to build now (design exists, low risk, clear value)
+
+### 1. Exact token counting  ·  DESIGN EXISTS (DESIGN-tokens.md)  ·  *from weld.tokens*
+`estimateTokens` already has a `cfg.countTokens` hook but it's unwired, falling back to `chars/4`
+(±25%). weld.tokens loads the actual DeepSeek-R1 tokenizer Perchance uses, so every budget (context
+packing, the 5000-tok ceiling) becomes exact. Loads lazily in the page (engine runs in the Perchance
+realm, so `import()` works), exposes a SYNCHRONOUS `countSync` into the existing hook, `chars/4`
+fallback during the cold window. PIN the transformers version (not @latest). Default on; off == today.
+**Why first:** the engine shape doesn't change (the hook exists), it tightens every downstream budget
+at once, and it's near-zero risk. Highest leverage-to-effort on the board.
+
+### 2. Output hygiene  ·  DESIGN NEEDED (small)  ·  *from weld.clean*
+She stores/sends raw model text. `clean()` trims dangling half-sentences after truncation, strips
+role-name bleed ("Chloe:" prefixes the model sometimes emits), collapses repeats, balances code
+fences. The memory notes already flag `stopReason` truncation detection as unreliable — clean's
+`trimPartial` is the defensive counterpart. Visible quality win at the reply seams. Mirror the proven
+functions into the engine (no runtime dependency), gate behind a default-on correctness toggle.
+
+---
+
+## Tier 2 — the roadmap's named gaps (design needed, real cognitive value)
+
+### 3. Attention Manager  ·  DESIGN NEEDED  ·  *cognitive roadmap (2nd priority) + game-AI Utility AI*
+The roadmap's clearest unbuilt cognitive system, and the GitHub scan sharpened it: her one-AI-pass
+ladder is a FIXED priority order (reply > volunteer > greet > consolidate > deliberate). Game-AI
+**Utility AI** (gdx-ai, the auto-battler pattern) replaces fixed rank with SCORED selection — each
+candidate action computes a utility from current signals (affect, pace, goal-relevance, mentions,
+moderation concern, time-since), highest wins. This lets her choose to deliberate OVER greeting when
+curiosity is high and the room is quiet, rather than always following rank. Unifies the piecemeal
+significance scoring she already has (reactions, priority) into one event/action scorer.
+**Fit:** medium effort; it generalizes machinery she has. The single most roadmap-aligned next step.
+
+### 4. Contradiction flag-and-clarify  ·  DESIGN NEEDED  ·  *cognitive roadmap (3rd priority)*
+Consolidation currently drops the OLDER side of a contradiction silently. The roadmap wants the
+opposite for salient cases: when a new fact conflicts with a held one ("Alice dislikes roleplay" vs
+"Alice is actively roleplaying"), FLAG it and (optionally) let her ask a gentle clarifying question
+rather than silently overwriting. Anterior-cingulate analog. **Fit:** composes with the existing
+consolidation + People-CRUD; the risk is keeping the clarify-question rare and non-annoying (gate hard).
+
+### 5. User modeling schema  ·  DESIGN NEEDED  ·  *cognitive roadmap (2nd priority)*
+PARTIAL today: facts + insights model users implicitly. The roadmap wants explicit dimensions —
+interests, expertise, communication style, humor preference — so she can adapt register ("Alice is
+technical, enjoys detail; Bob is new, needs simpler"). **Fit:** a light structured layer over the
+existing partition; risk of over-engineering — keep it a few inferred tags, not a questionnaire. Lower
+priority than 3–4 (insights already cover much of this).
+
+---
+
+## Tier 3 — cross-discipline borrows (design needed, novel capability)
+
+### 6. Deferred self-intents  ·  DESIGN NEEDED  ·  *from gdx-ai MessageDispatcher (delayed telegrams)*
+The missing TEMPORAL axis. Her reminders are user-facing (they send a message when due). Game-AI's
+delayed-telegram pattern is different: an agent schedules a FUTURE INTERNAL ACTION for itself — fire a
+behavior, not a message. "Re-check this unresolved thread in an hour," "re-deliberate this topic after
+gathering more," "follow up with the new user tomorrow if they went quiet." Today everything she does
+is triggered by the current poll; this adds self-scheduled future cognition. **Composes** with
+deliberation (a deliberation could schedule its own follow-up) and working memory. **Fit:** low-risk —
+same dueAt-queue shape as reminders, but the payload is an internal handler, not a `send`. Strong,
+distinctive, genuinely not on any existing list.
+
+### 7. Feedback / preference learning  ·  DESIGN NEEDED (large)  ·  *RESEARCH-IMPROVEMENTS Tier 3*
+The biggest differentiator and the largest design surface. She OBSERVES but never ADAPTS from whether
+her own replies landed. Cheap no-RL signals available poll-side: reaction-as-reward (👍/😂 vs 👎 on
+HER messages — she already sweeps reactions), continuation-vs-abandonment (did they reply or go
+quiet?), explicit `!chloe good/bad` mod feedback. Aggregate into a per-channel "what's landing"
+tendency (preferred length/playfulness) feeding the soft-context — a bandit-lite nudge, NOT training.
+**Fit:** high value, high effort; deserves its own dedicated design pass. The `submitUserRating`
+roadmap stub lives here.
+
+---
+
+## Tier 4 — backend refactors & resilience (mostly mining, lower urgency)
+
+### 8. Unify eviction  ·  DESIGN NEEDED (refactor)  ·  *from weld.gallery's bounded-store pattern*
+Partition fact caps, the episode ring, the context ring, and the operator-fact protection (hand-rolled
+in v0.66.0) all reimplement "bounded store with pinned-protection + eviction." Unify under one helper
+so the next protect-this-from-eviction need is trivial, not bespoke. Pure debt paydown; no user-visible
+change. Do when touching that machinery anyway.
+
+### 9. Transport resilience jitter  ·  DESIGN NEEDED (small)  ·  *from weld.fetch + rate-limiter scan*
+Her AICC character-fetch and super-fetch calls are bare. weld.fetch (and the adaptive-rate-limiter
+repos found) give normalized retry/backoff with FULL JITTER for 429s. Small, defensive, composes with
+the existing breaker/meter. Folds in whenever transport is next touched.
+
+### 10. Semantic recall (FSRS-lite + local embeddings)  ·  DESIGN NEEDED (large)  ·  *weld.embed*
+The "most character-meaningful" elective and the highest-value/highest-effort memory upgrade: replace
+keyword-overlap recall with MEANING overlap via local embeddings (weld.embed: a transformer in a Web
+Worker, vectors cached in IndexedDB), with FSRS-lite spaced-repetition strengthening so memories she
+revisits stay sharp. A real commitment (adds a Worker + model download), so it's its own project, not a
+quick win. Explicitly noted: this is the one item that lifts the "no embeddings server" constraint the
+research repeatedly worked around.
+
+---
+
+## Explicitly NOT pursuing (researched / scanned, rejected for her envelope)
+- **Multi-agent debate / swarm / crew / director** (Weld agent suite, blackboard multi-agent): blocked
+  by the 1-broker-serial + 5000-tok envelope. Deliberation's map-reduce is the allowed form.
+- **GOAP planning** (ReGoap, dogoap): preconditions/effects/A*-over-actions suits NPCs assembling
+  multi-step world-state plans; Chloe's actions don't chain that way. Her reactive ladder + goals
+  cover the persistent-intent need. Skip.
+- **Formal FSM refactor** (behaviac/beehave): she has implicit modes (lockdown, proc-modes, lifecycle);
+  a formal state machine would be refactoring for its own sake. Skip unless a concrete need appears.
+- **Vector/embedding memory as a SERVER**, full agent planning loops, function-calling memory edits:
+  per RESEARCH-IMPROVEMENTS — no embeddings endpoint, reactive-by-design, no reliable tool-calling.
+- **VN / audio / confetti / voice** (Weld): wrong product (Discord-output-only).
+
+---
+
+## Recommended build order
+**1 (tokens) → 2 (clean)** — ready, cheap, tighten/clean everything downstream.
+**→ 3 (attention manager)** — the headline roadmap gap; generalizes machinery she has.
+**→ 6 (deferred self-intents)** — distinctive new axis, low-risk, composes with deliberation.
+**→ 4 (contradiction flag)** — completes the consolidation story.
+Then the big dedicated passes as appetite allows: **7 (feedback learning)** and **10 (semantic recall
++ FSRS)** — each its own project. **8–9 (eviction unify, jitter)** fold in opportunistically when their
+machinery is next touched. **5 (user-model schema)** only if insights prove insufficient in practice.

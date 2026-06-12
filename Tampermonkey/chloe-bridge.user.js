@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.64.1
+// @version      0.69.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -76,6 +76,20 @@
       adaptivePolling: true,  // back off when quiet, snap to fast when active (spec 7.10)
       pollFloorMs: 4000,      // fastest cadence (active / pending work)
       pollCeilMs: 30000,      // slowest cadence (long quiet)
+      // Pace core (DESIGN-pace.md): one Jacobson rhythm estimator drives debounce, polling, quiet
+      // detection, and an AI-cadence floor. Every consumer falls back to its fixed constant when
+      // pace is off or too few samples. NO new AI calls.
+      adaptivePace: true,
+      paceMinSamples: 5,            // need this many gap observations before rhythm drives timing
+      paceGapBeta: 0.25,           // deviation EWMA weight (mirrors the brain meter)
+      paceDebounceWgap: 0.5,       // debounce ≈ avgGap*Wgap + gapVar*Wdev ...
+      paceDebounceWdev: 1.0,
+      debounceFloorMs: 800,        // ... clamped: never interrupt-fast
+      debounceCeilMs: 2500,        // ... and never slower than the old fixed debounce
+      pollAdditiveStepMs: 4000,    // AIMD additive increase per silent poll (default = floor)
+      pollBusyCeilMs: 12000,       // busy room: relax polling only PARTWAY to here (passive ingest, still mention-responsive) — not the full pollCeilMs
+      paceQuietZ: 3,               // silence counts as "quiet" at this many deviations past typical
+      paceMinAIIntervalMs: 90000,  // a background AI pass won't re-run faster than this wall-clock floor (anti cost-multiplier)
       // ---- T1 reply path (all optional; absent => pure T0 read-only) ----
       respond: null,          // async (context) -> { ok, value:text }   (the brain; runs in the generator page)
       send: null,             // async (channelId, text) -> any           (POST to Discord; runs in the userscript)
@@ -239,6 +253,24 @@
       // room. Front-end only (no AI calls). Flavor for her voice, NEVER a lever on users: whitelist
       // phrasing, a hard confidence floor (no spirals), and silence when she's near neutral.
       ownAffect: false,
+      // Working memory (DESIGN-working-memory.md): a volatile per-channel workspace — current topic,
+      // who's here, the active goal, her recent decisions, her mood. Decays on read like affect.
+      // Mostly synthesized from signals she already has; only `topic` can cost a (reused) call.
+      workingMemory: false,
+      // Idle deliberation (DESIGN-deliberation.md): a ReAct map-reduce reasoning loop. When genuinely
+      // idle and curious, she decomposes a thought into atomic sub-questions, answers them (parallel
+      // across worker tabs when a pool exists), and recomposes an insight/goal. NEVER sends. Curiosity-
+      // gated (self-limiting: a resolved deliberation lowers curiosity). Opt-in (spends real calls).
+      idleDeliberation: false,
+      deliberateCuriosityFloor: 0.62,   // only think when curiosity is meaningfully above neutral
+      deliberateMinGapMs: 600000,       // hard floor between deliberations (10m) so bursts can't chain
+      deliberateMaxSubQuestions: 4,     // cap the fan-out (decompose returns up to this many)
+      deliberateCuriosityDrop: 0.18,    // a completed deliberation scratches the itch (lowers curiosity)
+      workTopicTtlMs: 1200000,      // 20m of inactivity -> the "current topic" goes null (not stale)
+      workDecisionTtlMs: 1800000,   // a recorded decision ages out after 30m
+      workDecisionsMax: 5,          // bounded ring of recent notable actions
+      workTopicEveryPolls: 20,      // name the topic at most this often (and only when not reusing the summary)
+      workParticipantsMax: 5,
       affectDecayPerHour: 0.8,      // each value relaxes toward neutral 0.5 by this factor per hour
       affectConfidenceFloor: 0.3,   // she never drops below this — quieter, not despondent
       affectGain: 0.08,             // size of one event nudge
@@ -380,6 +412,8 @@
     var CHANSUM_KEY = 'chansum:' + cfg.channelId;   // rolling recursive summary of the channel's arc
     var EPI_KEY = 'epi:' + cfg.channelId;           // episodic memory ring (experiences as events)
     var AFFECT_KEY = 'affect:' + cfg.channelId;     // her own internal state {curiosity, confidence, warmth}
+    var WORK_KEY = 'work:' + cfg.channelId;         // volatile cognitive workspace {topic, participants, goal, recentDecisions, mood, at}
+    var DELIB_KEY = 'delib:' + cfg.channelId;       // { lastAt } — min-gap floor between deliberations
     var PROC_KEY = 'procmode:' + cfg.channelId;     // active procedural mode { mode, until, by, emoji }
     var POLL_KEY = 'poll:' + cfg.channelId;         // active reaction poll { messageId, question, options, endsAt }
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
@@ -409,6 +443,7 @@
     // starve replies to everyone else. A lost queue on reload is acceptable.
     var reply = { queue: {}, replying: false };
     var lastReplyAt = {};                // per-author: when she last replied to that person
+    var lastLineId = null;               // most recent non-bot channel message id (forget-that fallback target)
     var lastPollIngested = false;        // activity-aware sweep: did the previous poll bring messages?
     var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
@@ -798,6 +833,10 @@
     // fails). Reactions aren't paced and don't consume the send budget, so the ack is truly instant.
     function ackWorking(messageId, emoji) {
       if (!cfg.ackReactions || !messageId || typeof cfg.react !== 'function') return;
+      try { Promise.resolve(cfg.react(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
+    }
+    function ackReact(messageId, emoji) {
+      if (!messageId || typeof cfg.react !== 'function') return;
       try { Promise.resolve(cfg.react(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
     }
     function clearAck(messageId, emoji) {
@@ -1575,7 +1614,20 @@
             return { ack: 'current mode (set by ' + rec.by + ', ' + mins + 'm left): \u201c' + rec.mode + '\u201d' };
           });
         } },
-      { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' }
+      { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' },
+      { verb: 'forget-that', modOnly: true, help: 'forget-that (reply to a message, or @user) \u2014 excise it from my memory', handler: function (modId, c) {
+          // reply target wins; then an @mentioned user's last line; then the most recent channel line.
+          if (c.referenced && c.referenced.id) {
+            return exciseMessage(c.referenced.id).then(function (r) { return { ack: r.removed ? ('\uD83E\uDDFD forgotten \u2014 dropped that from my memory') : ('I wasn\u2019t holding that message in mind'), react: '\uD83E\uDDFD' }; });
+          }
+          if (c.targetId) {
+            return exciseLastFromUser(c.targetId, 1).then(function (r) { return { ack: r.removed ? ('\uD83E\uDDFD forgot ' + (c.targetName || 'their') + ' last line') : ('nothing recent of theirs to forget'), react: '\uD83E\uDDFD' }; });
+          }
+          if (lastLineId) {
+            return exciseMessage(lastLineId).then(function (r) { return { ack: r.removed ? ('\uD83E\uDDFD forgotten \u2014 dropped the last message from my memory') : ('nothing recent to forget'), react: '\uD83E\uDDFD' }; });
+          }
+          return Promise.resolve({ ack: 'reply to the message you want me to forget, or @mention whose last line to drop' });
+        } }
     ];
     function resolveVerb(word) {
       word = String(word || '').toLowerCase();
@@ -1731,7 +1783,7 @@
               // follows the 5-most-recent image clamp instead (the user wants recent images on startup).
               if (isStartupBatch && c.cmd !== 'image') { log('[chloe.T3] startup: not replaying a backlog command (' + c.cmd + ')'); return; }
               c.messageId = m.id; c.authorName = m.author.username;   // for queue-ack reaction + caption
-              if (m.referenced_message) c.referenced = { text: m.referenced_message.content || '', authorName: (m.referenced_message.author && m.referenced_message.author.username) || '' };
+              if (m.referenced_message) c.referenced = { id: m.referenced_message.id, text: m.referenced_message.content || '', authorName: (m.referenced_message.author && m.referenced_message.author.username) || '' };
               commandCount++; commandAuthors[m.author.id] = true;
               if (c.cmd === 'image' && !mayPaint(m)) { log('[chloe.img] startup: skipping a backlog image command'); return; }   // startup clamp
               if (c.cmd === 'forget') {
@@ -1741,8 +1793,8 @@
                 }
                 return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person
               }
-              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
-              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
+              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
+              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
             }
@@ -2199,7 +2251,9 @@
       return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
         var last = rh && rh.lastActivity;
         if (last == null) return false;   // no activity recorded yet = nothing to tidy
-        return (clock.now() - last) >= (cfg.consolidateIdleMs || 1800000);
+        var z = paceIsQuiet(clock.now());   // pace core: rhythm-relative quiet (null when pace not ready)
+        if (z !== null) return z;           // a fast room is "idle" sooner; a slow room later — relative to ITS rhythm
+        return (clock.now() - last) >= (cfg.consolidateIdleMs || 1800000);   // fallback: flat threshold
       });
     }
     // Structural: pure local compute, no LLM. Dedup exact/near facts (keep higher importance + newer),
@@ -2276,7 +2330,10 @@
           if (ca < oldest) { oldest = ca; due = p; }
         });
         if (!due) return null;
-        var inputs = due.facts.map(function (f) { return f.text; });
+        var operatorFacts = due.facts.filter(function (f) { return f.source === 'operator'; });
+        var consolidatable = due.facts.filter(function (f) { return f.source !== 'operator'; });
+        if (!consolidatable.length) return null;   // nothing but operator-owned facts -> leave them alone
+        var inputs = consolidatable.map(function (f) { return f.text; });
         return Promise.resolve(cfg.consolidateFn({ name: due.name, facts: inputs })).then(function (r) {
           return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
             if (!p) return null;
@@ -2295,12 +2352,18 @@
             if (!clean.length) return store.set(partKey(p.id), p).then(function () { return null; });   // nothing validated: leave facts as-is
             // map cleaned texts back onto fact objects, preserving importance/at of the best-matching input
             var oldFacts = Array.isArray(p.facts) ? p.facts : [];
-            var newFacts = clean.map(function (t) {
+            var consolidated = clean.map(function (t) {
               var nt = normFact(t);
-              var match = oldFacts.filter(function (f) { var nf = normFact(f.text); return nf === nt || nf.indexOf(nt) >= 0 || nt.indexOf(nf) >= 0; }).sort(function (a, b) { return (b.i || 5) - (a.i || 5); })[0];
-              return { text: t, i: (match && match.i) || 5, at: (match && match.at) || clock.now() };
+              var match = consolidatable.filter(function (f) { var nf = normFact(f.text); return nf === nt || nf.indexOf(nt) >= 0 || nt.indexOf(nf) >= 0; }).sort(function (a, b) { return (b.importance || 5) - (a.importance || 5); })[0];
+              return { id: (match && match.id) || mintFactId(), text: t, importance: (match && match.importance) || 5, source: 'observed', at: (match && match.at) || clock.now() };
             });
-            if (newFacts.length > (cfg.factsPerUser || 6)) newFacts = newFacts.slice(-(cfg.factsPerUser || 6));
+            // operator facts are authoritative — always kept, unchanged, ahead of the consolidated set.
+            var newFacts = operatorFacts.concat(consolidated);
+            if (newFacts.length > (cfg.factsPerUser || 6)) {
+              var keepOp = newFacts.filter(function (f) { return f.source === 'operator'; });
+              var rest = newFacts.filter(function (f) { return f.source !== 'operator'; }).slice(-(Math.max(0, (cfg.factsPerUser || 6) - keepOp.length)));
+              newFacts = keepOp.concat(rest);
+            }
             var delta = oldFacts.length - newFacts.length;
             p.facts = newFacts;
             return store.set(partKey(p.id), p).then(function () {
@@ -2500,6 +2563,7 @@
         // rolling window of THIS user's lines (observed facts only; no inferences hardened in)
         p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
         if (p.recent.length > cfg.recentWindow) p.recent = p.recent.slice(-cfg.recentWindow);
+        lastLineId = msg.id;   // track newest line so `forget-that` (no reply/target) can drop it
 
         // speaker ring: dedup-consecutive distinct author ids, keep last N
         if (ring[ring.length - 1] !== msg.author.id) {
@@ -2698,6 +2762,10 @@
                 var now = clock.now();
                 if (rh.lastActivity != null) {
                   var gap = now - rh.lastActivity;
+                  // pace core: mean (EWMA, alpha 0.3) AND deviation (EWMA, beta) — the Jacobson pair,
+                  // mirroring the brain meter. gapVar feeds rhythm-relative debounce + quiet z-scores.
+                  var dev = Math.abs(gap - (rh.avgGapMs == null ? gap : rh.avgGapMs));
+                  rh.gapVarMs = rh.gapVarMs == null ? Math.round(dev) : Math.round(rh.gapVarMs * (1 - (cfg.paceGapBeta || 0.25)) + dev * (cfg.paceGapBeta || 0.25));
                   rh.avgGapMs = rh.avgGapMs == null ? gap : Math.round(rh.avgGapMs * 0.7 + gap * 0.3);
                   rh.samples++;
                 }
@@ -2758,20 +2826,34 @@
                     return processCheckin();
                   }).then(function (checkin) {
                     if (checkin) summary.checkin = checkin;
+                    // AI-cadence floor (pace core): adaptive polling makes "every N polls" a variable
+                    // wall-clock time; a fast room would over-run these AI passes. aiPassDue gates each
+                    // on its poll cadence AND a minimum wall-clock interval since it last ran.
+                    function aiPassDue(name, cadenceOk) {
+                      if (!cadenceOk) return false;
+                      if (!cfg.adaptivePace || !paceReady()) return true;   // floor only engages once rhythm is established (else: exactly today's every-N-polls)
+                      var now2 = clock.now(), last2 = paceLastAI[name] || 0;
+                      if (now2 - last2 < (cfg.paceMinAIIntervalMs || 90000)) return false;
+                      paceLastAI[name] = now2; return true;
+                    }
                     // One gated AI pass per poll (each is an AI call): facts first, then rolling
                     // channel summary, then reflection — whichever is due this poll.
-                    if (cfg.factMemory && cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0) return processFacts();
+                    if (cfg.factMemory && aiPassDue('facts', cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0)) return processFacts();
                     // (every-1) form: fires on the Nth poll, never poll 1 — the first poll can be a
                     // cold-start backlog and the room should accumulate before being summarized.
-                    if (cfg.channelSummary && cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)) return processChannelSummary().then(function (cs) { if (cs) summary.channelSummary = true; return null; });
-                    if (cfg.reflection && cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
-                    if (cfg.episodicMemory && cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)) return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; });
+                    if (cfg.channelSummary && aiPassDue('summary', cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1))) return processChannelSummary().then(function (cs) { if (cs) { summary.channelSummary = true; summary._sumText = cs; } return null; });
+                    if (cfg.reflection && aiPassDue('reflect', cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1))) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
+                    if (cfg.episodicMemory && aiPassDue('episodes', cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1))) return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; });
                     if (cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1)) {
                       return channelIsIdle().then(function (idle) {
                         if (!idle) return null;
                         return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; });
                       });
                     }
+                    // idle deliberation: lowest priority (thinking yields to maintenance). Self-gated
+                    // inside deliberate() on curiosity + idle + min-gap, so calling it each poll is cheap
+                    // (a store read) until those align; only then does it spend the decompose/map/reduce calls.
+                    if (cfg.idleDeliberation) return deliberate().then(function (d) { if (d) summary.deliberated = d.type; return null; });
                     if (cfg.ownAffect) return affectTick().then(function () { return null; });   // not an AI pass; cheap ignored-check
                     return null;
                   }).then(function (facts) {
@@ -2780,7 +2862,15 @@
                   });
                   function finishPoll() {
                     pollCount++;
-                    var tail = Promise.resolve(summary);
+                    var tail = refreshPace().then(function () { return summary; });   // pace core: refresh the rhythm cache once per poll
+                    if (cfg.workingMemory) { tail = tail.then(function () { return workSync(summary._sumText || null).then(function (w) { if (w && (w.topic || (w.participants && w.participants.length))) summary.workspace = { topic: w.topic, participants: (w.participants || []).length }; return summary; }); }); }
+                    if (cfg.workingMemory) {   // record her notable actions this poll into the workspace decision ring
+                      var did = [];
+                      if (summary.replied) did.push('replied to ' + summary.replied);
+                      if (summary.volunteered) did.push('spoke up unprompted');
+                      if (summary.greeted) did.push('greeted ' + summary.greeted);
+                      if (did.length) tail = tail.then(function () { var c = Promise.resolve(); did.forEach(function (d) { c = c.then(function () { return noteDecision(d); }); }); return c.then(function () { return summary; }); });
+                    }
                     var sweepDueByCadence = cfg.reactionSweepEveryPolls > 0 && (pollCount % cfg.reactionSweepEveryPolls) === 0;
                     var sweepDueByActivity = lastPollIngested;   // reactions cluster seconds after fresh messages
                     lastPollIngested = (summary.ingested || 0) > 0;
@@ -2826,7 +2916,7 @@
       var p = null;
       Object.keys(reply.queue).forEach(function (id) {
         var e = reply.queue[id];
-        if (now - e.at < cfg.debounceMs) return;                        // still bursting
+        if (now - e.at < currentDebounce()) return;                     // still bursting (rhythm-relative)
         if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) {            // per-author cooldown
           if (!e.throttleAcked) { e.throttleAcked = true; ackWorking(e.messageId, cfg.ackThrottleEmoji); scheduleAckClear(e.messageId, cfg.ackThrottleEmoji); }   // ⏳ why she's not answering yet
           return;
@@ -2918,7 +3008,7 @@
     function kickImage() {
       if (!imageEnabled() || paint.painting || !paint.queue.length) return null;
       var now = clock.now();
-      if (now - paint.queue[0].at < cfg.debounceMs) return null;          // head still settling
+      if (now - paint.queue[0].at < currentDebounce()) return null;       // head still settling (rhythm-relative)
       if (now - lastPaintAt < cfg.imageCooldownMs) return null;           // courtesy gap (image clock only)
       if (typeof cfg.canSend === 'function' && !cfg.canSend('image')) return null;   // cross-channel global image budget
       var p = paint.queue.shift(); paint.painting = true;
@@ -2983,7 +3073,7 @@
       if (!gateEnabled() || reply.replying || hasPendingReply() || !gate.pending) return Promise.resolve(null);
       var now = clock.now();
       var g = gate.pending;
-      if (now - g.at < cfg.debounceMs) return Promise.resolve(null);                  // still bursting
+      if (now - g.at < currentDebounce()) return Promise.resolve(null);               // still bursting (rhythm-relative)
       if (now - lastActAt < cfg.volunteerCooldownMs) { gate.pending = null; return Promise.resolve(null); }
       return getSpeakerRing().then(function (ring) {
         if (isTwoPersonExchange(ring)) { gate.pending = null; log('[chloe.T2] two-person exchange — staying out'); return null; }
@@ -3120,6 +3210,21 @@
           var d = moodDescriptor(mood);
           if (g.legacyOut) g.legacyOut.mood = d;
           return { text: 'The room feels ' + d + ' right now — match that energy rather than working against it (don’t name the mood).', tokens: 12 };
+        });
+      } });
+
+    registerProvider({ id: 'workspace', priority: BANDS.SITUATION,
+      enabled: function (c) { return !!c.workingMemory; },
+      gather: function (g) {
+        return workLoad().then(function (w) {
+          if (!w) return null;
+          var bits = [];
+          if (w.topic) bits.push('this channel is about ' + w.topic);
+          if (w.participants && w.participants.length) bits.push((w.participants.length === 1 ? w.participants[0] + ' is here' : w.participants.slice(0, 4).join(', ') + ' are here'));
+          if (w.goal) bits.push('you\u2019re trying to ' + w.goal);
+          if (!bits.length) return null;   // nothing fresh to assert -> say nothing (volatile)
+          var text = 'Right now: ' + bits.join('; ') + '. Let this ground you in the moment; don\u2019t recite it.';
+          return { text: text, tokens: estimateTokens(text) };
         });
       } });
 
@@ -3466,6 +3571,194 @@
 
     // ---- own affect (front-end only) -------------------------------------------------------
     // Time-decayed toward neutral 0.5 on every read-modify-write; event nudges are small and
+    // ---- idle deliberation: a ReAct map-reduce reasoning loop (DESIGN-deliberation.md) -----------
+    // Decompose one thought into atomic sub-questions -> answer them (parallel across worker tabs via
+    // mapFn) -> recompose into an insight/goal. NEVER sends. Four brakes: opt-in toggle, curiosity
+    // floor, idle gate, min-gap; plus the curiosity DROP makes it self-limiting.
+    function deliberateDue() {
+      if (!cfg.idleDeliberation || !cfg.ownAffect) return Promise.resolve(false);
+      if (typeof cfg.decomposeFn !== 'function' || typeof cfg.mapFn !== 'function' || typeof cfg.reduceFn !== 'function') return Promise.resolve(false);
+      return Promise.resolve(store.get(DELIB_KEY)).then(function (rec) {
+        if (rec && (clock.now() - (rec.lastAt || 0)) < (cfg.deliberateMinGapMs || 600000)) return false;   // min-gap
+        return channelIsIdle().then(function (idle) {
+          if (!idle) return false;                                  // idle gate
+          return affectLoad().then(function (a) {
+            return (a && (a.curiosity || 0) >= (cfg.deliberateCuriosityFloor || 0.62));   // curiosity gate
+          });
+        });
+      });
+    }
+    // Pick a seed from the workspace by mode (falls back to partitions when working memory is off).
+    function deliberateSeed() {
+      var wmOn = !!cfg.workingMemory;
+      return (wmOn ? workLoad() : Promise.resolve(null)).then(function (w) {
+        if (w && w.goal) return { mode: 'prepare', subject: w.goal, prompt: 'the goal: ' + w.goal };
+        if (w && w.topic) return { mode: 'curiosity', subject: w.topic, prompt: 'what\u2019s interesting or unresolved about: ' + w.topic };
+        // fallback / deepen: a recent active person with facts but room to synthesize
+        return getRoster().then(function (roster) {
+          var who = (roster || []).filter(function (p) { return p && p.state === 'active' && Array.isArray(p.facts) && p.facts.length >= 3; })[0];
+          if (who) return { mode: 'deepen', subject: who.name, who: who.id, prompt: 'what the things you know about ' + who.name + ' add up to', facts: who.facts.map(function (f) { return f.text; }) };
+          return null;
+        });
+      });
+    }
+    function deliberate() {
+      return deliberateDue().then(function (due) {
+        if (!due) return null;
+        return deliberateSeed().then(function (seed) {
+          if (!seed) return null;
+          log('[chloe.think] thinking about ' + seed.subject + ' (' + seed.mode + ')');
+          // 1) decompose into atomic, INDEPENDENT sub-questions
+          return Promise.resolve(cfg.decomposeFn({ subject: seed.subject, prompt: seed.prompt, facts: seed.facts || null, max: cfg.deliberateMaxSubQuestions || 4 })).then(function (dr) {
+            var qs = (dr && dr.ok && Array.isArray(dr.value)) ? dr.value.filter(function (q) { return typeof q === 'string' && q.trim(); }).slice(0, cfg.deliberateMaxSubQuestions || 4) : [];
+            if (qs.length < 2) { log('[chloe.think] nothing worth breaking down'); return bumpDelib(null); }
+            log('[chloe.think] broke it into ' + qs.length + ' questions');
+            // 2) MAP: answer each independently, in parallel across workers (mapFn batches)
+            var jobs = qs.map(function (q) { return { question: q, subject: seed.subject, facts: seed.facts || null }; });
+            return Promise.resolve(cfg.mapFn(jobs)).then(function (answers) {
+              var subAnswers = (answers || []).map(function (r, i) { return { q: qs[i], a: (r && r.ok && r.value) ? String(r.value) : null }; }).filter(function (x) { return x.a; });
+              if (!subAnswers.length) { log('[chloe.think] couldn\u2019t work the questions'); return bumpDelib(null); }
+              log('[chloe.think] considered ' + subAnswers.length + ' in parallel');
+              // 3) REDUCE: recompose into one synthesis + a type tag
+              return Promise.resolve(cfg.reduceFn({ subject: seed.subject, mode: seed.mode, parts: subAnswers })).then(function (rr) {
+                var syn = (rr && rr.ok && rr.value) ? rr.value : null;
+                var text = syn && (syn.text || (typeof syn === 'string' ? syn : null));
+                var type = (syn && syn.type) ? String(syn.type) : 'none';
+                if (!text || type === 'none') { log('[chloe.think] concluded: nothing new'); return bumpDelib(null); }
+                // PREEMPTION: a real message may have arrived mid-deliberation -> re-check idle before storing.
+                return channelIsIdle().then(function (stillIdle) {
+                  if (!stillIdle) { log('[chloe.think] room woke \u2014 discarding the thought'); return bumpDelib(null); }
+                  return deliberateWriteBack(seed, type, text).then(function (stored) {
+                    log('[chloe.think] concluded: ' + String(text).slice(0, 80));
+                    // curiosity drop (self-limiting) + min-gap stamp
+                    return affectNudge({ curiosity: -(cfg.deliberateCuriosityDrop || 0.18) }).then(function () { return bumpDelib(stored ? { type: type, text: text } : null); });
+                  });
+                });
+              });
+            });
+          });
+        });
+      }, function () { return null; });
+    }
+    function bumpDelib(result) { return store.set(DELIB_KEY, { lastAt: clock.now() }).then(function () { return result; }); }
+    // Write the synthesis through an EXISTING writer, re-validated. Insight -> the subject person's
+    // insight list (deepen); goal -> a goal for the subject's owner (prepare); else an episode.
+    function deliberateWriteBack(seed, type, text) {
+      var t = String(text).trim().slice(0, 200);
+      if (type === 'goal' && cfg.goalObjects && seed.who) {
+        return addGoal(t, seed.who, seed.subject, 'deliberate').then(function () { return true; });
+      }
+      if (type === 'insight' && seed.who) {
+        return Promise.resolve(store.get(partKey(seed.who))).then(function (p) {
+          if (!p) return false;
+          var ins = Array.isArray(p.insights) ? p.insights : [];
+          var nk = normFact(t);
+          if (ins.some(function (x) { return normFact(x.text) === nk; })) return false;   // dedupe
+          ins.push({ id: 'd' + clock.now().toString(36), text: t, at: clock.now(), source: 'deliberate' });
+          if (ins.length > (cfg.insightsPerUser || 3)) ins = ins.slice(-(cfg.insightsPerUser || 3));
+          p.insights = ins;
+          return store.set(partKey(p.id), p).then(function () { return true; });
+        });
+      }
+      // default: record it as an episode (a thought she had), if episodic memory is on
+      if (cfg.episodicMemory) {
+        return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+          ring = Array.isArray(ring) ? ring : [];
+          ring.push({ id: mintEpisodeId(), text: t, at: clock.now(), participants: [], topics: [], importance: 5, relatesTo: null, source: 'deliberate' });
+          if (ring.length > cfg.episodesPerChannel) ring = ring.slice(-cfg.episodesPerChannel);
+          return store.set(EPI_KEY, ring).then(function () { return true; });
+        });
+      }
+      return Promise.resolve(false);
+    }
+
+    // ---- working memory: a volatile cognitive workspace (DESIGN-working-memory.md) ---------------
+    // Read the workspace with read-time decay applied (like affect): a stale topic goes null rather
+    // than asserting a "current topic" that's actually old; decisions age out; participants are always
+    // recomputed live from the speaker ring.
+    function workLoad() {
+      return Promise.resolve(store.get(WORK_KEY)).then(function (w) {
+        var now = clock.now();
+        w = w || { topic: null, topicAt: 0, goal: null, recentDecisions: [], at: now };
+        // topic decay: past the TTL of inactivity, we no longer claim to know the topic.
+        if (w.topic && (now - (w.topicAt || 0)) > (cfg.workTopicTtlMs || 1200000)) { w.topic = null; }
+        // decision ring decay: drop entries older than their TTL, cap the ring.
+        var dttl = cfg.workDecisionTtlMs || 1800000;
+        w.recentDecisions = (w.recentDecisions || []).filter(function (d) { return (now - (d.at || 0)) <= dttl; }).slice(-(cfg.workDecisionsMax || 5));
+        return w;
+      });
+    }
+    function workSave(w) { w.at = clock.now(); return store.set(WORK_KEY, w).then(function () { return w; }); }
+    // Record one notable action she just took (reply / decline / greet / poll / volunteer). Local-only.
+    function noteDecision(text) {
+      if (!cfg.workingMemory || !text) return Promise.resolve(null);
+      return workLoad().then(function (w) {
+        w.recentDecisions.push({ text: String(text).slice(0, 80), at: clock.now() });
+        if (w.recentDecisions.length > (cfg.workDecisionsMax || 5)) w.recentDecisions = w.recentDecisions.slice(-(cfg.workDecisionsMax || 5));
+        return workSave(w);
+      });
+    }
+    // Live participants from the speaker ring -> names (no new cost; the ring is already maintained).
+    function workParticipants() {
+      return getSpeakerRing().then(function (ring) {
+        var ids = []; (ring || []).slice(-(cfg.workParticipantsMax || 5) * 2).forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); });
+        ids = ids.slice(-(cfg.workParticipantsMax || 5));
+        return Promise.all(ids.map(function (id) { return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && p.name) || null; }); }))
+          .then(function (names) { return names.filter(Boolean); });
+      });
+    }
+    // The active goal: the highest-priority open goal owned by a current participant.
+    function workActiveGoal(participantIds) {
+      if (!participantIds || !participantIds.length) return Promise.resolve(null);
+      return loadGoals().then(function (list) {
+        var open = (list || []).filter(function (g) { return g.status === 'open' && participantIds.indexOf(g.owner) >= 0; });
+        if (!open.length) return null;
+        open.sort(function (a, b) { return (b.lastTouchedAt || b.createdAt || 0) - (a.lastTouchedAt || a.createdAt || 0); });
+        return open[0].text || null;
+      });
+    }
+    // Name the current topic. REUSE the channel summary's first clause when it's fresh (no AI cost);
+    // otherwise, when summaryFn/topicFn is available and due, name it in <=6 words. Cheap + skippable.
+    function workRefreshTopic(w, summaryText) {
+      var now = clock.now();
+      if (summaryText) {
+        // reuse: first sentence/clause of the rolling summary, clipped to a short phrase.
+        var first = String(summaryText).split(/[.!?\n]/)[0].trim().slice(0, 60);
+        if (first) { w.topic = first; w.topicAt = now; }
+        return Promise.resolve(w);
+      }
+      return Promise.resolve(w);   // no fresh summary -> leave topic as-is (it'll decay if it ages)
+    }
+    // Assemble/update the whole workspace from current signals. Called on the idle/poll cadence.
+    function workSync(summaryText) {
+      if (!cfg.workingMemory) return Promise.resolve(null);
+      return workLoad().then(function (w) {
+        return workParticipants().then(function (names) {
+          return getSpeakerRing().then(function (ring) {
+            var ids = []; (ring || []).forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); });
+            return workActiveGoal(ids).then(function (goal) {
+              w.participants = names; w.goal = goal;
+              return (cfg.ownAffect ? affectLoad() : Promise.resolve(null)).then(function (a) {
+                w.mood = a ? moodWord(a) : null;
+                return workRefreshTopic(w, summaryText).then(function () {
+                  return workSave(w).then(function () { return w; });
+                });
+              });
+            });
+          });
+        });
+      });
+    }
+    function moodWord(a) {
+      if (!a) return null;
+      var c = a.curiosity || 0.5, cf = a.confidence || 0.5, wm = a.warmth || 0.5;
+      if (c >= 0.65) return 'curious';
+      if (wm >= 0.65) return 'warm';
+      if (cf <= 0.4) return 'subdued';
+      if (cf >= 0.65) return 'assured';
+      return 'steady';
+    }
+
     // clamped; confidence has a hard floor (quieter, never despondent).
     function affectLoad() {
       return Promise.resolve(store.get(AFFECT_KEY)).then(function (a) {
@@ -3748,7 +4041,7 @@
           else { text = String(raw || '').trim().slice(0, cfg.factTextMax); imp = cfg.factImportanceDefault || 5; }
           var key = normFact(text);
           if (!key || seen[key]) return;          // empty or duplicate
-          seen[key] = true; facts.push({ text: text, at: clock.now(), source: source || 'observed', importance: imp }); added++; impAdded += imp;
+          seen[key] = true; facts.push({ id: mintFactId(), text: text, at: clock.now(), source: source || 'observed', importance: imp }); added++; impAdded += imp;
         });
         if (!added) return 0;
         if (facts.length > cfg.factsPerUser) facts = facts.slice(-cfg.factsPerUser);   // keep newest
@@ -3770,6 +4063,146 @@
         return store.set(partKey(id), p).then(function () { return removed; });
       });
     }
+
+    // ---- context moderation: excise a message from her working memory (DESIGN-excise.md) ----------
+    // Remove the line with this message id from whichever user's `recent` window holds it. This is the
+    // ONLY place a message is stored by message-id; the speaker ring holds author ids (untouched), and
+    // any fact/episode already distilled from it is a separate artifact (excise composes with the
+    // People-drawer CRUD, it doesn't cascade). Cross-partition because the operator knows the message,
+    // not whose window it's in. Returns { removed, fromUser }.
+    function exciseMessage(msgId) {
+      var target = String(msgId || '');
+      if (!target) return Promise.resolve({ removed: 0, fromUser: null });
+      return getRoster().then(function (roster) {
+        var chain = Promise.resolve(), removed = 0, fromUser = null;
+        roster.forEach(function (p) {
+          chain = chain.then(function () {
+            if (!p || !Array.isArray(p.recent) || !p.recent.length) return;
+            var before = p.recent.length;
+            p.recent = p.recent.filter(function (ln) { return String(ln.id) !== target; });
+            var n = before - p.recent.length;
+            if (n) { removed += n; fromUser = fromUser || p.name || p.id; return store.set(partKey(p.id), p); }
+          });
+        });
+        return chain.then(function () {
+          if (removed) log('[chloe.excise] removed ' + removed + ' line(s) from working memory');
+          return { removed: removed, fromUser: fromUser };
+        });
+      });
+    }
+    // Drop the last n lines from one user's recent window ("delete that last thing they said").
+    function exciseLastFromUser(userId, n) {
+      var k = Math.max(1, Math.round(Number(n) || 1));
+      return Promise.resolve(store.get(partKey(userId))).then(function (p) {
+        if (!p || !Array.isArray(p.recent) || !p.recent.length) return { removed: 0, fromUser: null };
+        var cut = Math.min(k, p.recent.length);
+        p.recent = p.recent.slice(0, p.recent.length - cut);
+        return store.set(partKey(userId), p).then(function () {
+          log('[chloe.excise] removed ' + cut + ' recent line(s) from ' + (p.name || userId));
+          return { removed: cut, fromUser: p.name || userId };
+        });
+      });
+    }
+
+    // ---- per-person memory CRUD (DESIGN-people-crud.md): edit facts + insights by STABLE id -------
+    var factSeq = 0;
+    function mintFactId() { factSeq++; return 'f' + clock.now().toString(36) + factSeq.toString(36); }
+    // Lazy id migration: give any id-less fact/insight a stable id and persist once. Idempotent.
+    function migrateMemoryIds(p) {
+      var changed = false;
+      if (Array.isArray(p.facts)) p.facts.forEach(function (f) { if (f && !f.id) { f.id = mintFactId(); changed = true; } });
+      if (Array.isArray(p.insights)) p.insights.forEach(function (x) { if (x && !x.id) { x.id = mintFactId(); changed = true; } });
+      return changed;
+    }
+    // Read one person's editable memory (facts + insights), migrating ids on first read.
+    function getMemory(id) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p) return null;
+        var changed = migrateMemoryIds(p);
+        var out = {
+          id: id, name: p.name || null,
+          facts: (p.facts || []).map(function (f) { return { id: f.id, text: f.text, importance: (typeof f.importance === 'number' ? f.importance : (cfg.factImportanceDefault || 5)), source: f.source || 'observed', at: f.at || 0 }; }),
+          insights: (p.insights || []).map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; })
+        };
+        return (changed ? store.set(partKey(id), p) : Promise.resolve()).then(function () { return out; });
+      });
+    }
+    // Update one fact by id (text and/or importance). Re-dedupes against the others; re-clamps imp.
+    function editFact(id, factId, patch) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p || !Array.isArray(p.facts)) return null;
+        migrateMemoryIds(p);
+        var target = null; p.facts.forEach(function (f) { if (f.id === factId) target = f; });
+        if (!target) return null;
+        if (patch && patch.text != null) {
+          var newText = String(patch.text).trim().slice(0, cfg.factTextMax || 240);
+          if (!newText) return { error: 'empty' };
+          var nk = normFact(newText);
+          // collision: if another fact already normalizes to this, drop the edited one (merge) by deleting it
+          var clash = p.facts.some(function (f) { return f.id !== factId && normFact(f.text) === nk; });
+          if (clash) { p.facts = p.facts.filter(function (f) { return f.id !== factId; }); }
+          else { target.text = newText; }
+        }
+        if (patch && patch.importance != null) target.importance = Math.max(1, Math.min(10, Math.round(Number(patch.importance)) || (cfg.factImportanceDefault || 5)));
+        if (patch && patch.text != null && target.text) target.source = 'operator';   // a hand-edit makes it operator-owned
+        p.factsAt = clock.now();
+        return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+      });
+    }
+    function deleteFact(id, factId) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p || !Array.isArray(p.facts)) return null;
+        var before = p.facts.length;
+        p.facts = p.facts.filter(function (f) { f.id || (f.id = mintFactId()); return f.id !== factId; });
+        if (p.facts.length === before) return { facts: p.facts.map(pubFact) };
+        p.factsAt = clock.now();
+        return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+      });
+    }
+    // Operator-authored fact: creates the partition row if the person isn't known yet.
+    function addUserFact(id, text, importance, name) {
+      var t = String(text || '').trim().slice(0, cfg.factTextMax || 240);
+      if (!t) return Promise.resolve(null);
+      return ensureIndexed(id).then(function () {
+        return Promise.resolve(store.get(partKey(id))).then(function (p) {
+          if (!p) { p = { id: id, name: name || null, facts: [], lastSeen: clock.now(), interactionCount: 0 }; }
+          if (!Array.isArray(p.facts)) p.facts = [];
+          migrateMemoryIds(p);
+          var nk = normFact(t);
+          if (p.facts.some(function (f) { return normFact(f.text) === nk; })) return { facts: p.facts.map(pubFact), dup: true };
+          var imp = Math.max(1, Math.min(10, Math.round(Number(importance)) || (cfg.factImportanceDefault || 5)));
+          p.facts.push({ id: mintFactId(), text: t, at: clock.now(), source: 'operator', importance: imp });
+          if (p.facts.length > cfg.factsPerUser) {
+            // drop the oldest NON-operator fact to make room (operator intent outranks decay)
+            var victim = -1; for (var i = 0; i < p.facts.length; i++) { if (p.facts[i].source !== 'operator') { victim = i; break; } }
+            if (victim >= 0) p.facts.splice(victim, 1); else p.facts = p.facts.slice(-cfg.factsPerUser);
+          }
+          p.factsAt = clock.now();
+          return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+        });
+      });
+    }
+    function editInsight(id, insId, text) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p || !Array.isArray(p.insights)) return null;
+        migrateMemoryIds(p);
+        var t = String(text || '').trim().slice(0, cfg.factTextMax || 240);
+        var tgt = null; p.insights.forEach(function (x) { if (x.id === insId) tgt = x; });
+        if (!tgt) return null;
+        if (!t) { p.insights = p.insights.filter(function (x) { return x.id !== insId; }); }
+        else { tgt.text = t; }
+        return store.set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
+      });
+    }
+    function deleteInsight(id, insId) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p || !Array.isArray(p.insights)) return null;
+        p.insights.forEach(function (x) { x.id || (x.id = mintFactId()); });
+        p.insights = p.insights.filter(function (x) { return x.id !== insId; });
+        return store.set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
+      });
+    }
+    function pubFact(f) { return { id: f.id, text: f.text, importance: (typeof f.importance === 'number' ? f.importance : (cfg.factImportanceDefault || 5)), source: f.source || 'observed', at: f.at || 0 }; }
     // A compact one-line synthesis of what she knows about someone — this is what populates the
     // (previously empty) `summary` that already rides into response + check-in context.
     function factSummary(p) {
@@ -3806,14 +4239,66 @@
 
     function getSpeakerRing() { return Promise.resolve(store.get(RING_KEY)).then(function (r) { return r || []; }); }
 
+    // ---- pace core: one rhythm estimator, several consumers (DESIGN-pace.md) ----------------
+    // A short-lived cache of the rhythm record so the per-poll consumers (debounce, polling, quiet)
+    // don't each hit the store. Refreshed once per poll in pollOnce's tail.
+    var paceCache = null;
+    var paceLastAI = {};   // pass-name -> last wall-clock run (AI-cadence floor, anti cost-multiplier)
+    function refreshPace() { return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) { paceCache = rh || null; return rh; }); }
+    function paceReady() { return !!(cfg.adaptivePace && paceCache && (paceCache.samples || 0) >= (cfg.paceMinSamples || 5) && paceCache.avgGapMs != null); }
+    // Rhythm-relative debounce: ~one typical gap + slack, hard-clamped. Falls back to the fixed
+    // constant when pace isn't ready. (Used by the reply/paint/greet burst gates.)
+    function currentDebounce() {
+      if (!paceReady()) return cfg.debounceMs;
+      var d = (paceCache.avgGapMs || 0) * (cfg.paceDebounceWgap || 0.5) + (paceCache.gapVarMs || 0) * (cfg.paceDebounceWdev || 1.0);
+      // Clamp to [floor, ceil]. The configured debounceMs is the CEILING (pace may make her settle
+      // faster than the fixed value, never slower) — so an explicitly tiny debounce stays tiny.
+      var ceil = cfg.debounceMs;
+      var floor = Math.min(cfg.debounceFloorMs || 800, ceil);
+      return Math.round(Math.max(floor, Math.min(ceil, d)));
+    }
+    // How many deviations past typical the current silence is (z-score). >= paceQuietZ reads as quiet.
+    function silenceZ(now) {
+      if (!paceReady() || paceCache.lastActivity == null) return 0;
+      var silentFor = now - paceCache.lastActivity;
+      var denom = Math.max(paceCache.gapVarMs || 0, 1000);   // floor the denominator (avoid div blowups in a metronomic room)
+      return (silentFor - (paceCache.avgGapMs || 0)) / denom;
+    }
+    function paceIsQuiet(now) { return paceReady() ? (silenceZ(now) >= (cfg.paceQuietZ || 3)) : null; }   // null = "no opinion, use your flat threshold"
+
     // ---- loop control --------------------------------------------------------------------
     // adaptive cadence: snap to the floor while there's activity or pending work; otherwise grow
     // the interval (x1.5) toward the ceiling so a quiet channel isn't polled every few seconds.
     function computeNextDelay(prev, summary) {
       if (!cfg.adaptivePolling) return cfg.pollIntervalMs;
+      prev = prev || cfg.pollIntervalMs;
+      // ADDRESSED-PRIORITY OVERRIDE: a pending reply/greet/gate/paint means she's been @-mentioned or
+      // replied to (or owes a delivery) — being addressed always beats passive ingest, snap to floor.
+      var addressed = hasPendingReply() || paint.queue.length || paint.painting || gate.pending || greet.pending;
+      if (addressed) return cfg.pollFloorMs;
+
+      if (cfg.adaptivePace) {
+        // INVERTED model (this bot ACTS on new content; it doesn't chatter into a busy stream):
+        //   quiet room  -> poll FAST (catch new content the moment it stirs); fresh content speeds up.
+        //   busy  room  -> poll RELAXED but only PARTWAY (pollBusyCeilMs): passive ingest, reply on lull.
+        var fresh = summary && summary.ingested > 0;
+        var z = paceIsQuiet(clock.now());   // true=quiet, false=busy, null=pace-not-ready
+        var busyCeil = cfg.pollBusyCeilMs || cfg.pollCeilMs;
+        if (z === false) {
+          // active room: ingest passively — ease the interval UP toward the partial (busy) ceiling.
+          var relaxed = prev + (cfg.pollAdditiveStepMs || cfg.pollFloorMs);
+          return Math.max(cfg.pollFloorMs, Math.min(relaxed, busyCeil));
+        }
+        // quiet (or pace not ready): be eager. Fresh content cuts the interval multiplicatively toward
+        // the floor; an idle quiet poll still drifts UP toward the FULL ceiling (nothing to catch).
+        if (fresh) return Math.max(cfg.pollFloorMs, Math.min(Math.round(prev * 0.5), cfg.pollCeilMs));
+        var grownQ = prev + (cfg.pollAdditiveStepMs || cfg.pollFloorMs);
+        return Math.max(cfg.pollFloorMs, Math.min(grownQ, cfg.pollCeilMs));
+      }
+      // legacy (pace off): binary snap-fast on any activity, else x1.5 grow.
       var busy = (summary && summary.ingested > 0) || hasPendingReply() || paint.queue.length || paint.painting || gate.pending || greet.pending;
       if (busy) return cfg.pollFloorMs;
-      var grown = Math.round((prev || cfg.pollIntervalMs) * 1.5);
+      var grown = Math.round(prev * 1.5);
       return Math.max(cfg.pollFloorMs, Math.min(grown, cfg.pollCeilMs));
     }
     function start() {
@@ -3876,6 +4361,8 @@
       reactionSignificance: reactionSignificance, reactionThreshold: reactionThreshold, processMessageReactions: processMessageReactions, topReactions: topReactions, reactionSweep: reactionSweep,
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
+      getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
+      exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
       processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
@@ -3883,7 +4370,10 @@
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
       seedCharacterMemories: seedCharacterMemories, clearCharacterMemories: clearCharacterMemories,
+      workLoad: workLoad, workSync: workSync, noteDecision: noteDecision,
+      deliberate: deliberate, deliberateDue: deliberateDue, deliberateSeed: deliberateSeed,
       consolidateStructural: consolidateStructural, consolidateSemantic: consolidateSemantic, channelIsIdle: channelIsIdle,
+      currentDebounce: currentDebounce, silenceZ: silenceZ, paceIsQuiet: paceIsQuiet, paceReady: paceReady, refreshPace: refreshPace, computeNextDelay: computeNextDelay,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
       procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
       resumePendingReply: resumePendingReply, summonCheckReactions: summonCheckReactions, pollCreate: pollCreate, pollClose: pollClose, checkPollExpiry: checkPollExpiry,
@@ -4321,7 +4811,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.64.1';
+  var VERSION = '0.69.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -4600,6 +5090,19 @@
     });
   }
 
+  // Fan an ARRAY of independent jobs out concurrently — the map step of the deliberation loop's
+  // map-reduce. Each job rides brainCall (so each leases a distinct idle worker via dispatchJob's
+  // round-robin busy/idle gating; the genuinely parallel resource is one broker PER worker tab).
+  // With K idle workers and N jobs, the first K run in parallel and the rest queue behind them; with
+  // K=0 (single-tab) it degrades to sequential-local, identical results, just slower. Resolves an
+  // array of {ok,value} in input order. A single job's failure doesn't sink the batch.
+  function brainCallBatch(kind, argsList, timeoutMs) {
+    if (!Array.isArray(argsList) || !argsList.length) return Promise.resolve([]);
+    return Promise.all(argsList.map(function (a) {
+      return brainCall(kind, a, timeoutMs).then(function (r) { return r; }, function (err) { return { ok: false, reason: String((err && err.message) || err) }; });
+    }));
+  }
+
   // ---- engine wiring ------------------------------------------------------------------
   var engines = {};   // D3: channelId -> engine (each with its own namespaced store)
   var lastPoll = null;
@@ -4668,6 +5171,12 @@
         episodicMemory: cfgGet('episodicMemory', false),
         episodeGraph: cfgGet('episodeGraph', true),
         consolidateFn: function (ctx) { return brainCall('consolidate', ctx); },   // the “sleep” semantic pass (adaptive timeout, like every other text brainCall)
+        // deliberation map-reduce: decompose/reduce are single calls; mapFn fans the independent
+        // sub-questions across worker tabs (parallel when a pool exists, sequential-local otherwise).
+        decomposeFn: function (ctx) { return brainCall('decompose', ctx); },
+        subAnswerFn: function (ctx) { return brainCall('subanswer', ctx); },
+        reduceFn: function (ctx) { return brainCall('reduce', ctx); },
+        mapFn: function (list) { return brainCallBatch('subanswer', list); },
         character: cfgGet('character', null),
         idleConsolidation: cfgGet('idleConsolidation', true),
         goalObjects: cfgGet('goalObjects', true),
@@ -4682,6 +5191,10 @@
         backgroundText: true,
         commandPrefixes: cfgGet('commandPrefixes', []),
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
+        adaptivePace: cfgGet('adaptivePace', true),
+        workingMemory: cfgGet('workingMemory', false),
+        idleDeliberation: cfgGet('idleDeliberation', false),
+        pollBusyCeilMs: cfgGet('pollBusyCeilMs', 12000),
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
         respond: function (ctx) { return brainCall('respond', ctx); },   // timeout now ADAPTIVE (the meter: srtt+4var, 10-90s; hardcoded values had been silently bypassing it since v0.54)
         judge: function (ctx) { return brainCall('judge', ctx); },
@@ -4854,6 +5367,9 @@
       reflection: !!cfgGet('reflection', false),
       episodicMemory: !!cfgGet('episodicMemory', false),
       episodeGraph: cfgGet('episodeGraph', true) !== false,
+      adaptivePace: cfgGet('adaptivePace', true) !== false,
+      workingMemory: cfgGet('workingMemory', false) !== false,
+      idleDeliberation: cfgGet('idleDeliberation', false) !== false,
       goalObjects: cfgGet('goalObjects', true) !== false,
       idleConsolidation: cfgGet('idleConsolidation', true) !== false,
       relationshipTrust: !!cfgGet('relationshipTrust', false),
@@ -5063,6 +5579,14 @@
         { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
       case 'config.setChannelSummary':
         { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
+      case 'config.setAdaptivePace':
+        { var apn = !!(args && args.on); cfgSet('adaptivePace', apn); applyConfigChange(); return Promise.resolve({ ok: true, value: { adaptivePace: apn } }); }
+      case 'config.setWorkingMemory':
+        { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); applyConfigChange(); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
+      case 'config.setIdleDeliberation':
+        { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); applyConfigChange(); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
+      case 'work.get':
+        { var ew = engineFor(args && args.channelId); if (!ew) return Promise.resolve({ ok: true, value: null }); return ew.workLoad().then(function (w) { return { ok: true, value: w }; }); }
       case 'config.setEpisodeGraph':
         { var egn = !!(args && args.on); cfgSet('episodeGraph', egn); applyConfigChange(); return Promise.resolve({ ok: true, value: { episodeGraph: egn } }); }
       case 'config.setIdleConsolidation':
@@ -5134,6 +5658,14 @@
       case 'stop':            eachEngine(function (e) { e.stop(); }); cfgSet('autoResume', false); return Promise.resolve({ ok: true, value: statusSnapshot() });
       case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
       case 'roster.get':      { var e3 = engineFor(args && args.channelId); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
+      case 'memory.get':        { var em1 = engineFor(args && args.channelId); if (!em1) return Promise.resolve({ ok: false, reason: 'no channel' }); return em1.getMemory(args && args.id).then(function (v) { return { ok: true, value: v }; }); }
+      case 'memory.editFact':   { var em2 = engineFor(args && args.channelId); if (!em2) return Promise.resolve({ ok: false, reason: 'no channel' }); return em2.editFact(args && args.id, args && args.factId, { text: args && args.text, importance: args && args.importance }).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'not found' }; }); }
+      case 'memory.deleteFact': { var em3 = engineFor(args && args.channelId); if (!em3) return Promise.resolve({ ok: false, reason: 'no channel' }); return em3.deleteFact(args && args.id, args && args.factId).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'not found' }; }); }
+      case 'memory.addFact':    { var em4 = engineFor(args && args.channelId); if (!em4) return Promise.resolve({ ok: false, reason: 'no channel' }); return em4.addUserFact(args && args.id, args && args.text, args && args.importance, args && args.name).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'empty or failed' }; }); }
+      case 'memory.editInsight':{ var em5 = engineFor(args && args.channelId); if (!em5) return Promise.resolve({ ok: false, reason: 'no channel' }); return em5.editInsight(args && args.id, args && args.insId, args && args.text).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'not found' }; }); }
+      case 'memory.deleteInsight':{ var em6 = engineFor(args && args.channelId); if (!em6) return Promise.resolve({ ok: false, reason: 'no channel' }); return em6.deleteInsight(args && args.id, args && args.insId).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'not found' }; }); }
+      case 'context.excise':    { var ex1 = engineFor(args && args.channelId); if (!ex1) return Promise.resolve({ ok: false, reason: 'no channel' }); return ex1.exciseMessage(args && args.msgId).then(function (v) { return { ok: true, value: v }; }); }
+      case 'context.exciseLast':{ var ex2 = engineFor(args && args.channelId); if (!ex2) return Promise.resolve({ ok: false, reason: 'no channel' }); return ex2.exciseLastFromUser(args && args.id, args && args.n).then(function (v) { return { ok: true, value: v }; }); }
       case 'ring.get':        { var e4 = engineFor(args && args.channelId); if (!e4) return Promise.resolve({ ok: true, value: [] }); return e4.getSpeakerRing().then(function (r) { return { ok: true, value: r }; }); }
       case 'reset':           return resetState(true).then(function () { return { ok: true }; });
       // ---- T3 moderation: trusted (panel) actions + mod-list management ----

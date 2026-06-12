@@ -147,6 +147,29 @@
   .batchsel{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;cursor:pointer}
   .batchsep{width:1px;height:16px;background:var(--line);margin:0 3px}
 
+  /* People memory editor */
+  .memedit{padding:10px 12px 12px 40px}
+  .memhead{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:10px 0 6px}
+  .memhead:first-child{margin-top:0}
+  .memlist{display:flex;flex-direction:column;gap:6px}
+  .memrow{display:flex;gap:8px;align-items:flex-start}
+  .membox{flex:1;min-height:28px;resize:none;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:5px 8px;font:13px/1.4 inherit}
+  .membox:focus{border-color:var(--sel);outline:none}
+  .memctl{display:flex;align-items:center;gap:6px;padding-top:2px}
+  .memimp{width:42px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:4px 6px;font:12px inherit;text-align:center}
+  .memx{padding:3px 7px;line-height:1}
+  .memind{font-size:11px;min-width:34px;color:var(--muted)}
+  .memind.ok{color:var(--good)} .memind.err{color:var(--bad)}
+  .memtag{font-size:10px;color:var(--sel);border:1px solid var(--line);border-radius:10px;padding:1px 6px;white-space:nowrap}
+  .memadd .membox{border-style:dashed}
+  .memaddbtn{padding:4px 10px}
+  .inslist .membox{color:var(--muted);font-style:italic}
+  .memlines{font-size:12px;display:flex;flex-direction:column;gap:2px}
+  .memline{display:flex;align-items:flex-start;gap:6px}
+  .memline .memlinex{opacity:0;margin-left:auto;padding:1px 6px;line-height:1;flex:none;transition:opacity .1s}
+  .memline:hover .memlinex{opacity:1}
+  .memcompose{margin:2px 0 8px;font-size:11px}
+
   /* character import */
   .chardrop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px;border:1px dashed var(--line);border-radius:8px;transition:border-color .12s,background .12s}
   .chardrop.drag{border-color:var(--sel);background:var(--surface2)}
@@ -317,6 +340,9 @@
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
         <label class="chip"><input type="checkbox" id="goalChk"> remember what people are working on (goals)</label>
         <label class="chip"><input type="checkbox" id="sleepChk"> tidy memory when idle (consolidation)</label>
+        <label class="chip"><input type="checkbox" id="paceChk"> match the room&rsquo;s pace (adaptive timing)</label>
+        <label class="chip"><input type="checkbox" id="workChk"> hold a sense of the moment (working memory)</label>
+        <label class="chip"><input type="checkbox" id="delibChk"> think things over when idle (deliberation)</label>
         <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
         <label class="chip"><input type="checkbox" id="epiGraphChk"> connect related memories (event graph)</label>
         <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
@@ -434,6 +460,10 @@
   </section>
 
   <section class="pane" id="pane_system">
+    <div class="card" id="workspaceCard" style="display:none">
+      <div class="row"><h2 style="margin:0">What she&rsquo;s holding in mind</h2><span class="spacer"></span><button class="ghost" id="refreshWorkBtn">Refresh</button></div>
+      <div id="workspaceBox" class="note" style="margin-top:8px">—</div>
+    </div>
     <div class="card">
       <h2>Tabs &amp; workers</h2>
       <div class="row">
@@ -552,7 +582,7 @@
     <div class="card">
       <h2>Getting to know people</h2>
       <div class="note">
-        With <strong>&ldquo;remember durable facts about regulars&rdquo;</strong> on (Behavior tab), Chloe quietly notes a few lasting, voluntarily-shared things about people she chats with often &mdash; hobbies, projects, a pet&rsquo;s name &mdash; so she can be a thoughtful friend rather than a stranger every time. It&rsquo;s deliberately conservative and private: she only records things plainly stated, <strong>never</strong> sensitive topics (health, beliefs, identity, location, finances, relationships, anything embarrassing), and only for people she&rsquo;s actually engaged with. Anyone can say <code>!chloe aboutme</code> to see exactly what she remembers, or <code>!chloe forget some words</code> to drop a specific detail; <code>!chloe forget</code> on its own clears everything about them. Off by default. The learning happens in the background and never sends a message on its own.
+        With <strong>&ldquo;remember durable facts about regulars&rdquo;</strong> on (Behavior tab), Chloe quietly notes a few lasting, voluntarily-shared things about people she chats with often &mdash; hobbies, projects, a pet&rsquo;s name &mdash; so she can be a thoughtful friend rather than a stranger every time. It&rsquo;s deliberately conservative and private: she only records things plainly stated, <strong>never</strong> sensitive topics (health, beliefs, identity, location, finances, relationships, anything embarrassing), and only for people she&rsquo;s actually engaged with. Anyone can say <code>!chloe aboutme</code> to see exactly what she remembers, or <code>!chloe forget some words</code> to drop a specific detail; <code>!chloe forget</code> on its own clears everything about them. Off by default. The learning happens in the background and never sends a message on its own. <strong>Editing her memory directly (People tab):</strong> expand anyone in the People drawer to edit what she remembers about them &mdash; each fact in its own box, with add / edit / delete, plus her higher-level insights; memories you add or edit by hand are protected from her automatic tidying. The recent-lines list there also lets you <strong>excise</strong> a single message from her working memory (hover a line, click ✕) &mdash; the &ldquo;she shouldn&rsquo;t have seen that&rdquo; tool &mdash; or do it from Discord by replying to a message with <code>!chloe forget-that</code> (mods only). Excising a line stops it influencing her next replies; if she already formed a lasting memory from it, edit that in the same drawer.
       </div>
     </div>
     <div class="card">
@@ -564,7 +594,7 @@
     <div class="card">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> she keeps a running sense of how fast a channel usually moves (the typical gap between messages and how much it varies) and lets that shape her timing &mdash; settling faster before replying in a quick room, waiting longer in a slow one, checking for new messages MORE often when a room is quiet (so she acts quickly the moment a dead channel stirs) and easing off into passive ingest when a room is busy (letting context build, then replying on the lull), while judging &ldquo;quiet&rdquo; relative to each room&rsquo;s own rhythm rather than a fixed clock. Being directly @-mentioned or replied to always takes priority and pulls her back to checking quickly. It never makes her slower to reply than her configured settle time, costs no extra AI calls, and falls back to fixed timing until a room has shown enough of its rhythm. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> alongside her long-term memory, she keeps a small, fast-fading workspace of what&rsquo;s happening <em>right now</em> in a channel &mdash; what it&rsquo;s currently about, who&rsquo;s here, the goal she&rsquo;s working on, and what she just did &mdash; and lets that ground her replies in the live situation rather than only in retrieved facts. It&rsquo;s built mostly from things she already tracks (so it costs almost nothing), and it&rsquo;s deliberately volatile: when a channel goes quiet the workspace fades rather than asserting a stale &ldquo;current topic.&rdquo; You can see what she&rsquo;s holding in mind on the System tab. Off by default. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> when a channel is genuinely quiet and she&rsquo;s in a curious mood, Chloe spends idle time actually <em>reasoning</em> rather than just maintaining memory: she takes something from her current workspace &mdash; the topic, an open goal, or a regular she&rsquo;s been getting to know &mdash; breaks it into a handful of small, independent questions, works through them (in parallel across any worker tabs you&rsquo;ve spawned, otherwise one at a time), and recomposes what she finds into a single insight or follow-up goal. It&rsquo;s a quiet internal process: she <strong>never</strong> sends a message from it &mdash; you only see it as &ldquo;thinking&rdquo; activity in the feed, and the result shows up as something she&rsquo;s realized in the People tab. It&rsquo;s deliberately self-limiting (thinking something through scratches the curiosity that prompted it, so she settles rather than spiralling), only fires when idle and at most occasionally, and needs <strong>&ldquo;inner weather&rdquo;</strong> on (it&rsquo;s the gate). Because it spends real generation calls on its own, it&rsquo;s off by default &mdash; turn it on when you want her to use her downtime to understand people and topics more deeply. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
       </div>
     </div>
     <div class="card">
@@ -666,6 +696,9 @@
       else if (d.method === 'channelSummary') handler = channelSummary;
       else if (d.method === 'reflect') handler = reflect;
       else if (d.method === 'consolidate') handler = consolidate;
+      else if (d.method === 'decompose') handler = decompose;
+      else if (d.method === 'subanswer') handler = subanswer;
+      else if (d.method === 'reduce') handler = reduce;
       else if (d.method === 'episodes') handler = episodes;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
@@ -957,6 +990,63 @@
     }).catch(function (e) { dlog('episodes: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
+  // ---- idle deliberation (DESIGN-deliberation.md): decompose -> map -> reduce ------------------
+  // decompose(ctx) -> { ok, value: [sub-question strings] }. Break a thought into 2-N atomic,
+  // INDEPENDENT questions (each answerable on its own, so they can run in parallel).
+  function decompose(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available' });
+    var subject = (ctx && ctx.subject) ? String(ctx.subject) : 'this';
+    var max = (ctx && ctx.max) ? ctx.max : 4;
+    var factLine = (ctx && ctx.facts && ctx.facts.length) ? ('\nWhat you know: ' + ctx.facts.join('; ')) : '';
+    var instruction =
+      'You are thinking quietly to yourself about ' + subject + ' \u2014 specifically, ' + ((ctx && ctx.prompt) ? String(ctx.prompt) : subject) + '.' + factLine + '\n\n'
+      + 'Break this into ' + max + ' or fewer SMALL, INDEPENDENT questions you\u2019d need to answer to understand it \u2014 each answerable on its own, not depending on the others. Keep them short.\n'
+      + 'Respond ONLY with a JSON array of question strings.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
+      var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
+      var qs = (arr || []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim().slice(0, 160); }).slice(0, max);
+      return { ok: true, value: qs };
+    }).catch(function (e) { return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // subanswer(ctx) -> { ok, value: 'a short answer' }. Answer ONE sub-question in isolation. This is
+  // the map step \u2014 each runs independently (and in parallel across worker tabs).
+  function subanswer(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available' });
+    var q = (ctx && ctx.question) ? String(ctx.question) : '';
+    if (!q) return Promise.resolve({ ok: false, reason: 'no question' });
+    var factLine = (ctx && ctx.facts && ctx.facts.length) ? ('\nContext: ' + ctx.facts.join('; ')) : '';
+    var instruction = 'Thinking to yourself about ' + ((ctx && ctx.subject) ? String(ctx.subject) : 'this') + '.' + factLine + '\n\nAnswer this one question briefly and honestly, in a sentence or two:\n' + q;
+    return Promise.resolve(ai({ instruction: instruction })).then(function (result) {
+      var t = String(result || '').trim().slice(0, 300);
+      return t ? { ok: true, value: t } : { ok: false, reason: 'empty' };
+    }).catch(function (e) { return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
+  // reduce(ctx) -> { ok, value: { text, type } }. Recompose the sub-answers into ONE conclusion and
+  // tag what KIND it is: insight (about a person), goal (something to follow up), or none (nothing new).
+  function reduce(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available' });
+    var parts = (ctx && ctx.parts && ctx.parts.length) ? ctx.parts : [];
+    if (!parts.length) return Promise.resolve({ ok: true, value: { text: '', type: 'none' } });
+    var joined = parts.map(function (p, i) { return (i + 1) + '. Q: ' + p.q + '\n   A: ' + p.a; }).join('\n');
+    var instruction =
+      'You\u2019ve been thinking about ' + ((ctx && ctx.subject) ? String(ctx.subject) : 'this') + '. Here\u2019s what you worked out:\n' + joined + '\n\n'
+      + 'In ONE sentence, what\u2019s the single useful conclusion \u2014 the thing worth remembering? If there\u2019s genuinely nothing new, say so.\n'
+      + 'Then tag it: "insight" (a lasting realization about a person), "goal" (something to follow up on), or "none".\n'
+      + 'Respond ONLY as JSON: {"text": "...", "type": "insight|goal|none"}.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '{', stopSequences: ['}'] })).then(function (result) {
+      var raw = '{' + String(result || '').trim().replace(/^\{/, '') + '}';
+      var obj = null; try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+      if (!obj || !obj.text) return { ok: true, value: { text: '', type: 'none' } };
+      var type = (obj.type === 'insight' || obj.type === 'goal') ? obj.type : 'none';
+      return { ok: true, value: { text: String(obj.text).slice(0, 200), type: type } };
+    }).catch(function (e) { return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   // consolidate(ctx) -> { ok, value: array of cleaned fact strings }. The “sleep” pass: review ONE
   // person's facts and return a tidied list — MERGE redundant ones, DROP the older side of a
   // contradiction. Never invent: every returned fact must come from the input (the engine re-checks).
@@ -1224,7 +1314,7 @@
     if (/\bmod|strike|gate|block|softban|timeout|lockdown/.test(s)) return ['moderation', 'MODERATION'];
     if (/replied to|\[chloe\.lull|\[chloe\.checkin|\[chloe\.beat|greeted|\[chloe\.summon|resume|resuming/.test(s)) return ['response', 'RESPONSE'];
     if (/\[chloe\.ctx|fact|episode|reflect|chansum|memor|recall|trust/.test(s)) return ['memory', 'MEMORY'];
-    if (/packed|context|generating|thinking/.test(s)) return ['thinking', 'THINKING'];
+    if (/packed|context|generating|thinking|\[chloe\.work\]|\[chloe\.think\]/.test(s)) return ['thinking', 'THINKING'];
     if (/received|asks|new message/.test(s)) return ['received', 'RECEIVED'];
     return ['system', 'SYSTEM'];
   }
@@ -1291,6 +1381,9 @@
     var rf = byId('reflectChk'); if (rf) rf.checked = !!s.reflection;
     var go = byId('goalChk'); if (go) go.checked = (s.goalObjects !== false);
     var sl = byId('sleepChk'); if (sl) sl.checked = (s.idleConsolidation !== false);
+    var pa = byId('paceChk'); if (pa) pa.checked = (s.adaptivePace !== false);
+    var wk = byId('workChk'); if (wk) wk.checked = !!s.workingMemory;
+    var dl = byId('delibChk'); if (dl) dl.checked = !!s.idleDeliberation;
     var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
     var ep = byId('epiChk'); if (ep) ep.checked = !!s.episodicMemory;
     var eg = byId('epiGraphChk'); if (eg) eg.checked = (s.episodeGraph !== false);
@@ -1352,7 +1445,7 @@
     var openRows = box.querySelectorAll('.urow');
     for (var oi = 0; oi < openRows.length; oi++) {
       var nx = openRows[oi].nextSibling;
-      if (nx && nx.className === 'udetail') { var c = openRows[oi].querySelector('.usel'); if (c) keepOpen[c.getAttribute('data-id')] = true; }
+      if (nx && nx.classList && nx.classList.contains('udetail')) { var c = openRows[oi].querySelector('.usel'); if (c) keepOpen[c.getAttribute('data-id')] = true; }
     }
     while (box.firstChild) box.removeChild(box.firstChild);
     setText('rosterCount', list.length + (list.length === 1 ? ' person' : ' people'));
@@ -1406,24 +1499,142 @@
 
   function toggleDetail(row, p, caret) {
     var next = row.nextSibling;
-    if (next && next.className === 'udetail') { next.parentNode.removeChild(next); caret.textContent = '\u25B8'; return; }
+    if (next && next.classList && next.classList.contains('udetail')) { next.parentNode.removeChild(next); caret.textContent = '\u25B8'; return; }
     caret.textContent = '\u25BE';
-    var dr = document.createElement('div'); dr.className = 'udetail';
-    var recent = p.recent || [];
-    if (!recent.length) { dr.className = 'udetail note'; dr.textContent = 'no stored lines'; }
-    else {
-      recent.slice(-12).forEach(function (ln) {
-        var line = document.createElement('div');
-        var meta = document.createElement('span'); meta.className = 'note'; meta.textContent = fmtTime(ln.ts) + '  ';
-        var txt = document.createElement('span');
-        txt.textContent = (ln.content === '' ? '(empty \u2014 Message Content Intent off?)' : ln.content);
-        if (ln.content === '') txt.className = 'note';
-        line.appendChild(meta); line.appendChild(txt);
-        dr.appendChild(line);
-      });
-    }
+    var dr = document.createElement('div'); dr.className = 'udetail memedit';
+    dr.setAttribute('data-uid', p.id);
+    renderMemoryEditor(dr, p);
     if (row.nextSibling) row.parentNode.insertBefore(dr, row.nextSibling);
     else row.parentNode.appendChild(dr);
+  }
+
+  // The People drawer's memory editor: three sections — facts (full CRUD), insights (edit/delete),
+  // and recent lines (read-only). Each memory is its own text box (never raw JSON). Autosave on blur
+  // with a saved indicator; a focused/dirty box pauses the periodic roster re-render (refresh-safe).
+  function memSectionHead(parent, label, hint) {
+    var hd = document.createElement('div'); hd.className = 'memhead';
+    hd.textContent = label;
+    if (hint) { var hs = document.createElement('span'); hs.className = 'note'; hs.textContent = '  ' + hint; hd.appendChild(hs); }
+    parent.appendChild(hd); return hd;
+  }
+  function flashSaved(indEl, word) {
+    if (!indEl) return;
+    indEl.textContent = word || 'saved';
+    indEl.className = 'memind ok';
+    setTimeout(function () { if (indEl) { indEl.textContent = ''; indEl.className = 'memind'; } }, 1400);
+  }
+  // Build one editable fact/insight row. kind = 'fact' | 'insight'. rec = { id, text, importance?, source? }.
+  function memRow(uid, kind, rec, onChanged) {
+    var wrap = document.createElement('div'); wrap.className = 'memrow';
+    var ta = document.createElement('textarea'); ta.className = 'membox'; ta.value = rec.text || ''; ta.rows = 1;
+    ta.setAttribute('spellcheck', 'false');
+    autoGrow(ta);
+    var rightcol = document.createElement('div'); rightcol.className = 'memctl';
+    var ind = document.createElement('span'); ind.className = 'memind';
+    var imp = null;
+    if (kind === 'fact') {
+      imp = document.createElement('input'); imp.type = 'number'; imp.min = '1'; imp.max = '10'; imp.className = 'memimp';
+      imp.value = (rec.importance != null ? rec.importance : 5); imp.title = 'importance 1\u201310';
+    }
+    var del = document.createElement('button'); del.className = 'ghost danger memx'; del.textContent = '\u2715'; del.title = 'delete this memory';
+    if (rec.source === 'operator') { var tag = document.createElement('span'); tag.className = 'memtag'; tag.textContent = 'added by you'; rightcol.appendChild(tag); }
+    rightcol.appendChild(ind);
+    if (imp) rightcol.appendChild(imp);
+    rightcol.appendChild(del);
+    wrap.appendChild(ta); wrap.appendChild(rightcol);
+
+    var dirty = false;
+    ta.addEventListener('input', function () { dirty = true; autoGrow(ta); });
+    if (imp) imp.addEventListener('change', function () { dirty = true; saveRow(); });
+    function saveRow() {
+      var text = ta.value.trim();
+      if (!text) { return removeRow(); }   // emptied box = delete
+      var cmd = kind === 'fact' ? 'memory.editFact' : 'memory.editInsight';
+      var args = kind === 'fact'
+        ? { channelId: selChannel(), id: uid, factId: rec.id, text: text, importance: imp ? Number(imp.value) : undefined }
+        : { channelId: selChannel(), id: uid, insId: rec.id, text: text };
+      call(cmd, args).then(function (res) {
+        dirty = false;
+        if (res && res.ok) { flashSaved(ind); if (onChanged) onChanged(res.value); }
+        else { ind.textContent = 'error'; ind.className = 'memind err'; }
+      });
+    }
+    function removeRow() {
+      var cmd = kind === 'fact' ? 'memory.deleteFact' : 'memory.deleteInsight';
+      var args = kind === 'fact' ? { channelId: selChannel(), id: uid, factId: rec.id } : { channelId: selChannel(), id: uid, insId: rec.id };
+      call(cmd, args).then(function (res) { if (res && res.ok) { wrap.parentNode && wrap.parentNode.removeChild(wrap); if (onChanged) onChanged(res.value); } });
+    }
+    ta.addEventListener('blur', function () { if (dirty) saveRow(); });
+    del.addEventListener('click', removeRow);
+    return wrap;
+  }
+  function autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.max(28, ta.scrollHeight) + 'px'; }
+
+  function renderMemoryEditor(dr, p) {
+    while (dr.firstChild) dr.removeChild(dr.firstChild);
+    var uid = p.id;
+    var loading = document.createElement('div'); loading.className = 'note'; loading.textContent = 'loading memory\u2026';
+    dr.appendChild(loading);
+    call('memory.get', { channelId: selChannel(), id: uid }).then(function (res) {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      var mem = (res && res.ok && res.value) ? res.value : { facts: [], insights: [] };
+
+      // --- facts (full CRUD) ---
+      memSectionHead(dr, 'What she remembers', '(facts \u2014 edit, delete, or add)');
+      var factsBox = document.createElement('div'); factsBox.className = 'memlist'; dr.appendChild(factsBox);
+      (mem.facts || []).forEach(function (f) { factsBox.appendChild(memRow(uid, 'fact', f)); });
+      // add-a-fact row
+      var addWrap = document.createElement('div'); addWrap.className = 'memrow memadd';
+      var addTa = document.createElement('textarea'); addTa.className = 'membox'; addTa.rows = 1; addTa.placeholder = '\uFF0B add a memory about ' + (p.name || 'this person');
+      addTa.setAttribute('spellcheck', 'false'); autoGrow(addTa);
+      var addCtl = document.createElement('div'); addCtl.className = 'memctl';
+      var addImp = document.createElement('input'); addImp.type = 'number'; addImp.min = '1'; addImp.max = '10'; addImp.className = 'memimp'; addImp.value = 5; addImp.title = 'importance 1\u201310';
+      var addBtn = document.createElement('button'); addBtn.className = 'ghost memaddbtn'; addBtn.textContent = 'add';
+      addCtl.appendChild(addImp); addCtl.appendChild(addBtn);
+      addWrap.appendChild(addTa); addWrap.appendChild(addCtl); factsBox.appendChild(addWrap);
+      addTa.addEventListener('input', function () { autoGrow(addTa); });
+      function doAdd() {
+        var text = addTa.value.trim(); if (!text) return;
+        call('memory.addFact', { channelId: selChannel(), id: uid, text: text, importance: Number(addImp.value), name: p.name }).then(function (r) {
+          if (r && r.ok) { addTa.value = ''; autoGrow(addTa); renderMemoryEditor(dr, p); log('added a memory for ' + (p.name || uid)); }
+        });
+      }
+      addBtn.addEventListener('click', doAdd);
+      addTa.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doAdd(); } });
+
+      // --- insights (edit/delete only) ---
+      if (mem.insights && mem.insights.length) {
+        memSectionHead(dr, 'What she\u2019s concluded', '(insights \u2014 inferred; edit or delete)');
+        var insBox = document.createElement('div'); insBox.className = 'memlist inslist'; dr.appendChild(insBox);
+        mem.insights.forEach(function (x) { insBox.appendChild(memRow(uid, 'insight', x)); });
+      }
+
+      // --- recent lines (read-only, unchanged) ---
+      var recent = p.recent || [];
+      memSectionHead(dr, 'Recent lines', '(hover a line to excise it from her memory)');
+      var compose = document.createElement('div'); compose.className = 'note memcompose';
+      compose.textContent = 'Excising a line removes it from what she sees. If she already formed a memory from it, edit that above.';
+      dr.appendChild(compose);
+      if (!recent.length) { var n0 = document.createElement('div'); n0.className = 'note'; n0.textContent = 'no stored lines'; dr.appendChild(n0); }
+      else {
+        var lines = document.createElement('div'); lines.className = 'memlines';
+        recent.slice(-12).forEach(function (ln) {
+          var line = document.createElement('div'); line.className = 'memline';
+          var meta = document.createElement('span'); meta.className = 'note'; meta.textContent = fmtTime(ln.ts) + '  ';
+          var txt = document.createElement('span');
+          txt.textContent = (ln.content === '' ? '(empty \u2014 Message Content Intent off?)' : ln.content);
+          if (ln.content === '') txt.className = 'note';
+          var x = document.createElement('button'); x.className = 'ghost danger memlinex'; x.textContent = '\u2715'; x.title = 'excise this line from her memory';
+          x.addEventListener('click', function () {
+            call('context.excise', { channelId: selChannel(), msgId: ln.id }).then(function (res) {
+              if (res && res.ok) { line.parentNode && line.parentNode.removeChild(line); log('excised a line from ' + (p.name || uid) + '\u2019s working memory'); }
+            });
+          });
+          line.appendChild(meta); line.appendChild(txt); line.appendChild(x); lines.appendChild(line);
+        });
+        dr.appendChild(lines);
+      }
+    });
   }
 
   // OP / de-OP via the existing mod.addMod / mod.removeMod targets. Accepts a list of ids (batch-ready).
@@ -1499,7 +1710,9 @@
       // Don't churn the roster under the user mid-interaction: if they've selected rows or are
       // typing in the filter, skip the periodic re-render (state stays put; manual refresh still works).
       var filtEl = byId('rosterFilter');
-      var busy = (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl);
+      var ae = document.activeElement;
+      var editingMem = ae && (ae.className === 'membox' || ae.className === 'memimp');
+      var busy = (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl) || editingMem;
       if (busy) return null;
       return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r.ok) renderRoster(r.value || []); });
     });
@@ -1629,6 +1842,25 @@
   byId('sleepChk').addEventListener('change', function () {
     call('config.setIdleConsolidation', { on: byId('sleepChk').checked }).then(function (res) {
       log(res && res.ok ? ('idle consolidation: ' + res.value.idleConsolidation) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('paceChk').addEventListener('change', function () {
+    call('config.setAdaptivePace', { on: byId('paceChk').checked }).then(function (res) {
+      log(res && res.ok ? ('adaptive pace: ' + res.value.adaptivePace) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  (function(){ var b = byId('refreshWorkBtn'); if (b) b.addEventListener('click', refreshWorkspace); })();
+  byId('workChk').addEventListener('change', function () {
+    call('config.setWorkingMemory', { on: byId('workChk').checked }).then(function (res) {
+      log(res && res.ok ? ('working memory: ' + res.value.workingMemory) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      refreshWorkspace();
+    });
+  });
+  byId('delibChk').addEventListener('change', function () {
+    var on = byId('delibChk').checked;
+    if (on && !byId('affectChk').checked) { log('deliberation needs \u201cinner weather\u201d (own affect) on \u2014 enable that too'); }
+    call('config.setIdleDeliberation', { on: on }).then(function (res) {
+      log(res && res.ok ? ('deliberation: ' + res.value.idleDeliberation) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('reflectChk').addEventListener('change', function () {
@@ -2092,6 +2324,28 @@
   byId('personaClearBtn').addEventListener('click', function () {
     call('persona.clear', { channelId: selChannel() }).then(refreshPersonaNote);
   });
+  function refreshWorkspace() {
+    var card = byId('workspaceCard'); if (!card) return;
+    call('work.get', { channelId: selChannel() }).then(function (res) {
+      var w = res && res.ok ? res.value : null;
+      if (!w) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      var box = byId('workspaceBox'); if (!box) return;
+      while (box.firstChild) box.removeChild(box.firstChild);
+      function line(label, val) {
+        var d = document.createElement('div'); d.style.margin = '3px 0';
+        var b = document.createElement('strong'); b.textContent = label + ': ';
+        d.appendChild(b); d.appendChild(document.createTextNode(val == null || val === '' ? '\u2014' : val));
+        box.appendChild(d);
+      }
+      line('Topic', w.topic);
+      line('Here now', (w.participants && w.participants.length) ? w.participants.join(', ') : null);
+      line('Current goal', w.goal);
+      line('Mood', w.mood);
+      var dec = (w.recentDecisions || []).map(function (d) { return d.text; });
+      line('Recently', dec.length ? dec.join(' \u00b7 ') : null);
+    });
+  }
   function refreshWorkers() {
     call('bridge.status').then(function (res) {
       if (!res || !res.ok) { setText('bridgeRole', 'tabs: unavailable'); return; }
@@ -2179,6 +2433,7 @@
         if (pane) pane.className = (n === name) ? 'pane active' : 'pane';
         if (tab) tab.className = (n === name) ? 'tab active' : 'tab';
       });
+      if (name === 'system' && typeof refreshWorkspace === 'function') refreshWorkspace();
     }
     names.forEach(function (n) { var tab = byId('tab_' + n); if (tab) tab.addEventListener('click', function () { activate(n); }); });
     window.__chloeOpenModule = activate;   // first-run setup focus hook
