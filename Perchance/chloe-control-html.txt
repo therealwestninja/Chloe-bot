@@ -14,128 +14,152 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
 <style>
   :root{
-    --bg:#0a0d18; --bg2:#0d1224; --ink:#e9ecf8; --muted:#8e97b3;
-    --surface:#121a2e; --surface2:#1a2340; --line:#27304e;
-    --accent:#8b5cf6; --accent2:#a78bfa; --accent-ink:#fff;
-    --good:#3ddc97; --warn:#f0b454; --bad:#f0716a;
-    --radius:14px;
-    --disp:'Chakra Petch',ui-monospace,monospace;
-    --body:'IBM Plex Sans',system-ui,sans-serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --bg:#0f1117; --surface:#161922; --surface2:#1b1f2a; --line:#232734;
+    --ink:#e6e8ee; --muted:#7a8095;
+    --good:#4ec98f; --warn:#e3b34d; --bad:#e16b6b; --sel:#5b8def;
+    --radius:10px;
+    --body:system-ui,-apple-system,'Segoe UI',sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   @media (prefers-color-scheme: light){
-    :root{ --bg:#f3f4fa; --bg2:#eceef8; --ink:#1b2030; --muted:#5d6584;
-      --surface:#ffffff; --surface2:#f1f2fa; --line:#dfe2f0;
-      --accent:#6d3ff0; --accent2:#5a2fd6; }
+    :root{ --bg:#f6f7f9; --surface:#ffffff; --surface2:#eef0f4; --line:#e0e3ea;
+      --ink:#1a1d26; --muted:#646b80; }
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{font:14px/1.55 var(--body);color:var(--ink);background-color:var(--bg);text-align:left;
-    background-image:radial-gradient(rgba(139,92,246,.07) 1px,transparent 1.4px),linear-gradient(168deg,var(--bg2),var(--bg) 62%);
-    background-size:24px 24px,100% 100%;background-attachment:fixed;-webkit-font-smoothing:antialiased}
-  #app{max-width:880px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:12px;text-align:left}
+  body{font:14px/1.5 var(--body);color:var(--ink);background:var(--bg);text-align:left;-webkit-font-smoothing:antialiased}
+  #app{max-width:1040px;margin:0 auto;padding:12px;display:flex;flex-direction:column;gap:10px}
 
-  .cmdbar{position:sticky;top:8px;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
-    background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(10px);
-    border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;
-    box-shadow:0 8px 28px rgba(5,8,18,.35)}
-  .brand{display:flex;align-items:center;gap:9px;margin-right:4px}
-  .wordmark{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.22em}
-  .wordsub{font-family:var(--disp);font-weight:500;font-size:10px;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--muted)}
-  .vital{display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center}
+  /* command bar: slim, no gradient/shadow */
+  .cmdbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px}
+  .brand{display:flex;align-items:center;gap:8px;margin-right:2px}
+  .wordmark{font-weight:600;font-size:14px;letter-spacing:.04em}
+  .vital{display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center}
+  .spacer{flex:1}
 
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
-    padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface2)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;
+    padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:var(--surface2);color:var(--muted)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:background .2s}
-  .dot.on{background:var(--good);animation:heartbeat 1.6s ease-out infinite}
-  .dot.off{background:var(--bad)} .dot.idle{background:var(--warn)}
-  @keyframes heartbeat{
-    0%{box-shadow:0 0 0 0 rgba(61,220,151,.5)}
-    60%{box-shadow:0 0 0 7px rgba(61,220,151,0)}
-    100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}
-  }
+  .dot.on{background:var(--good)} .dot.off{background:var(--bad)} .dot.idle{background:var(--warn)}
 
-  .statusline{display:flex;gap:16px;flex-wrap:wrap;padding:0 6px}
-  .kv{display:flex;gap:6px;font-size:12px;color:var(--muted);font-family:var(--mono)}
-  .kv b{color:var(--ink);font-weight:600}
+  /* status bar: one strip of state pills, color = state only */
+  .statusbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:7px 12px;font-size:12px}
+  .stat{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-family:var(--mono)}
+  .stat b{color:var(--ink);font-weight:600}
+  .stat .dot{width:7px;height:7px}
+  .statsep{width:1px;height:14px;background:var(--line)}
 
-  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);padding:0 4px}
-  .tab{appearance:none;background:transparent;border:0;cursor:pointer;position:relative;
-    font-family:var(--disp);font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
-    color:var(--muted);padding:10px 13px;transition:color .15s}
-  .tab:hover{color:var(--ink)}
-  .tab.active{color:var(--ink)}
-  .tab.active::after{content:'';position:absolute;left:10px;right:10px;bottom:-1px;height:2px;
-    background:var(--accent);border-radius:2px;box-shadow:0 0 14px rgba(139,92,246,.9)}
+  /* workspace: feed (left, primary) + modules rail (right) */
+  .workspace{display:grid;grid-template-columns:1fr 232px;gap:10px;align-items:start}
+  @media (max-width:720px){ .workspace{grid-template-columns:1fr} }
 
+  .feedwrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    display:flex;flex-direction:column;min-height:420px;max-height:62vh;overflow:hidden}
+  .feedhead{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .feedhead h2{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:600}
+  .feedhead .spacer{flex:1}
+  #feed{flex:1;overflow:auto;padding:4px 0;font-family:var(--mono);font-size:12px}
+  .ev{display:flex;gap:9px;padding:4px 12px;align-items:baseline;line-height:1.5}
+  .ev:hover{background:var(--surface2)}
+  .ev .t{color:var(--muted);font-size:11px;flex-shrink:0;width:62px}
+  .ev .tag{flex-shrink:0;width:78px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+  .ev .msg{flex:1;color:var(--ink);word-break:break-word}
+  .ev.received .tag{color:var(--sel)} .ev.memory .tag{color:#9b87f5}
+  .ev.thinking .tag{color:var(--muted)} .ev.response .tag{color:var(--good)}
+  .ev.moderation .tag{color:var(--warn)} .ev.image .tag{color:#5ec8c0}
+  .ev.poll .tag{color:var(--sel)} .ev.warning .tag{color:var(--bad)}
+  .ev.system .tag{color:var(--muted)}
+  .feedempty{color:var(--muted);padding:24px 12px;text-align:center;font-family:var(--body)}
+
+  /* modules rail */
+  .modrail{display:flex;flex-direction:column;gap:4px}
+  .modrail h2{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-weight:600;margin:2px 4px 6px}
+  .mod{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
+    background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 11px;
+    color:var(--ink);font:inherit;font-size:13px;transition:border-color .12s,background .12s}
+  .mod:hover{border-color:var(--muted)}
+  .mod.sel{border-color:var(--sel);background:var(--surface2)}
+  .mod .dot{flex-shrink:0}
+  .mod .nm{flex:1}
+
+  /* slide-over module config */
+  .scrim{position:fixed;inset:0;background:rgba(8,9,13,.55);z-index:20;display:none}
+  .scrim.open{display:block}
+  .slideover{position:fixed;top:0;right:0;bottom:0;width:min(620px,94vw);z-index:21;
+    background:var(--bg);border-left:1px solid var(--line);transform:translateX(100%);
+    transition:transform .2s ease;display:flex;flex-direction:column}
+  .slideover.open{transform:none}
+  .sohead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .sohead h2{margin:0;font-size:14px;font-weight:600}
+  .sobody{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+  .soclose{background:var(--surface2);color:var(--ink);border:1px solid var(--line)}
+
+  /* cards (now slide-over bodies) — flat */
   .pane{display:none}
-  .pane.active{display:flex;flex-direction:column;gap:12px;animation:rise .18s ease}
-  @keyframes rise{0%{opacity:0;transform:translateY(5px)}100%{opacity:1;transform:none}}
-
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
-  h1{font-size:17px;margin:0;font-weight:700;font-family:var(--disp)}
-  h2{font-family:var(--disp);font-size:11px;margin:0 0 9px;font-weight:600;color:var(--accent2);
-    text-transform:uppercase;letter-spacing:.16em}
+  .pane.active{display:flex;flex-direction:column;gap:10px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px}
+  h1{font-size:16px;margin:0;font-weight:600}
+  h2{font-size:11px;margin:0 0 8px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .grow{flex:1;min-width:120px}
-  .spacer{flex:1}
-  .note{font-size:12px;color:var(--muted)}
-  .muted{font-size:12px;color:var(--muted)}
+  .note,.muted{font-size:12px;color:var(--muted)}
 
   input,select,textarea{background:var(--surface2);border:1px solid var(--line);color:var(--ink);
-    border-radius:8px;padding:8px 10px;font:inherit;min-width:0;transition:border-color .15s}
-  input:focus,select:focus,textarea:focus{outline:2px solid rgba(139,92,246,.45);outline-offset:1px;border-color:var(--accent)}
-  input:where(.chk){accent-color:var(--accent)}
-  input{accent-color:var(--accent)}
+    border-radius:7px;padding:8px 10px;font:inherit;min-width:0;transition:border-color .12s}
+  input:focus,select:focus,textarea:focus{outline:2px solid rgba(91,141,239,.4);outline-offset:1px;border-color:var(--sel)}
+  input{accent-color:var(--sel)}
   select{padding:6px 8px}
-  textarea{width:100%;font:12px/1.55 var(--mono);background:var(--bg);resize:vertical}
+  textarea{width:100%;font:12px/1.5 var(--mono);background:var(--bg);resize:vertical}
 
-  button{background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;padding:8px 12px;
-    font:inherit;font-weight:600;cursor:pointer;transition:transform .12s,box-shadow .12s,background .12s}
-  button:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(139,92,246,.35)}
-  button:active{transform:none;box-shadow:none}
+  button{background:var(--sel);color:#fff;border:0;border-radius:7px;padding:8px 12px;
+    font:inherit;font-weight:500;cursor:pointer;transition:filter .12s}
+  button:hover{filter:brightness(1.08)}
+  button:active{filter:brightness(.95)}
   button.ghost{background:var(--surface2);color:var(--ink);border:1px solid var(--line)}
-  a.ghostlink{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--accent2);background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-weight:600;font-size:13px;transition:border-color .15s,box-shadow .15s}
-  a.ghostlink:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(5,8,18,.35)}
-  button.ghost:hover{box-shadow:0 4px 14px rgba(5,8,18,.35);border-color:var(--accent)}
+  button.ghost:hover{border-color:var(--muted)}
+  a.ghostlink{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--ink);background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:7px 11px;font-weight:500;font-size:13px}
+  a.ghostlink:hover{border-color:var(--muted)}
   button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
-  button.danger:hover{box-shadow:0 4px 14px rgba(240,113,106,.25)}
-  button:disabled{opacity:.45;cursor:default;transform:none;box-shadow:none}
+  button:disabled{opacity:.45;cursor:default}
   button.sm{padding:5px 9px;font-size:12px}
 
   .chiprow{display:flex;gap:14px;flex-wrap:wrap}
   .chip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-  .codehead{display:flex;align-items:center;gap:8px;font-family:var(--disp);font-size:10px;
-    letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:10px 0 5px}
+  .codehead{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:10px 0 5px}
   .dial{display:grid;grid-template-columns:92px 1fr;gap:10px;align-items:center;margin-top:4px}
   .dial .dn{font-size:12px;color:var(--muted);font-family:var(--mono)}
 
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-  th{color:var(--muted);font-family:var(--disp);font-size:10px;text-transform:uppercase;letter-spacing:.12em}
-  tbody tr{transition:background .12s}
-  tbody tr:hover{background:rgba(139,92,246,.06)}
+  th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+  tbody tr:hover{background:var(--surface2)}
   td.actions{white-space:nowrap;text-align:right}
   td.actions button{margin-left:4px}
   .empty{color:var(--muted);padding:14px;text-align:center}
 
-  .banner{border:1px solid var(--warn);background:rgba(240,180,84,.07);color:var(--ink);
-    border-radius:10px;padding:8px 10px;font-size:12px}
-  .banner.bad{border-color:var(--bad);background:rgba(240,113,106,.08)}
+  .banner{border:1px solid var(--warn);background:rgba(227,179,77,.08);color:var(--ink);
+    border-radius:8px;padding:8px 10px;font-size:12px}
+  .banner.bad{border-color:var(--bad);background:rgba(225,107,107,.08)}
 
-  .logbar{display:flex;align-items:center;gap:8px}
-  #log{font:12px/1.6 var(--mono);background:#070a13;border:1px solid var(--line);border-radius:10px;
-    padding:9px 11px;height:140px;overflow:auto;white-space:pre-wrap;margin-top:8px}
-  @media (prefers-color-scheme: light){ #log{background:#10142a;color:#dfe4f6} }
+  /* collapsible debug */
+  .debug{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .debughead{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;font-size:12px;color:var(--muted)}
+  .debughead .caret{transition:transform .15s}
+  .debug.open .debughead .caret{transform:rotate(90deg)}
+  .debugbody{display:none;padding:0 12px 12px}
+  .debug.open .debugbody{display:block}
+  .logbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  #log{font:12px/1.6 var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:8px;
+    padding:9px 11px;height:160px;overflow:auto;white-space:pre-wrap}
 </style>
 
 <div id="app">
   <header class="cmdbar">
     <div class="brand">
       <span class="vital"><span class="dot" id="runDot"></span></span>
-      <span class="wordmark">CHLOE</span>
-      <span class="wordsub">bridge console</span>
+      <span class="wordmark">Chloe</span>
     </div>
     <span class="pill"><span class="dot" id="linkDot"></span><span id="linkTxt">connecting&hellip;</span></span>
     <span class="pill"><span id="runTxt">stopped</span></span>
@@ -143,25 +167,61 @@
     <span class="spacer"></span>
     <button id="startBtn">Start</button>
     <button class="ghost" id="stopBtn">Stop</button>
-    <button class="ghost" id="pollBtn">Poll once</button>
+    <button class="ghost sm" id="pollBtn">Poll once</button>
     <button class="ghost sm" id="refreshBtn">Refresh</button>
   </header>
 
-  <div class="statusline">
-    <span class="kv">bridge <b id="verTxt">&ndash;</b></span>
-    <span class="kv">token <b id="tokTxt">&ndash;</b></span>
-    <span class="kv">bot <b id="botTxt">&ndash;</b></span>
-    <span class="kv">last poll <b id="pollTxt">&ndash;</b></span>
+  <!-- status bar: one strip, color = state only. Sourced from the same status poll. -->
+  <div class="statusbar" id="statusbar">
+    <span class="stat"><span class="dot" id="sb_run_dot"></span><b id="sb_run">stopped</b></span>
+    <span class="statsep"></span>
+    <span class="stat">bridge <b id="verTxt">&ndash;</b></span>
+    <span class="stat">token <b id="tokTxt">&ndash;</b></span>
+    <span class="stat">bot <b id="botTxt">&ndash;</b></span>
+    <span class="stat">brain <b id="sb_brain">&ndash;</b></span>
+    <span class="stat" id="sb_workers_wrap" style="display:none">workers <b id="sb_workers">0</b></span>
+    <span class="stat">last poll <b id="pollTxt">&ndash;</b></span>
   </div>
 
-  <nav class="tabs">
-    <button class="tab active" id="tab_setup">Setup</button>
-    <button class="tab" id="tab_behavior">Behavior</button>
-    <button class="tab" id="tab_moderation">Moderation</button>
-    <button class="tab" id="tab_people">People</button>
-    <button class="tab" id="tab_system">System</button>
-    <button class="tab" id="tab_about">About</button>
-  </nav>
+  <!-- workspace: activity feed (primary) + modules rail -->
+  <div class="workspace">
+    <div class="feedwrap">
+      <div class="feedhead">
+        <h2>Activity</h2>
+        <span class="spacer"></span>
+        <button class="ghost sm" id="feedClearBtn">Clear</button>
+      </div>
+      <div id="feed"><div class="feedempty" id="feedEmpty">Waiting for activity&hellip; start Chloe to see her work here.</div></div>
+    </div>
+    <div class="modrail">
+      <h2>Modules</h2>
+      <button class="mod" id="mod_setup"><span class="dot" id="moddot_setup"></span><span class="nm">Setup</span></button>
+      <button class="mod" id="mod_behavior"><span class="dot" id="moddot_behavior"></span><span class="nm">Behavior</span></button>
+      <button class="mod" id="mod_moderation"><span class="dot" id="moddot_moderation"></span><span class="nm">Moderation</span></button>
+      <button class="mod" id="mod_people"><span class="dot" id="moddot_people"></span><span class="nm">People</span></button>
+      <button class="mod" id="mod_system"><span class="dot" id="moddot_system"></span><span class="nm">System</span></button>
+      <button class="mod" id="mod_about"><span class="dot" id="moddot_about"></span><span class="nm">About</span></button>
+    </div>
+  </div>
+
+  <!-- collapsible debug: the raw verbatim log, kept -->
+  <div class="debug" id="debugBox">
+    <div class="debughead" id="debugHead"><span class="caret">&#9656;</span> Debug &mdash; raw log</div>
+    <div class="debugbody">
+      <div class="logbar"><span class="muted">live log</span><span class="spacer"></span><button class="ghost sm" id="clearLogBtn">Clear</button><button class="danger sm" id="resetBtn">Reset state</button></div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <!-- module config slide-over: the six panes become its bodies, reparented verbatim -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="slideover" id="slideover">
+    <div class="sohead">
+      <h2 id="soTitle">Module</h2>
+      <span class="spacer"></span>
+      <button class="soclose" id="soCloseBtn">Close</button>
+    </div>
+    <div class="sobody" id="soBody">
 
   <section class="pane active" id="pane_setup">
     <div class="card" id="setupCard">
@@ -217,8 +277,19 @@
         <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
         <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
+        <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
+        <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
+        <label class="chip"><input type="checkbox" id="affectChk"> give her an inner weather (own mood)</label>
+        <label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label>
+        <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction</label>
         <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
       </div>
+    </div>
+    <div class="card">
+      <h2>Reaction modes (procedural)</h2>
+      <div class="note">When a <strong>moderator</strong> reacts with one of these emoji (on any message), Chloe switches into that mode for the given minutes &mdash; e.g. &#128295; &rarr; &ldquo;switch to technical mode: precise, terse, code-first&rdquo;. Tone/behavior guidance only; a mode can never change her rules or moderation. <code>!chloe mode</code> shows the active mode, <code>!chloe mode clear</code> (mods) ends it. Enable with the toggle above (&ldquo;follow moderator reaction modes&rdquo;).</div>
+      <textarea id="procRules" rows="4" spellcheck="false" placeholder="Paste a JSON array of rules (fields: emoji, mode, minutes), then click Save reaction modes. Example appears here once saved."></textarea>
+      <div class="row"><button id="saveProcRulesBtn">Save reaction modes</button></div>
     </div>
     <div class="card">
       <h2>Abilities</h2>
@@ -433,7 +504,7 @@
     <div class="card">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. All three are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code>, and off by default.
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
       </div>
     </div>
     <div class="card">
@@ -477,12 +548,8 @@
     </div>
   </section>
 
-  <div class="card">
-    <div class="logbar"><h2 style="margin:0">Log</h2><span class="spacer"></span>
-      <button class="ghost sm" id="clearLogBtn">Clear</button>
-      <button class="danger sm" id="resetBtn">Reset state</button></div>
-    <div id="log"></div>
-  </div>
+    </div><!-- /.sobody -->
+  </aside><!-- /.slideover -->
 </div>
 
 <script>
@@ -530,6 +597,7 @@
       else if (d.method === 'facts') handler = facts;
       else if (d.method === 'channelSummary') handler = channelSummary;
       else if (d.method === 'reflect') handler = reflect;
+      else if (d.method === 'episodes') handler = episodes;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
@@ -780,6 +848,32 @@
     }).catch(function (e) { dlog('channelSummary: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
+  // episodes(ctx) -> { ok, value: array of {t, topics, who, i} }. Episodic memory: turn recent
+  // activity into 0-2 short EVENT records (“what happened”) — not message-by-message detail.
+  function episodes(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var lines = (ctx && ctx.lines) ? ctx.lines : [];
+    if (!lines.length) return Promise.resolve({ ok: true, value: [] });
+    var known = (ctx && ctx.known && ctx.known.length) ? ('Episodes already recorded (do NOT repeat): ' + ctx.known.join(' | ') + '\n') : '';
+    var transcript = lines.slice(-40).map(function (l) { return '- ' + String(l); }).join('\n');
+    var instruction =
+      'You keep an episodic memory of a chat channel: short records of notable EVENTS, so you can recall “remember when…” later.\n'
+      + 'From the recent messages below, record at most 2 genuinely notable episodes — things that HAPPENED (someone finished a project, a plan was made, a running joke was born, a problem got solved). Skip ordinary back-and-forth.\n'
+      + 'STRICT RULES:\n'
+      + '- Only what plainly happened in the messages. Never infer or embellish.\n'
+      + '- NEVER record sensitive matters: health, mental health, religion, politics, sexuality, identity, location, finances, family/relationship troubles, or anything embarrassing. If in doubt, leave it out.\n'
+      + '- Each episode: one neutral third-person sentence, max 20 words.\n'
+      + known
+      + 'Recent messages:\n' + transcript + '\n\n'
+      + 'Respond ONLY with a JSON array of objects ' + String.fromCharCode(123) + '"t":<one-sentence event>,"topics":[3-6 short keywords],"who":[names involved],"i":<importance 1-10>' + String.fromCharCode(125) + '. If nothing notable happened, respond with an empty array ' + '[' + ']' + '.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
+      var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
+      var clean = (arr || []).filter(function (x) { return x && typeof x === 'object' && typeof x.t === 'string' && x.t.trim(); }).slice(0, 2);
+      return { ok: true, value: clean };
+    }).catch(function (e) { dlog('episodes: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   // reflect(ctx) -> { ok, value: array-of-strings }. Synthesis: turn a person's accumulated facts into
   // 1-2 higher-level durable insights — what the facts ADD UP TO, not a restatement of them.
   function reflect(ctx) {
@@ -828,9 +922,11 @@
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var name = (ctx && ctx.name) ? String(ctx.name) : 'friend';
     var days = (ctx && ctx.absentMs) ? Math.max(1, Math.round(ctx.absentMs / 86400000)) : null;
+    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context (mood, time, modes, what she knows of them)
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + soft
       + 'You are Chloe. ' + name + ' is someone you talk with a lot, and they have not been around for ' + (days ? (days + ' days') : 'a while') + '.\n'
-      + (ctx && ctx.summary ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')
+      + ((ctx && ctx.summary && !soft) ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')   // v0.58: the assembler context already carries her facts (PERSON band) — the bespoke summary would say it twice
       + 'Write a short, warm check-in addressed to them \u2014 happy and light, like noticing a friend has been quiet. Do NOT include their name (it is added for you). Do NOT guilt-trip or be clingy. One sentence, maybe two. No name prefix.';
     return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[[', '\n[['] })).then(function (result) {
       var text = String(result || '').trim();
@@ -843,10 +939,12 @@
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var prompt = (ctx && ctx.prompt) ? String(ctx.prompt) : '';
     if (!prompt) return Promise.resolve({ ok: false, reason: 'no beat prompt' });
+    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context rides into beats too
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + soft
       + 'You are Chloe. Write a short, natural, in-character message to the channel based on this idea: ' + prompt + '\n'
       + 'One or two sentences. Do not prefix with your name. Do not say that this is scheduled or automated \u2014 just say it as you would in the moment.';
-    return Promise.resolve(ai({ instruction: instruction, startWith: '' })).then(function (result) {
+    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[' + '[', '\n[' + '['] })).then(function (result) {   // v0.58: turn-marker stops, same as every other template
       var text = String(result || '').trim();
       if (!text) dlog('beat: model returned empty');
       return { ok: !!text, value: text };
@@ -862,7 +960,9 @@
     if (!lines.length) return Promise.resolve({ ok: true, value: 'It\u2019s been quiet \u2014 nothing much to catch up on.' });
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var youName = (ctx && ctx.recent && ctx.recent.you && ctx.recent.you.name) ? ctx.recent.you.name : 'Chloe';
+    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // v0.58: recaps written under the same mood/mode awareness as everything else
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + soft
       + 'You are ' + youName + '. A moderator asked for a quick recap of what\u2019s been happening in the channel.\n'
       + 'Recent conversation:\n' + transcript + '\n'
       + 'Summarize the key points in a few short sentences, in your own voice. Be concise and useful; do not invent anything that is not in the conversation above. Do not prefix with your name.';
@@ -922,6 +1022,7 @@
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var who = (ctx && ctx.person && ctx.person.name) ? ctx.person.name : 'someone';
     var youName = (ctx && ctx.recent && ctx.recent.you && ctx.recent.you.name) ? ctx.recent.you.name : 'Chloe';
+    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // v0.58: greetings honor mood, time, and modes too
     var familiar = (ctx && ctx.interactionCount) || 0;
     var lines = (ctx && ctx.recent && ctx.recent.channelRecent) ? ctx.recent.channelRecent : [];
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
@@ -933,6 +1034,7 @@
       ? ('You know ' + who + ' well \u2014 be warm and familiar.')
       : ('You barely know ' + who + ' yet \u2014 keep it light, not over-familiar.');
     var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+      + soft
       + 'You are ' + youName + ', chatting in a Discord channel.\n'
       + (transcript ? ('Recent conversation:\n' + transcript + '\n') : '')
       + tier + ' ' + warmth + '\n'
@@ -1000,6 +1102,37 @@
     var t = new Date().toLocaleTimeString();
     box.textContent = box.textContent + (box.textContent ? '\n' : '') + t + '  ' + line;
     box.scrollTop = box.scrollHeight;
+    feedEvent(line, t);
+  }
+  // Classify a log line into a timeline event by its bracketed tag. Pure presentation — the engine
+  // already emits every meaningful action through log(); this just types + colors it.
+  function feedType(line) {
+    var s = String(line).toLowerCase();
+    if (/error|fail|\bwarn/.test(s)) return ['warning', 'WARNING'];
+    if (/\babandon/.test(s)) return ['moderation', 'ABANDON'];
+    if (/\[chloe\.img/.test(s) || /paint/.test(s)) return ['image', 'IMAGE'];
+    if (/\[chloe\.poll/.test(s)) return ['poll', 'POLL'];
+    if (/\bmod|strike|gate|block|softban|timeout|lockdown/.test(s)) return ['moderation', 'MODERATION'];
+    if (/replied to|\[chloe\.lull|\[chloe\.checkin|\[chloe\.beat|greeted|\[chloe\.summon|resume|resuming/.test(s)) return ['response', 'RESPONSE'];
+    if (/\[chloe\.ctx|fact|episode|reflect|chansum|memor|recall|trust/.test(s)) return ['memory', 'MEMORY'];
+    if (/packed|context|generating|thinking/.test(s)) return ['thinking', 'THINKING'];
+    if (/received|asks|new message/.test(s)) return ['received', 'RECEIVED'];
+    return ['system', 'SYSTEM'];
+  }
+  var FEED_MAX = 200;
+  function feedEvent(line, t) {
+    var feed = byId('feed'); if (!feed) return;
+    var em = byId('feedEmpty'); if (em) em.style.display = 'none';
+    var cls = feedType(line);
+    var row = document.createElement('div'); row.className = 'ev ' + cls[0];
+    var ts = document.createElement('span'); ts.className = 't'; ts.textContent = t || new Date().toLocaleTimeString();
+    var tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = cls[1];
+    var ms = document.createElement('span'); ms.className = 'msg';
+    ms.textContent = String(line).replace(/^\[chloe\.[a-z0-9]+\]\s*/i, '');   // strip the tag; the chip shows the type
+    row.appendChild(ts); row.appendChild(tg); row.appendChild(ms);
+    feed.appendChild(row);
+    while (feed.childNodes.length > FEED_MAX + 1) feed.removeChild(feed.firstChild);
+    feed.scrollTop = feed.scrollHeight;
   }
 
   function fmtTime(ms) {
@@ -1022,6 +1155,18 @@
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
     setText('runTxt', s.running ? 'running' : 'stopped');
+    // status bar mirrors the run state with one state-colored dot + label
+    var sbDot = byId('sb_run_dot'); if (sbDot) sbDot.className = 'dot ' + (s.running ? 'on' : 'off');
+    setText('sb_run', s.running ? 'online' : 'stopped');
+    // brain latency (the adaptive meter snapshot, when present) — green/amber/red by health
+    if (s.brain && s.brain.respond && s.brain.respond.srtt != null) {
+      var br = s.brain.respond;
+      setText('sb_brain', (br.state === 'open' ? 'down' : (br.srtt + 'ms')));
+    } else { setText('sb_brain', s.running ? 'warming' : '\u2013'); }
+    // module rail dots: green when the subsystem's headline toggle is on, neutral otherwise
+    var modOn = { behavior: !!(s.volunteer || s.lullFiller || s.checkins), moderation: !!s.autoMod,
+      people: (s.botUserId ? true : false), system: !!s.running, setup: !!s.channelId, about: false };
+    Object.keys(modOn).forEach(function (k) { var d = byId('moddot_' + k); if (d) d.className = 'dot ' + (modOn[k] ? 'on' : ''); });
     if (s.addressMode) { var sel = byId('modeSel'); if (sel && sel.value !== s.addressMode) sel.value = s.addressMode; }
     var vc = byId('volChk'); if (vc) vc.checked = !!s.volunteer;
     var gc = byId('greetChk'); if (gc) gc.checked = !!s.greet;
@@ -1036,6 +1181,12 @@
     var md = byId('moodChk'); if (md) md.checked = !!s.moodAware;
     var cs = byId('chansumChk'); if (cs) cs.checked = !!s.channelSummary;
     var rf = byId('reflectChk'); if (rf) rf.checked = !!s.reflection;
+    var ep = byId('epiChk'); if (ep) ep.checked = !!s.episodicMemory;
+    var tr = byId('trustChk'); if (tr) tr.checked = !!s.relationshipTrust;
+    var af = byId('affectChk'); if (af) af.checked = !!s.ownAffect;
+    var pc = byId('procChk'); if (pc) pc.checked = !!s.proceduralModes;
+    var sm = byId('summonChk'); if (sm) sm.checked = !!s.reactionSummon;
+    var pr = byId('procRules'); if (pr && document.activeElement !== pr) pr.value = JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1);
     var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
     var bc = byId('backfillChk'); if (bc) bc.checked = !!s.backfill;
     var ic = byId('imageChk'); if (ic) ic.checked = !!s.image;
@@ -1301,6 +1452,41 @@
       log(res && res.ok ? ('reflection: ' + res.value.reflection) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
+  byId('epiChk').addEventListener('change', function () {
+    call('config.setEpisodicMemory', { on: byId('epiChk').checked }).then(function (res) {
+      log(res && res.ok ? ('episodic memory: ' + res.value.episodicMemory) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('trustChk').addEventListener('change', function () {
+    call('config.setRelationshipTrust', { on: byId('trustChk').checked }).then(function (res) {
+      log(res && res.ok ? ('relationship warmth: ' + res.value.relationshipTrust) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('affectChk').addEventListener('change', function () {
+    call('config.setOwnAffect', { on: byId('affectChk').checked }).then(function (res) {
+      log(res && res.ok ? ('own mood: ' + res.value.ownAffect) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('procChk').addEventListener('change', function () {
+    call('config.setProceduralModes', { on: byId('procChk').checked }).then(function (res) {
+      log(res && res.ok ? ('reaction modes: ' + res.value.proceduralModes) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('summonChk').addEventListener('change', function () {
+    call('config.setReactionSummon', { on: byId('summonChk').checked }).then(function (res) {
+      log(res && res.ok ? ('reaction summon: ' + res.value.reactionSummon) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('saveProcRulesBtn').addEventListener('click', function () {
+    var txt = byId('procRules').value.trim();
+    var rules;
+    try { rules = txt ? JSON.parse(txt) : []; } catch (e) { log('reaction modes: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
+    if (!Array.isArray(rules)) { log('reaction modes: expected a JSON array'); return; }
+    call('config.setProcRules', { rules: rules }).then(function (res) {
+      if (res.ok) { log('reaction modes saved: ' + res.value.count + ' rule(s)'); byId('procRules').value = JSON.stringify(res.value.rules, null, 1); }
+      else log('reaction modes failed: ' + res.reason);
+    });
+  });
   byId('backfillChk').addEventListener('change', function () {
     call('config.setBackfill', { on: byId('backfillChk').checked }).then(function (res) {
       log(res.ok ? ('backfill: ' + res.value.backfill + (res.value.backfill ? ' (will seed the roster from history over the next polls)' : '')) : ('failed: ' + res.reason));
@@ -1450,6 +1636,9 @@
       var v = res.value || {};
       var ids = Object.keys(v.workers || {});
       setText('bridgeRole', 'tabs: this tab is the ' + (v.role || '?') + (v.role === 'queen' ? ' \u00b7 ' + ids.length + ' worker' + (ids.length === 1 ? '' : 's') : ''));
+      // status-bar workers pill (only meaningful for a queen with workers)
+      var ww = byId('sb_workers_wrap');
+      if (ww) { if (v.role === 'queen' && ids.length) { ww.style.display = ''; setText('sb_workers', String(ids.length)); } else { ww.style.display = 'none'; } }
       var host = byId('app');
       if (v.role === 'worker' && !byId('workerBanner') && host) {
         var wb = document.createElement('div');
@@ -1508,6 +1697,12 @@
   });
 
   log('control panel loaded; pinging userscript ...');
+  // First-run nudge: if nothing is configured yet, open Setup so a new user isn't staring at an
+  // empty feed wondering where the controls went.
+  call('status').then(function (res) {
+    var s = (res && res.ok && res.value) || {};
+    if (!s.channelId && !s.hasToken && window.__chloeOpenModule) window.__chloeOpenModule('setup');
+  });
   dlog('control page loaded; brain ready (respond / judge / greet). This page logs with the [chloe-page] prefix; the userscript logs with [chloe...].');
   refresh();
   refreshMods();
@@ -1516,16 +1711,36 @@
   // ---- UI v2: tab rail (in-memory only; never touches location.hash — the worker role lives there)
   (function () {
     var names = 'setup behavior moderation people system about'.split(' ');
-    function activate(name) {
-      names.forEach(function (n) {
-        var pane = byId('pane_' + n), tab = byId('tab_' + n);
-        if (pane) pane.className = (n === name) ? 'pane active' : 'pane';
-        if (tab) tab.className = (n === name) ? 'tab active' : 'tab';
-      });
+    var titles = { setup:'Setup', behavior:'Behavior', moderation:'Moderation', people:'People', system:'System', about:'About' };
+    var current = null;
+    function showPane(name) {
+      names.forEach(function (n) { var pane = byId('pane_' + n); if (pane) pane.className = (n === name) ? 'pane active' : 'pane'; });
     }
-    names.forEach(function (n) {
-      var tab = byId('tab_' + n);
-      if (tab) tab.addEventListener('click', function () { activate(n); });
-    });
+    function openModule(name) {
+      showPane(name);
+      setText('soTitle', titles[name] || 'Module');
+      byId('slideover').classList.add('open');
+      byId('scrim').classList.add('open');
+      names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.className = (n === name) ? 'mod sel' : 'mod'; });
+      current = name;
+      var body = byId('soBody'); if (body) body.scrollTop = 0;
+    }
+    function closeModule() {
+      byId('slideover').classList.remove('open');
+      byId('scrim').classList.remove('open');
+      names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.className = 'mod'; });
+      current = null;
+    }
+    names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.addEventListener('click', function () { (current === n) ? closeModule() : openModule(n); }); });
+    byId('scrim').addEventListener('click', closeModule);
+    byId('soCloseBtn').addEventListener('click', closeModule);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && current) closeModule(); });
+    window.__chloeOpenModule = openModule;   // setup auto-open hook below
   })();
+  // Debug surface toggle (collapsed by default).
+  byId('debugHead').addEventListener('click', function () { byId('debugBox').classList.toggle('open'); });
+  byId('feedClearBtn').addEventListener('click', function () {
+    var feed = byId('feed'); while (feed.firstChild) feed.removeChild(feed.firstChild);
+    var em = document.createElement('div'); em.className = 'feedempty'; em.id = 'feedEmpty'; em.textContent = 'Feed cleared.'; feed.appendChild(em);
+  });
 </script>
