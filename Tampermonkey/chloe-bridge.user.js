@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.54.0
+// @version      0.57.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -256,6 +256,29 @@
       // fires via cfg.defer(fn, ms) (host setTimeout) instead of waiting for the next poll tick.
       // Purely additive: with no defer hook, behavior is exactly the old poll-bound dispatch.
       typingRefreshMs: 8000,        // Discord's typing indicator lasts ~10s; refresh while generating
+      // Reaction vocabulary (README §Reactions): semantically truthful indicators, all under the
+      // ackReactions toggle. 🗣️ = generating your text reply; 🖼️ = painting; 🔍 = looking
+      // something up; ⏳ = saw you, throttled (cooldown/budget) — auto-clears; 🔒 = mods-only mode.
+      // DELIBERATE: no indicator for quiet moderation (ignore/softban/block) — reacting would
+      // announce it. Throttle indicators cover only benign, temporary reasons.
+      ackThrottleEmoji: '\u23f3',
+      ackLockdownEmoji: '\ud83d\udd12',
+      ackSearchEmoji: '\ud83d\udd0d',
+      ackClearMs: 30000,            // why-not indicators clear themselves after this long
+      // Reply references: her text replies attach to the message they answer (Discord's native
+      // reply threading), with the reply-ping suppressed. Pure clarity; replyReference:false to disable.
+      replyReference: true,
+      // Reaction summon (README §Reactions): monkey-see-monkey-do — react to YOUR OWN message with
+      // one of her own indicators and she treats it as an explicit address. Mods can summon her onto
+      // anyone's message. All normal gates still apply (lockdown, moderation, cooldowns, budget).
+      reactionSummon: false,
+      summonEmoji: ['\ud83d\udde3\ufe0f', '\u2757', '\ud83e\udd16'],   // her speak indicator, ! and the robot — deliberately NOT ❤️ (hearts are warmth, and casual)
+      summonMaxAgeMs: 900000,       // messages older than 15m can't be summoned — a stale summon found on
+                                    // cold boot (reacted while she was offline) must NOT fire (the
+                                    // v0.46.3 “cold start treats history as live” bug class)
+      // Reaction polls: !chloe poll <question> | <a> | <b> ... — she posts the ballot, seeds the
+      // number reactions, and tallies counts on close (or auto-close). One active poll per channel.
+      pollMaxAgeMs: 86400000,       // polls auto-close after a day if nobody closes them
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
@@ -328,6 +351,7 @@
     var EPI_KEY = 'epi:' + cfg.channelId;           // episodic memory ring (experiences as events)
     var AFFECT_KEY = 'affect:' + cfg.channelId;     // her own internal state {curiosity, confidence, warmth}
     var PROC_KEY = 'procmode:' + cfg.channelId;     // active procedural mode { mode, until, by, emoji }
+    var POLL_KEY = 'poll:' + cfg.channelId;         // active reaction poll { messageId, question, options, endsAt }
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
     // survives across polls and rides in every response context, so she holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
@@ -593,7 +617,7 @@
       var hers = msg.author && msg.author.id === cfg.botUserId;
       var hasPositive = hers && (msg.reactions || []).some(function (r) { return r && r.emoji && pos.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; });
       var affectChain = hasPositive ? affectNudge({ confidence: (cfg.affectGain || 0.08), warmth: (cfg.affectGain || 0.08) }) : Promise.resolve(null);
-      return affectChain.then(function () { return creditPositiveReactions(msg); }).then(function () { return procCheckReactions(msg); }).then(function () { return scoreMessageReactions(msg); });
+      return affectChain.then(function () { return creditPositiveReactions(msg); }).then(function () { return procCheckReactions(msg); }).then(function () { return summonCheckReactions(msg); }).then(function () { return scoreMessageReactions(msg); });
     }
     function scoreMessageReactions(msg) {
       var top = null;
@@ -1252,13 +1276,29 @@
             return { ack: (pn && pn.text) ? ('current persona note (anchored by ' + (pn.by || 'a mod') + '): ' + pn.text) : ('no persona note anchored \u2014 a mod can react ' + (cfg.anchorEmoji || '\ud83d\udccc') + ' to a message to set one') };
           });
         } },
-      { verb: 'recap',     modOnly: true, cooldownMs: 20000, aliases: ['\ud83d\udcdc'], help: 'recap', handler: function (modId) {
+      { verb: 'poll',      modOnly: true, help: 'poll <question> | <a> | <b> [...]  /  poll close', handler: function (modId, c) {
+          var args = String((c && c.rawArgs) || '').trim();
+          if (!args) {
+            return Promise.resolve(store.get(POLL_KEY)).then(function (rec) {
+              return rec && rec.messageId ? { ack: 'open poll: \u201c' + rec.question + '\u201d \u2014 ' + cfg.commandPrefix + ' poll close to tally' } : { ack: 'no poll is open \u2014 ' + cfg.commandPrefix + ' poll <question> | <a> | <b>' };
+            });
+          }
+          if (/^(close|end|tally)$/i.test(args)) return pollClose();
+          var parts = args.split('|').map(function (s) { return s.trim(); }).filter(Boolean);
+          if (parts.length < 3) return Promise.resolve({ ack: 'a poll needs a question and at least two options: poll <question> | <a> | <b>' });
+          if (parts.length > 10) return Promise.resolve({ ack: 'nine options max' });
+          return pollCreate(parts[0].slice(0, 200), parts.slice(1).map(function (o) { return o.slice(0, 80); }));
+        } },
+      { verb: 'recap',     modOnly: true, cooldownMs: 20000, aliases: ['\ud83d\udcdc'], help: 'recap', handler: function (modId, c) {
           if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'recap is not available right now' });
+          var mid = c && c.messageId;
+          if (mid) ackWorking(mid, cfg.ackSearchEmoji);   // 🔍 — digging through the channel before answering
+          function done(out) { if (mid) clearAck(mid, cfg.ackSearchEmoji); return out; }
           return assembleContext({ authorId: modId, authorName: '' }).then(function (ctx) {
             return Promise.resolve(cfg.recapFn({ recent: ctx })).then(function (res) {
               var v = (res && res.ok && res.value) ? String(res.value) : 'not much has happened that I can see';
-              return { ack: v, embed: embedFor('Recap', v) };
-            }, function () { return { ack: 'recap failed' }; });
+              return done({ ack: v, embed: embedFor('Recap', v) });
+            }, function () { return done({ ack: 'recap failed' }); });
           });
         } },
       { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText(), embed: statusEmbed() }); } },
@@ -1447,7 +1487,7 @@
         if (dm && durationMs == null && entry.takesDuration) { durationMs = durToMs(dm[1], dm[2]); return; }
         reasonTokens.push(t);
       });
-      return { cmd: entry.verb, entry: entry, targetId: targetId, durationMs: durationMs, reason: reasonTokens.join(' ').trim(), rawArgs: rawArgs, raw: raw };
+      return { cmd: entry.verb, entry: entry, targetId: targetId, durationMs: durationMs, reason: reasonTokens.join(' ').trim(), rawArgs: rawArgs, raw: raw, messageId: null };
     }
     function helpText() {
       var p = cfg.commandPrefix;
@@ -1544,11 +1584,13 @@
         var stateById = {}, commandAuthors = {};
         authorIds.forEach(function (id, i) { var p = parts[i]; if (p) { applyExpiry(p, now); stateById[id] = p.state || 'active'; } else stateById[id] = 'active'; });
         var acks = [], embeds = [], notices = [], commandCount = 0, addressedName = null, imageReqName = null;
+          var ackSrc = [];   // message id behind each ack (single-source batches reply-reference)
         var canEmbed = typeof cfg.sendEmbed === 'function';
         var chain = Promise.resolve();
         incoming.forEach(function (m) {
           chain = chain.then(function () {
             var c = parseCommand(m.content);
+            if (c) c.messageId = m.id;   // lets handlers ack the triggering message (e.g. recap's search indicator)
             if (c) {
               // Cold-start backlog: don't replay historical commands. EXCEPTION: the image command
               // follows the 5-most-recent image clamp instead (the user wants recent images on startup).
@@ -1560,12 +1602,12 @@
               if (c.cmd === 'forget') {
                 var fa = String(c.rawArgs || '').trim();
                 if (fa && !/^me$/i.test(fa) && cfg.factMemory) {   // "forget <a thing>" drops matching facts, keeps the person
-                  return forgetFact(m.author.id, fa).then(function (n) { acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); });
+                  return forgetFact(m.author.id, fa).then(function (n) { ackSrc.push(m.id); acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); });
                 }
                 return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person
               }
-              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });  // open to anyone
-              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) acks.push(res.ack); } });
+              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
+              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
             }
@@ -1616,7 +1658,10 @@
               }
             }
             if (stateById[m.author.id] && stateById[m.author.id] !== 'active') return; // suppressed: invisible to engagement
-            if (engageMode === 'locked' && !isMod(m.author.id)) return;   // raid lockdown: only mods get engagement (auto-mod above still ran)
+            if (engageMode === 'locked' && !isMod(m.author.id)) {   // raid lockdown: only mods get engagement (auto-mod above still ran)
+              if (addressKind(m.content) !== 'none') { ackWorking(m.id, cfg.ackLockdownEmoji); scheduleAckClear(m.id, cfg.ackLockdownEmoji); }   // 🔒 honest mods-only signal (lockdown is a PUBLIC mode; quiet moderation stays quiet)
+              return;
+            }
             var addressed = isAddressed(m.content) || (engageMode === 'open');
             if (imageEnabled() && addressed && mayPaint(m)) {
               var imgReq = parseImageRequest(m.content);
@@ -1632,7 +1677,7 @@
                   // place in line: if something's already painting or ahead, show their number now.
                   if (paint.painting || paint.queue.length > 1) setQueueAck(qItem, queueEmojiFor(paint.queue.length));
                 }
-                if (reply.queue[m.author.id]) { clearAck(reply.queue[m.author.id].messageId, cfg.ackWorkingEmoji); delete reply.queue[m.author.id]; }   // image supersedes a text reply this turn (and takes its ack)
+                if (reply.queue[m.author.id]) delete reply.queue[m.author.id];   // image supersedes a text reply this turn
                 if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
                 imageReqName = m.author.username;
                 return;
@@ -1642,9 +1687,7 @@
               var gi = touched && touched.greetInfo && touched.greetInfo[m.author.id];
               var newUser = !!(gi && gi.brandNew);
               var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser, trusted: !!(gi && gi.trusted) });
-              if (reply.queue[m.author.id] && reply.queue[m.author.id].messageId !== m.id) clearAck(reply.queue[m.author.id].messageId, cfg.ackWorkingEmoji);   // superseded by their newer message
               reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now, priority: pri };
-              ackWorking(m.id, cfg.ackWorkingEmoji);   // \u201cseen you\u201d the moment you're queued, not when your turn starts
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
             } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
@@ -1684,7 +1727,7 @@
           if ((acks.length || embeds.length) && cfg.ackCommands) {
             log('[chloe.T3] ran ' + commandCount + ' command(s)' + (embeds.length ? (' (' + embeds.length + ' embed)') : ''));
             var outs = [];
-            if (acks.length && typeof cfg.send === 'function') outs.push(Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'))));
+            if (acks.length && typeof cfg.send === 'function') outs.push(Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'), (cfg.replyReference !== false && acks.length === 1 && ackSrc[0]) ? { replyTo: ackSrc[0] } : undefined)));   // a lone ack attaches to its command
             embeds.forEach(function (em) { outs.push(Promise.resolve(cfg.sendEmbed(cfg.channelId, em))); });
             return Promise.all(outs.map(function (p) { return p.then(function () {}, function () {}); })).then(function () { return { commands: commandCount }; });
           }
@@ -1761,7 +1804,11 @@
               }, function () { return null; });
             }
             if (fired.prompt && typeof cfg.beatFn === 'function') {
-              return Promise.resolve(cfg.beatFn({ id: fired.id, prompt: fired.prompt })).then(function (res) {
+              // v0.57: beats ride the assembler — mood, time, procmode, channel arc all apply now.
+              return assembleContext({ authorId: '', authorName: '', content: '' }).then(function (actx) {
+                actx.id = fired.id; actx.prompt = fired.prompt;
+                return cfg.beatFn(actx);
+              }).then(function (res) {
                 return deliver((res && res.ok && res.value) ? String(res.value) : pickBeatText(fired));
               }, function () { return deliver(pickBeatText(fired)); });
             }
@@ -1850,7 +1897,12 @@
             if (!best) return toArchive.length ? store.set(CHECKIN_KEY, ci).then(function () { return null; }) : null;
             reply.replying = true;
             if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
-            return Promise.resolve(cfg.checkinFn({ name: best.name, absentMs: best.absent, interactions: best.interactions, summary: best.summary })).then(function (r) {
+            // v0.57: check-ins ride the assembler with the ABSENT FRIEND as the addressed person —
+            // her facts, insights, and trust tier arrive via the PERSON band for free.
+            return assembleContext({ authorId: best.id, authorName: best.name, content: '' }).then(function (actx) {
+              actx.name = best.name; actx.absentMs = best.absent; actx.interactions = best.interactions; actx.summary = best.summary;
+              return cfg.checkinFn(actx);
+            }).then(function (r) {
               var text = (r && r.ok) ? String(r.value || '').trim() : '';
               if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
               var body = '<@' + best.id + '> ' + text;   // the mention only actually pings if the gate allows it
@@ -1874,7 +1926,7 @@
         var now = clock.now();
         roster = roster.filter(function (u) { return !isSuppressed(u, now); });
         var lines = [];
-        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, text: scrubDiscordTokens(ln.content), ts: ln.ts }); }); });
+        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, text: scrubDiscordTokens(ln.content).slice(0, 240), ts: ln.ts }); }); });   // per-line clip: 40 unclipped 1900-char messages would eat the entire 5000-token request ceiling
         lines.sort(function (a, b) { return a.ts - b.ts; });
         if (lines.length > (maxLines || 40)) lines = lines.slice(-(maxLines || 40));
         return lines.map(function (l) { return l.who + ': ' + l.text; });
@@ -2168,6 +2220,12 @@
       var wait = Math.max(50, (cfg.imageCooldownMs || 0) - (clock.now() - lastPaintAt));
       cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) kickImage(); }, wait);
     }
+    // Why-not indicators clear themselves (a stale ⏳ hours later would confuse more than help).
+    function scheduleAckClear(messageId, emoji, ms) {
+      if (typeof cfg.defer !== 'function' || !messageId) return;
+      var g = deferGen;
+      cfg.defer(function () { if (g === deferGen) clearAck(messageId, emoji); }, ms || cfg.ackClearMs || 30000);
+    }
     // Typing keep-alive: Discord's indicator fades in ~10s; refresh while a generation is in flight.
     function keepTypingWhile(flagFn) {
       if (typeof cfg.defer !== 'function') return;
@@ -2210,7 +2268,6 @@
             var answered = (msgs || []).some(function (m) { return m && m.author && m.author.id === cfg.botUserId && snowflakeCmp(m.id, rec.messageId) > 0; });
             if (answered) { log('[chloe.resume] a bot message exists after the target \u2014 assuming it was answered (no double-send)'); return false; }
             reply.queue[rec.authorId] = { messageId: rec.messageId, authorId: rec.authorId, authorName: rec.authorName, content: rec.content || '', at: rec.at, priority: rec.priority || 0 };
-            ackWorking(rec.messageId, cfg.ackWorkingEmoji);
             log('[chloe.resume] resuming a reply a previous engine lost mid-generation (to ' + rec.authorName + ')');
             return true;
           }, function () { return false; });   // verification fetch failed -> conservative: no resume
@@ -2374,6 +2431,7 @@
                     return null;
                   }).then(function (facts) {
                     if (facts) summary.facts = facts;
+                    return checkPollExpiry();   // unconditional per-poll: lazy poll auto-close (one cheap store read, outside the one-AI-pass ladder)
                   });
                   function finishPoll() {
                     pollCount++;
@@ -2421,7 +2479,10 @@
       Object.keys(reply.queue).forEach(function (id) {
         var e = reply.queue[id];
         if (now - e.at < cfg.debounceMs) return;                        // still bursting
-        if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) return;      // per-author cooldown
+        if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) {            // per-author cooldown
+          if (!e.throttleAcked) { e.throttleAcked = true; ackWorking(e.messageId, cfg.ackThrottleEmoji); scheduleAckClear(e.messageId, cfg.ackThrottleEmoji); }   // ⏳ why she's not answering yet
+          return;
+        }
         var ep = e.priority || 0;
         if (!p) { p = e; return; }
         var pp = p.priority || 0;
@@ -2432,13 +2493,17 @@
       // shared slot ahead of a regular channel, so DMs are answered first. Checked AFTER selection so
       // we know the winner's priority. Claimed NOW (before the multi-second generation); released if
       // nothing comes back.
-      if (typeof cfg.canSend === 'function' && !cfg.canSend('text', p.priority || 0)) return Promise.resolve(null);
+      if (typeof cfg.canSend === 'function' && !cfg.canSend('text', p.priority || 0)) {
+        if (!p.throttleAcked) { p.throttleAcked = true; ackWorking(p.messageId, cfg.ackThrottleEmoji); scheduleAckClear(p.messageId, cfg.ackThrottleEmoji); }   // ⏳ the shared voice is busy elsewhere
+        return Promise.resolve(null);
+      }
       if (typeof cfg.noteSend === 'function') cfg.noteSend('text', p.priority || 0);
       delete reply.queue[p.authorId];
       reply.replying = true;
       indicateTyping();
       keepTypingWhile(function () { return reply.replying; });
-      ackWorking(p.messageId, cfg.ackWorkingEmoji);   // idempotent re-ack (already placed at enqueue; covers resumed replies)
+      if (p.throttleAcked) clearAck(p.messageId, cfg.ackThrottleEmoji);   // your turn came: ⏳ hands over
+      ackWorking(p.messageId, cfg.ackWorkingEmoji);   // 🗣️ — generating your reply right now
       // Gap A: persist what we're answering, so a successor can resume if this engine dies mid-
       // generation. Cleared at EVERY terminal below (empty, sent, error).
       var pendingRec = (cfg.replyResume === false) ? Promise.resolve(null)
@@ -2459,9 +2524,11 @@
             scheduleTextChain();
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
           }
-          return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
+          return Promise.resolve(cfg.send(cfg.channelId, text, (cfg.replyReference !== false && p.messageId) ? { replyTo: p.messageId } : undefined)).then(function () {
             var t = clock.now();
             lastActAt = t; lastReplyAt[p.authorId] = t;
+            var lrKeys = Object.keys(lastReplyAt);   // bound the per-author map (in-memory leak class)
+            if (lrKeys.length > 300) { lrKeys.sort(function (a, b) { return lastReplyAt[a] - lastReplyAt[b]; }).slice(0, 50).forEach(function (k) { delete lastReplyAt[k]; }); }
             reply.replying = false;
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
@@ -2901,6 +2968,94 @@
       return chain.then(function () { return activated; });
     }
 
+    // ---- reaction summon -------------------------------------------------------------------
+    // She elected not to reply; the author flags their own message with one of HER emojis (or a mod
+    // flags anyone's) and that becomes an explicit address through the NORMAL reply pipeline.
+    var summonSeen = {}; var summonKeys = [];
+    function summonCheckReactions(msg) {
+      if (!cfg.reactionSummon || typeof cfg.reactionUsers !== 'function') return Promise.resolve(null);
+      if (!msg || !msg.author || msg.author.id === cfg.botUserId || msg.author.bot) return Promise.resolve(null);
+      if (!msg.reactions || !msg.reactions.length) return Promise.resolve(null);
+      if (cfg.summonMaxAgeMs > 0 && msg.timestamp && (clock.now() - Date.parse(msg.timestamp)) > cfg.summonMaxAgeMs) return Promise.resolve(null);   // too old to summon (cold-boot safety)
+      if (reply.queue[msg.author.id] && reply.queue[msg.author.id].messageId === msg.id) return Promise.resolve(null);   // already queued
+      var setE = cfg.summonEmoji || [];
+      var hit = (msg.reactions || []).filter(function (r) { return r && r.emoji && setE.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; })[0];
+      if (!hit) return Promise.resolve(null);
+      var key = msg.id;
+      if (summonSeen[key]) return Promise.resolve(null);   // once per message
+      summonSeen[key] = true; summonKeys.push(key);
+      if (summonKeys.length > 300) delete summonSeen[summonKeys.shift()];
+      return Promise.resolve(cfg.reactionUsers(msg.id, hit.emoji.name)).then(function (users) {
+        var byAuthor = (users || []).some(function (u) { return u && u.id === msg.author.id; });
+        var byMod = (users || []).some(function (u) { return u && u.id && isMod(u.id); });
+        if (!byAuthor && !byMod) return null;   // someone ELSE's reaction on your message is not your summon
+        if (engageMode === 'locked' && !byMod) {   // lockdown holds unless a mod is doing the summoning
+          ackWorking(msg.id, cfg.ackLockdownEmoji); scheduleAckClear(msg.id, cfg.ackLockdownEmoji);
+          return null;
+        }
+        return Promise.resolve(store.get(partKey(msg.author.id))).then(function (pp) {
+          if (pp && pp.state && pp.state !== 'active') return null;   // quiet moderation stays quiet — no reply, no tell
+          reply.queue[msg.author.id] = { messageId: msg.id, authorId: msg.author.id, authorName: msg.author.username, content: msg.content || '', at: clock.now(), priority: replyPriority({ isMod: isMod(msg.author.id), kind: 'ping', isNew: false }) };
+          log('[chloe.summon] ' + (byAuthor ? msg.author.username : 'a mod') + ' summoned a reply via ' + hit.emoji.name);
+          scheduleTextChain();   // answer at generation speed, not poll speed
+          return msg.author.id;
+        });
+      }, function () { return null; });
+    }
+
+    // ---- reaction polls ----------------------------------------------------------------------
+    var POLL_NUMS = ['1\ufe0f\u20e3','2\ufe0f\u20e3','3\ufe0f\u20e3','4\ufe0f\u20e3','5\ufe0f\u20e3','6\ufe0f\u20e3','7\ufe0f\u20e3','8\ufe0f\u20e3','9\ufe0f\u20e3'];
+    function pollCreate(question, options) {
+      if (typeof cfg.sendEmbed !== 'function' || typeof cfg.react !== 'function') return Promise.resolve({ ack: 'polls need embed + reaction support' });
+      return Promise.resolve(store.get(POLL_KEY)).then(function (existing) {
+        if (existing && existing.messageId) return { ack: 'a poll is already open \u2014 ' + cfg.commandPrefix + ' poll close first' };
+        var desc = options.map(function (o, i) { return POLL_NUMS[i] + '  ' + o; }).join('\n');
+        var embed = embedFor('\ud83d\udcca ' + question, desc + '\n\nvote by reacting \u2014 one number per heart, results on close');
+        return Promise.resolve(cfg.sendEmbed(cfg.channelId, embed)).then(function (posted) {
+          var mid = posted && posted.id ? String(posted.id) : null;
+          if (!mid) return { ack: 'could not post the ballot' };
+          var seed = Promise.resolve();
+          options.forEach(function (_, i) { seed = seed.then(function () { return Promise.resolve(cfg.react(cfg.channelId, mid, POLL_NUMS[i])).catch(function () {}); }); });
+          return seed.then(function () {
+            return store.set(POLL_KEY, { messageId: mid, question: question, options: options, endsAt: clock.now() + (cfg.pollMaxAgeMs || 86400000) }).then(function () {
+              log('[chloe.poll] opened: \u201c' + question + '\u201d (' + options.length + ' options)');
+              return { ack: null };   // the ballot embed IS the response
+            });
+          });
+        });
+      });
+    }
+    function pollClose(reason) {
+      return Promise.resolve(store.get(POLL_KEY)).then(function (rec) {
+        if (!rec || !rec.messageId) return { ack: 'no poll is open' };
+        return Promise.resolve(store.del(POLL_KEY)).then(function () {
+          if (typeof cfg.fetchMessage !== 'function') return { ack: 'poll closed (no tally available \u2014 message fetch unsupported)' };
+          return Promise.resolve(cfg.fetchMessage(rec.messageId)).then(function (msg) {
+            var counts = rec.options.map(function (o, i) {
+              var r = ((msg && msg.reactions) || []).filter(function (x) { return x && x.emoji && x.emoji.name === POLL_NUMS[i]; })[0];
+              var c = r ? (r.count || 0) - (r.me ? 1 : 0) : 0;   // subtract her own seed
+              return { option: o, votes: Math.max(0, c) };
+            });
+            counts.sort(function (a, b) { return b.votes - a.votes; });
+            var total = counts.reduce(function (s, c) { return s + c.votes; }, 0);
+            var linesOut = counts.map(function (c) { return c.votes + ' \u2014 ' + c.option; }).join('\n');
+            var head = total === 0 ? 'no votes were cast' : (counts[0].votes === (counts[1] ? counts[1].votes : -1) ? 'it\u2019s a tie' : '\u201c' + counts[0].option + '\u201d wins');
+            log('[chloe.poll] closed' + (reason ? ' (' + reason + ')' : '') + ': ' + total + ' vote(s)');
+            return { ack: null, embed: embedFor('\ud83d\udcca results \u2014 ' + rec.question, head + '\n\n' + linesOut) };
+          }, function () { return { ack: 'poll closed, but I could not fetch the ballot to tally it' }; });
+        });
+      });
+    }
+    function checkPollExpiry() {
+      return Promise.resolve(store.get(POLL_KEY)).then(function (rec) {
+        if (!rec || !rec.messageId || clock.now() < (rec.endsAt || 0)) return null;
+        return pollClose('auto-close').then(function (out) {
+          if (out && out.embed && typeof cfg.sendEmbed === 'function') return Promise.resolve(cfg.sendEmbed(cfg.channelId, out.embed)).then(function () { return true; }, function () { return true; });
+          return true;
+        });
+      });
+    }
+
     // ---- own affect (front-end only) -------------------------------------------------------
     // Time-decayed toward neutral 0.5 on every read-modify-write; event nudges are small and
     // clamped; confidence has a hard floor (quieter, never despondent).
@@ -3320,7 +3475,7 @@
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
       procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
-      resumePendingReply: resumePendingReply,
+      resumePendingReply: resumePendingReply, summonCheckReactions: summonCheckReactions, pollCreate: pollCreate, pollClose: pollClose, checkPollExpiry: checkPollExpiry,
       BANDS: BANDS, registerProvider: registerProvider, gatherInjections: gatherInjections,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,
       describeJobs: describeJobs,
@@ -3755,7 +3910,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.54.0';
+  var VERSION = '0.57.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -3892,8 +4047,18 @@
     getRecentMessages: function (channelId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 30));   // newest window, no cursor — catches reactions added after a message scrolled past
     },
-    sendMessage: function (channelId, text) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
+    sendMessage: function (channelId, text, opts) {
+      var body = { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() };
+      if (opts && opts.replyTo) {
+        // Native reply threading: visually attaches her answer to the message it answers.
+        // fail_if_not_exists:false -> if the target was deleted, the send still goes through plain.
+        body.message_reference = { message_id: String(opts.replyTo), fail_if_not_exists: false };
+        body.allowed_mentions = Object.assign({}, body.allowed_mentions, { replied_user: false });   // never ping via the reply itself
+      }
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: body });
+    },
+    getMessage: function (channelId, messageId) {
+      return requestJSON('GET', '/channels/' + channelId + '/messages/' + messageId, {});
     },
     sendEmbed: function (channelId, embed) {
       return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed], allowed_mentions: allowedMentions() } });
@@ -4069,33 +4234,33 @@
         strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
         engageMode: cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal')),
         beats: cfgGet('beats', []),
-        beatFn: function (b) { return brainCall('beat', b, 30000); },
-        lullFn: function (ctx) { return brainCall('lull', ctx, 30000); },
+        beatFn: function (b) { return brainCall('beat', b); },
+        lullFn: function (ctx) { return brainCall('lull', ctx); },
         lullFiller: cfgGet('lullFiller', false),
-        checkinFn: function (ctx) { return brainCall('checkin', ctx, 30000); },
+        checkinFn: function (ctx) { return brainCall('checkin', ctx); },
         checkins: cfgGet('checkins', false),
-        factFn: function (ctx) { return brainCall('facts', ctx, 30000); },
-        summaryFn: function (ctx) { return brainCall('channelSummary', ctx, 40000); },
+        factFn: function (ctx) { return brainCall('facts', ctx); },
+        summaryFn: function (ctx) { return brainCall('channelSummary', ctx); },
         channelSummary: cfgGet('channelSummary', false),
-        reflectFn: function (ctx) { return brainCall('reflect', ctx, 30000); },
+        reflectFn: function (ctx) { return brainCall('reflect', ctx); },
         reflection: cfgGet('reflection', false),
-        episodeFn: function (ctx) { return brainCall('episodes', ctx, 40000); },
+        episodeFn: function (ctx) { return brainCall('episodes', ctx); },
         episodicMemory: cfgGet('episodicMemory', false),
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
         moodAware: cfgGet('moodAware', false),
         archiveStale: cfgGet('archiveStale', true),
-        greetFn: function (ctx) { return brainCall('greet', ctx, 40000); },
+        greetFn: function (ctx) { return brainCall('greet', ctx); },
         modList: cfgGet('modList', []),
         commandPrefix: '!chloe', ackCommands: true,
         backgroundText: true,
         commandPrefixes: cfgGet('commandPrefixes', []),
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
-        respond: function (ctx) { return brainCall('respond', ctx, 40000); },
-        judge: function (ctx) { return brainCall('judge', ctx, 40000); },
-        recapFn: function (ctx) { return brainCall('recap', ctx, 45000); },
+        respond: function (ctx) { return brainCall('respond', ctx); },   // timeout now ADAPTIVE (the meter: srtt+4var, 10-90s; hardcoded values had been silently bypassing it since v0.54)
+        judge: function (ctx) { return brainCall('judge', ctx); },
+        recapFn: function (ctx) { return brainCall('recap', ctx); },
         typing: function (cid) { return transport.startTyping(cid); },
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
@@ -4106,6 +4271,8 @@
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
         recentFetch: function (n) { return transport.getRecentMessages(channelId, n); },
         reactionUsers: function (messageId, emoji) { return transport.getReactions(channelId, messageId, emoji); },   // bounded (limit 10): her messages + positive set only
+        fetchMessage: function (messageId) { return transport.getMessage(channelId, messageId); },
+        reactionSummon: cfgGet('reactionSummon', false),
         defer: function (fn, ms) { return setTimeout(fn, ms); },   // completion-driven dispatch + typing keep-alive (DESIGN-roundtrip.md)
         typingRefreshMs: cfgGet('typingRefreshMs', 8000),
         relationshipTrust: cfgGet('relationshipTrust', false),
@@ -4113,8 +4280,8 @@
         proceduralModes: cfgGet('proceduralModes', false),
         procRules: cfgGet('procRules', []),
         requestTokenBudget: cfgGet('requestTokenBudget', 5000),
-        ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udc40'),
-        ackImageEmoji: cfgGet('ackImageEmoji', '\ud83c\udfa8'),
+        ackWorkingEmoji: cfgGet('ackWorkingEmoji', '\ud83d\udde3\ufe0f'),   // speaking head: generating your reply
+        ackImageEmoji: cfgGet('ackImageEmoji', '\ud83d\uddbc\ufe0f'),   // picture frame: painting
         paint: function (req) { return brainCall('paint', { prompt: req.prompt, resolution: req.resolution }, 120000); },
         sendImage: function (cid, dataUrl, caption) { return transport.sendImage(cid, dataUrl, caption); },
         openDM: function (uid) { return transport.openDM(uid).then(function (dmId) { if (dmId) recordDMSession(dmId, uid, ''); return dmId; }); },
@@ -4129,7 +4296,7 @@
           delete engines[chId];
           pushEvent('channelGone', { channelId: chId });
         },
-        send: function (cid, text) { return transport.sendMessage(cid, text); },
+        send: function (cid, text, opts) { return transport.sendMessage(cid, text, opts); },
         canSend: canSend, noteSend: noteSend, releaseSend: releaseSend,
         sendBudgetMs: cfgGet('sendBudgetMs', 60000),
         botLoopGrace: cfgGet('botLoopGrace', 2),
@@ -4264,6 +4431,7 @@
       relationshipTrust: !!cfgGet('relationshipTrust', false),
       ownAffect: !!cfgGet('ownAffect', false),
       proceduralModes: !!cfgGet('proceduralModes', false), procRules: cfgGet('procRules', []),
+      reactionSummon: !!cfgGet('reactionSummon', false),
       brain: brainMeter.snapshot(),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
@@ -4450,6 +4618,8 @@
         { var oaf = !!(args && args.on); cfgSet('ownAffect', oaf); applyConfigChange(); return Promise.resolve({ ok: true, value: { ownAffect: oaf } }); }
       case 'config.setProceduralModes':
         { var prm = !!(args && args.on); cfgSet('proceduralModes', prm); applyConfigChange(); return Promise.resolve({ ok: true, value: { proceduralModes: prm } }); }
+      case 'config.setReactionSummon':
+        { var rsm = !!(args && args.on); cfgSet('reactionSummon', rsm); applyConfigChange(); return Promise.resolve({ ok: true, value: { reactionSummon: rsm } }); }
       case 'config.setProcRules': {
         // Validate + clean: [{ emoji, mode, minutes }] -> [{ emoji, mode (sanitized later by the
         // engine), durationMs }]. Hard caps here so malformed panel input can't smuggle anything in.
