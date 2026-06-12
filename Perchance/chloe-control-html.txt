@@ -51,10 +51,6 @@
   .stat .dot{width:7px;height:7px}
   .statsep{width:1px;height:14px;background:var(--line)}
 
-  /* workspace: feed (left, primary) + modules rail (right) */
-  .workspace{display:grid;grid-template-columns:1fr 232px;gap:10px;align-items:start}
-  @media (max-width:720px){ .workspace{grid-template-columns:1fr} }
-
   .feedwrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
     display:flex;flex-direction:column;min-height:420px;max-height:62vh;overflow:hidden}
   .feedhead{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line)}
@@ -73,30 +69,15 @@
   .ev.system .tag{color:var(--muted)}
   .feedempty{color:var(--muted);padding:24px 12px;text-align:center;font-family:var(--body)}
 
-  /* modules rail */
-  .modrail{display:flex;flex-direction:column;gap:4px}
-  .modrail h2{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-weight:600;margin:2px 4px 6px}
-  .mod{display:flex;align-items:center;gap:9px;width:100%;text-align:left;cursor:pointer;
-    background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 11px;
-    color:var(--ink);font:inherit;font-size:13px;transition:border-color .12s,background .12s}
-  .mod:hover{border-color:var(--muted)}
-  .mod.sel{border-color:var(--sel);background:var(--surface2)}
-  .mod .dot{flex-shrink:0}
-  .mod .nm{flex:1}
+  /* tab bar + in-place panel box (reverted from the slide-over) */
+  .tabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 2px}
+  .tab{appearance:none;background:transparent;border:0;cursor:pointer;position:relative;
+    font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--muted);padding:9px 13px;transition:color .12s}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--ink)}
+  .tab.active::after{content:'';position:absolute;left:10px;right:10px;bottom:-1px;height:2px;background:var(--sel);border-radius:2px}
+  .panelbox{display:flex;flex-direction:column;gap:10px}
 
-  /* slide-over module config */
-  .scrim{position:fixed;inset:0;background:rgba(8,9,13,.55);z-index:20;display:none}
-  .scrim.open{display:block}
-  .slideover{position:fixed;top:0;right:0;bottom:0;width:min(620px,94vw);z-index:21;
-    background:var(--bg);border-left:1px solid var(--line);transform:translateX(100%);
-    transition:transform .2s ease;display:flex;flex-direction:column}
-  .slideover.open{transform:none}
-  .sohead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
-  .sohead h2{margin:0;font-size:14px;font-weight:600}
-  .sobody{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
-  .soclose{background:var(--surface2);color:var(--ink);border:1px solid var(--line)}
-
-  /* cards (now slide-over bodies) — flat */
   .pane{display:none}
   .pane.active{display:flex;flex-direction:column;gap:10px}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px}
@@ -143,6 +124,29 @@
     border-radius:8px;padding:8px 10px;font-size:12px}
   .banner.bad{border-color:var(--bad);background:rgba(225,107,107,.08)}
 
+  /* router-style user list (People drawer) */
+  .userlist{display:flex;flex-direction:column;margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .urow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--surface)}
+  .urow:last-child{border-bottom:0}
+  .urow:hover{background:var(--surface2)}
+  .urow.checked{background:var(--surface2)}
+  .urow input.usel{flex-shrink:0;width:15px;height:15px;cursor:pointer}
+  .urow .uname{font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px}
+  .urow .uname .caret{color:var(--muted);font-size:10px;transition:transform .12s}
+  .urow .uid{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .urow .ugrow{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+  .urow .umeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .urow .ustate{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .urow .ustate.active{color:var(--good);border-color:var(--good)}
+  .urow .ustate.ignored,.urow .ustate.soft-ban,.urow .ustate.timeout{color:var(--warn);border-color:var(--warn)}
+  .urow .ubadge{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--sel);color:#fff}
+  .urow .uactions{display:flex;gap:3px;flex-shrink:0}
+  .udetail{padding:8px 12px 12px 40px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12px}
+  .batchbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:10px;padding:8px 11px;
+    background:var(--surface2);border:1px solid var(--sel);border-radius:8px}
+  .batchsel{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;cursor:pointer}
+  .batchsep{width:1px;height:16px;background:var(--line);margin:0 3px}
+
   /* collapsible debug */
   .debug{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
   .debughead{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;font-size:12px;color:var(--muted)}
@@ -183,58 +187,37 @@
     <span class="stat">last poll <b id="pollTxt">&ndash;</b></span>
   </div>
 
-  <!-- workspace: activity feed (primary) + modules rail -->
-  <div class="workspace">
-    <div class="feedwrap">
-      <div class="feedhead">
-        <h2>Activity</h2>
-        <span class="spacer"></span>
-        <button class="ghost sm" id="feedClearBtn">Clear</button>
-      </div>
-      <div id="feed"><div class="feedempty" id="feedEmpty">Waiting for activity&hellip; start Chloe to see her work here.</div></div>
-    </div>
-    <div class="modrail">
-      <h2>Modules</h2>
-      <button class="mod" id="mod_setup"><span class="dot" id="moddot_setup"></span><span class="nm">Setup</span></button>
-      <button class="mod" id="mod_behavior"><span class="dot" id="moddot_behavior"></span><span class="nm">Behavior</span></button>
-      <button class="mod" id="mod_moderation"><span class="dot" id="moddot_moderation"></span><span class="nm">Moderation</span></button>
-      <button class="mod" id="mod_people"><span class="dot" id="moddot_people"></span><span class="nm">People</span></button>
-      <button class="mod" id="mod_system"><span class="dot" id="moddot_system"></span><span class="nm">System</span></button>
-      <button class="mod" id="mod_about"><span class="dot" id="moddot_about"></span><span class="nm">About</span></button>
-    </div>
-  </div>
-
-  <!-- collapsible debug: the raw verbatim log, kept -->
-  <div class="debug" id="debugBox">
-    <div class="debughead" id="debugHead"><span class="caret">&#9656;</span> Debug &mdash; raw log</div>
-    <div class="debugbody">
-      <div class="logbar"><span class="muted">live log</span><span class="spacer"></span><button class="ghost sm" id="clearLogBtn">Clear</button><button class="danger sm" id="resetBtn">Reset state</button></div>
-      <div id="log"></div>
-    </div>
-  </div>
-
-  <!-- module config slide-over: the six panes become its bodies, reparented verbatim -->
-  <div class="scrim" id="scrim"></div>
-  <aside class="slideover" id="slideover">
-    <div class="sohead">
-      <h2 id="soTitle">Module</h2>
+  <!-- activity feed (primary surface) -->
+  <div class="feedwrap">
+    <div class="feedhead">
+      <h2>Activity</h2>
       <span class="spacer"></span>
-      <button class="soclose" id="soCloseBtn">Close</button>
+      <button class="ghost sm" id="feedClearBtn">Clear</button>
     </div>
-    <div class="sobody" id="soBody">
+    <div id="feed"><div class="feedempty" id="feedEmpty">Waiting for activity&hellip; start Chloe to see her work here.</div></div>
+  </div>
+
+  <!-- tab bar: switches the content of the panel box below it (in place, no popover) -->
+  <nav class="tabs">
+    <button class="tab active" id="tab_setup">Setup</button>
+    <button class="tab" id="tab_behavior">Behavior</button>
+    <button class="tab" id="tab_moderation">Moderation</button>
+    <button class="tab" id="tab_people">People</button>
+    <button class="tab" id="tab_system">System</button>
+    <button class="tab" id="tab_about">About</button>
+  </nav>
+
+  <div class="panelbox" id="panelBox">
 
   <section class="pane active" id="pane_setup">
     <div class="card" id="setupCard">
       <h2>Channels</h2>
-      <div class="row">
-        <input class="grow" id="channelInput" placeholder="Discord channel ID (Developer Mode &rarr; right-click channel &rarr; Copy ID)">
-        <button class="ghost" id="setChannelBtn">Set channel</button>
-      </div>
+      <div class="note" style="margin-bottom:6px">One channel ID per line (Developer Mode &rarr; right-click a channel &rarr; Copy ID). The <strong>first</strong> line is her primary channel; any others are extra channels she also runs.</div>
+      <textarea id="channelsBox" rows="4" spellcheck="false" placeholder="123456789012345678&#10;987654321098765432"></textarea>
       <div class="row" style="margin-top:8px">
-        <input class="grow" id="extraChannelsInput" placeholder="Extra channel IDs, comma-separated (multi-channel, optional)">
-        <button class="ghost" id="setExtraChannelsBtn">Set channels</button>
+        <button class="ghost" id="setChannelsBtn">Save channels</button>
+        <span class="note">With more than one, a selector appears in the command bar &mdash; it scopes the roster, mod log, and mode.</span>
       </div>
-      <div class="note" style="margin-top:6px">With more than one channel, a selector appears in the command bar &mdash; it scopes the roster, mod log, and mode.</div>
     </div>
     <div class="card">
       <h2>Identity</h2>
@@ -277,6 +260,7 @@
         <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
         <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
+        <label class="chip"><input type="checkbox" id="goalChk"> remember what people are working on (goals)</label>
         <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
         <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
         <label class="chip"><input type="checkbox" id="affectChk"> give her an inner weather (own mood)</label>
@@ -344,15 +328,6 @@
       <div class="row" style="margin-top:6px"><button class="ghost sm" id="saveAutoModBtn">Save rules</button></div>
     </div>
     <div class="card">
-      <div class="row"><h2 style="margin:0">Mods</h2><span class="spacer"></span><span class="note" id="modCount">0</span></div>
-      <div class="row" style="margin-top:8px">
-        <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
-        <button class="ghost" id="addModBtn">Add mod</button>
-        <button class="ghost" id="modLogBtn">Mod log</button>
-      </div>
-      <div id="modListBox" style="margin-top:8px"></div>
-    </div>
-    <div class="card">
       <h2>Transparency</h2>
       <div class="row">
         <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." class="grow">
@@ -364,12 +339,40 @@
 
   <section class="pane" id="pane_people">
     <div class="card">
-      <div class="row"><h2 style="margin:0">Roster</h2><span class="spacer"></span><span class="note" id="rosterCount">0 people</span></div>
-      <table style="margin-top:10px">
-        <thead><tr><th>Name</th><th>ID</th><th>Last seen</th><th>Lines</th><th>State</th><th></th></tr></thead>
-        <tbody id="rosterBody"></tbody>
-      </table>
+      <div class="row">
+        <h2 style="margin:0">Roster</h2>
+        <span class="note" id="rosterCount">0 people</span>
+        <span class="spacer"></span>
+        <input id="rosterFilter" placeholder="filter by name or ID" style="max-width:200px">
+      </div>
+
+      <!-- batch action bar: acts on every CHECKED user. Hidden until something is selected. -->
+      <div class="batchbar" id="batchBar" style="display:none">
+        <label class="batchsel"><input type="checkbox" id="rosterAll"> <span id="batchCount">0 selected</span></label>
+        <span class="spacer"></span>
+        <button class="ghost sm" data-batch="op">Mod</button>
+        <button class="ghost sm" data-batch="deop">Unmod</button>
+        <span class="batchsep"></span>
+        <button class="ghost sm" data-batch="ignore">Ignore</button>
+        <button class="ghost sm" data-batch="timeout">Timeout</button>
+        <button class="ghost sm" data-batch="softban">Soft-ban</button>
+        <button class="ghost sm" data-batch="clear">Clear</button>
+        <span class="batchsep"></span>
+        <button class="danger sm" data-batch="permaban">Prune</button>
+      </div>
+
+      <div class="userlist" id="rosterList"></div>
       <div class="empty" id="rosterEmpty">No one yet. Set a channel, validate the token, then Start (or Poll once).</div>
+    </div>
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Mods</h2><span class="spacer"></span><span class="note" id="modCount">0</span></div>
+      <div class="note" style="margin-top:4px">Grant mod to anyone by Discord user ID, even before they appear in the roster. People already in the roster can be modded from their row above.</div>
+      <div class="row" style="margin-top:8px">
+        <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
+        <button class="ghost" id="addModBtn">Add mod</button>
+        <button class="ghost" id="modLogBtn">Mod log</button>
+      </div>
+      <div id="modListBox" style="margin-top:8px"></div>
     </div>
   </section>
 
@@ -504,7 +507,7 @@
     <div class="card">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
       </div>
     </div>
     <div class="card">
@@ -548,8 +551,16 @@
     </div>
   </section>
 
-    </div><!-- /.sobody -->
-  </aside><!-- /.slideover -->
+  </div><!-- /.panelbox -->
+
+  <!-- collapsible debug: the raw verbatim log + reset, kept -->
+  <div class="debug" id="debugBox">
+    <div class="debughead" id="debugHead"><span class="caret">&#9656;</span> Debug &mdash; raw log</div>
+    <div class="debugbody">
+      <div class="logbar"><span class="muted">live log</span><span class="spacer"></span><button class="ghost sm" id="clearLogBtn">Clear</button><button class="danger sm" id="resetBtn">Reset state</button></div>
+      <div id="log"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -888,6 +899,7 @@
       + 'Facts you have noted about ' + name + ':\n' + factList.map(function (f) { return '- ' + String(f); }).join('\n') + '\n'
       + prior
       + 'What do these facts ADD UP TO? Form at most 2 short, durable insights \u2014 higher-level conclusions, not restatements (e.g. from "is learning rust", "builds discord bots", "asks about parsers" you might conclude "a self-taught builder who loves systems-level tinkering").\n'
+      + 'ALSO: if the facts clearly show ONE thing they are actively working ON or toward (a project, a goal, something in progress), add a line that begins exactly "GOAL:" followed by it (e.g. "GOAL: shipping their Discord bot"). Only if it is genuinely a forward-looking effort, not a finished thing or a one-off. At most one GOAL line.\n'
       + 'RULES: ground every insight in the facts given; never speculate beyond them; nothing sensitive (health, beliefs, identity, finances, relationships); each insight one phrase, max 15 words; third person, no names.\n'
       + 'Respond ONLY with a JSON array of strings, or an empty array ' + '[' + ']' + ' if the facts do not yet add up to anything.';
     return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
@@ -1149,9 +1161,11 @@
     setText('verTxt', s.version || '\u2013');
     setText('tokTxt', s.hasToken ? 'set' : 'not set');
     setText('botTxt', s.botUserId ? s.botUserId : 'unverified');
-    setText('channelInput', null); // leave user input alone
-    var ci = byId('channelInput');
-    if (s.channelId && !ci.value) ci.value = s.channelId;
+    var cb = byId('channelsBox');
+    if (cb && document.activeElement !== cb) {
+      var chans = (s.channels && s.channels.length) ? s.channels : (s.channelId ? [s.channelId] : []);
+      cb.value = chans.join('\n');
+    }
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
     setText('runTxt', s.running ? 'running' : 'stopped');
@@ -1163,10 +1177,7 @@
       var br = s.brain.respond;
       setText('sb_brain', (br.state === 'open' ? 'down' : (br.srtt + 'ms')));
     } else { setText('sb_brain', s.running ? 'warming' : '\u2013'); }
-    // module rail dots: green when the subsystem's headline toggle is on, neutral otherwise
-    var modOn = { behavior: !!(s.volunteer || s.lullFiller || s.checkins), moderation: !!s.autoMod,
-      people: (s.botUserId ? true : false), system: !!s.running, setup: !!s.channelId, about: false };
-    Object.keys(modOn).forEach(function (k) { var d = byId('moddot_' + k); if (d) d.className = 'dot ' + (modOn[k] ? 'on' : ''); });
+
     if (s.addressMode) { var sel = byId('modeSel'); if (sel && sel.value !== s.addressMode) sel.value = s.addressMode; }
     var vc = byId('volChk'); if (vc) vc.checked = !!s.volunteer;
     var gc = byId('greetChk'); if (gc) gc.checked = !!s.greet;
@@ -1181,6 +1192,7 @@
     var md = byId('moodChk'); if (md) md.checked = !!s.moodAware;
     var cs = byId('chansumChk'); if (cs) cs.checked = !!s.channelSummary;
     var rf = byId('reflectChk'); if (rf) rf.checked = !!s.reflection;
+    var go = byId('goalChk'); if (go) go.checked = (s.goalObjects !== false);
     var ep = byId('epiChk'); if (ep) ep.checked = !!s.episodicMemory;
     var tr = byId('trustChk'); if (tr) tr.checked = !!s.relationshipTrust;
     var af = byId('affectChk'); if (af) af.checked = !!s.ownAffect;
@@ -1204,68 +1216,131 @@
     }
   }
 
+  // Router-style roster: checkbox list + batch action bar. Mod status comes from a cached mod list
+  // (refreshMods populates window.__modSet); per-user actions and batch actions share modAct/opAct.
+  window.__modSet = window.__modSet || {};
+  window.__roster = [];
+  function rosterSelected() {
+    var out = [];
+    var rows = document.querySelectorAll('#rosterList .usel');
+    for (var i = 0; i < rows.length; i++) { if (rows[i].checked) out.push(rows[i].getAttribute('data-id')); }
+    return out;
+  }
+  function syncBatchBar() {
+    var sel = rosterSelected();
+    var bar = byId('batchBar');
+    if (bar) bar.style.display = sel.length ? 'flex' : 'none';
+    setText('batchCount', sel.length + ' selected');
+    var rows = document.querySelectorAll('#rosterList .urow');
+    for (var i = 0; i < rows.length; i++) {
+      var cb = rows[i].querySelector('.usel');
+      rows[i].className = 'urow' + (cb && cb.checked ? ' checked' : '');
+    }
+    var all = byId('rosterAll');
+    if (all) all.checked = sel.length > 0 && sel.length === (window.__roster.length || 0);
+  }
   function renderRoster(list) {
-    var body = byId('rosterBody');
-    while (body.firstChild) body.removeChild(body.firstChild);
+    window.__roster = list || [];
+    var box = byId('rosterList');
+    // Preserve the user's checkbox selection across the 5s status re-render (the poll rebuilds
+    // every row from scratch; without this the selection silently clears after ~5s).
+    var keepSel = {};
+    var prior = box.querySelectorAll('.usel');
+    for (var pi = 0; pi < prior.length; pi++) { if (prior[pi].checked) keepSel[prior[pi].getAttribute('data-id')] = true; }
+    // also remember which detail rows were expanded, so a poll doesn't collapse them mid-read
+    var keepOpen = {};
+    var openRows = box.querySelectorAll('.urow');
+    for (var oi = 0; oi < openRows.length; oi++) {
+      var nx = openRows[oi].nextSibling;
+      if (nx && nx.className === 'udetail') { var c = openRows[oi].querySelector('.usel'); if (c) keepOpen[c.getAttribute('data-id')] = true; }
+    }
+    while (box.firstChild) box.removeChild(box.firstChild);
     setText('rosterCount', list.length + (list.length === 1 ? ' person' : ' people'));
     byId('rosterEmpty').style.display = list.length ? 'none' : 'block';
+    var filt = (byId('rosterFilter') && byId('rosterFilter').value || '').toLowerCase().trim();
     list.forEach(function (p) {
-      var tr = document.createElement('tr');
-      var nameTd = cell(p.name);
-      nameTd.style.cursor = 'pointer';
-      nameTd.title = 'click to show recent lines';
-      nameTd.textContent = '\u25B8 ' + (p.name == null ? '' : p.name);
-      tr.appendChild(nameTd);
-      tr.appendChild(cell(p.id));
-      tr.appendChild(cell(fmtTime(p.lastSeen)));
-      tr.appendChild(cell(p.recent ? p.recent.length : 0));
-      tr.appendChild(cell((p.state || 'active') + (p.strikes ? ' (' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') + ')' : '')));
-      var act = document.createElement('td');
-      act.className = 'actions';
-      act.appendChild(mkBtn('ignore', 'ghost', function () { modAct('ignore', p); }));
-      act.appendChild(mkBtn('timeout', 'ghost', function () { modAct('timeout', p); }));
-      act.appendChild(mkBtn('note', 'ghost', function () { modAct('note', p); }));
-      act.appendChild(mkBtn('soft-ban', 'ghost', function () { modAct('softban', p); }));
-      act.appendChild(mkBtn('clear', 'ghost', function () { modAct('clear', p); }));
-      act.appendChild(mkBtn('permaban', 'danger', function () { modAct('permaban', p); }));
-      tr.appendChild(act);
-      body.appendChild(tr);
-      // expandable detail row: this user's recent lines (reveals whether content is populated)
-      nameTd.addEventListener('click', function () { toggleDetail(tr, p, nameTd); });
+      if (filt && (String(p.name || '').toLowerCase().indexOf(filt) < 0) && (String(p.id || '').indexOf(filt) < 0)) return;
+      var isMod = !!window.__modSet[p.id];
+      var row = document.createElement('div'); row.className = 'urow';
+
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'usel';
+      cb.setAttribute('data-id', p.id); cb.setAttribute('data-name', p.name == null ? '' : p.name);
+      if (keepSel[p.id]) cb.checked = true;
+      cb.addEventListener('change', syncBatchBar);
+      row.appendChild(cb);
+
+      var grow = document.createElement('div'); grow.className = 'ugrow';
+      var nm = document.createElement('div'); nm.className = 'uname';
+      var caret = document.createElement('span'); caret.className = 'caret'; caret.textContent = '\u25B8';
+      var nmText = document.createElement('span'); nmText.textContent = (p.name == null ? '(unnamed)' : p.name);
+      nm.appendChild(caret); nm.appendChild(nmText);
+      if (isMod) { var bd = document.createElement('span'); bd.className = 'ubadge'; bd.textContent = 'MOD'; nm.appendChild(bd); }
+      nm.title = 'click to show recent lines';
+      grow.appendChild(nm);
+
+      var meta = document.createElement('div'); meta.className = 'umeta';
+      var st = document.createElement('span'); var stateName = (p.state || 'active');
+      st.className = 'ustate ' + stateName; st.textContent = stateName + (p.strikes ? ' \u00b7 ' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') : '');
+      meta.appendChild(st);
+      var idEl = document.createElement('span'); idEl.className = 'uid'; idEl.textContent = p.id; meta.appendChild(idEl);
+      var seen = document.createElement('span'); seen.className = 'uid'; seen.textContent = fmtTime(p.lastSeen) + ' \u00b7 ' + (p.recent ? p.recent.length : 0) + ' lines'; meta.appendChild(seen);
+      grow.appendChild(meta);
+      row.appendChild(grow);
+
+      var act = document.createElement('div'); act.className = 'uactions';
+      act.appendChild(mkBtn(isMod ? 'unmod' : 'mod', 'ghost sm', function () { opAct(!isMod, [p.id]); }));
+      act.appendChild(mkBtn('ignore', 'ghost sm', function () { modAct('ignore', p); }));
+      act.appendChild(mkBtn('timeout', 'ghost sm', function () { modAct('timeout', p); }));
+      act.appendChild(mkBtn('note', 'ghost sm', function () { modAct('note', p); }));
+      act.appendChild(mkBtn('ban', 'ghost sm', function () { modAct('softban', p); }));
+      act.appendChild(mkBtn('clear', 'ghost sm', function () { modAct('clear', p); }));
+      act.appendChild(mkBtn('prune', 'danger sm', function () { modAct('permaban', p); }));
+      row.appendChild(act);
+
+      box.appendChild(row);
+      nm.addEventListener('click', function () { toggleDetail(row, p, caret); });
+      if (keepOpen[p.id]) toggleDetail(row, p, caret);   // restore an expanded detail row after the poll
     });
+    syncBatchBar();
   }
 
-  function toggleDetail(tr, p, nameTd) {
-    var next = tr.nextSibling;
-    if (next && next.className === 'detailRow') {
-      next.parentNode.removeChild(next);
-      nameTd.textContent = '\u25B8 ' + (p.name == null ? '' : p.name);
-      return;
-    }
-    nameTd.textContent = '\u25BE ' + (p.name == null ? '' : p.name);
-    var dr = document.createElement('tr');
-    dr.className = 'detailRow';
-    var td = document.createElement('td');
-    td.colSpan = 6;
-    td.style.background = 'var(--bg)';
+  function toggleDetail(row, p, caret) {
+    var next = row.nextSibling;
+    if (next && next.className === 'udetail') { next.parentNode.removeChild(next); caret.textContent = '\u25B8'; return; }
+    caret.textContent = '\u25BE';
+    var dr = document.createElement('div'); dr.className = 'udetail';
     var recent = p.recent || [];
-    if (!recent.length) {
-      td.className = 'note'; td.textContent = 'no stored lines';
-    } else {
+    if (!recent.length) { dr.className = 'udetail note'; dr.textContent = 'no stored lines'; }
+    else {
       recent.slice(-12).forEach(function (ln) {
         var line = document.createElement('div');
-        var meta = document.createElement('span'); meta.className = 'note';
-        meta.textContent = fmtTime(ln.ts) + '  ';
+        var meta = document.createElement('span'); meta.className = 'note'; meta.textContent = fmtTime(ln.ts) + '  ';
         var txt = document.createElement('span');
         txt.textContent = (ln.content === '' ? '(empty \u2014 Message Content Intent off?)' : ln.content);
         if (ln.content === '') txt.className = 'note';
         line.appendChild(meta); line.appendChild(txt);
-        td.appendChild(line);
+        dr.appendChild(line);
       });
     }
-    dr.appendChild(td);
-    if (tr.nextSibling) tr.parentNode.insertBefore(dr, tr.nextSibling);
-    else tr.parentNode.appendChild(dr);
+    if (row.nextSibling) row.parentNode.insertBefore(dr, row.nextSibling);
+    else row.parentNode.appendChild(dr);
+  }
+
+  // OP / de-OP via the existing mod.addMod / mod.removeMod targets. Accepts a list of ids (batch-ready).
+  function opAct(makeMod, ids) {
+    if (!ids || !ids.length) return;
+    var target = makeMod ? 'mod.addMod' : 'mod.removeMod';
+    var chain = Promise.resolve();
+    ids.forEach(function (id) { chain = chain.then(function () { return call(target, { id: id }); }); });
+    chain.then(function (res) {
+      if (res && res.ok) { (res.value || []).forEach && rebuildModSet(res.value); }
+      log((makeMod ? 'mod' : 'unmod') + ' \u2192 ' + ids.length + ' user' + (ids.length === 1 ? '' : 's'));
+      refreshMods(); refresh();
+    });
+  }
+  function rebuildModSet(listArr) {
+    window.__modSet = {};
+    (listArr || []).forEach(function (id) { window.__modSet[id] = true; });
   }
 
   function durToMs(s) {
@@ -1321,6 +1396,11 @@
       applyStatus(res.value);
       renderChannelSel(res.value);
       applyPersonality(res.value);
+      // Don't churn the roster under the user mid-interaction: if they've selected rows or are
+      // typing in the filter, skip the periodic re-render (state stays put; manual refresh still works).
+      var filtEl = byId('rosterFilter');
+      var busy = (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl);
+      if (busy) return null;
       return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r.ok) renderRoster(r.value || []); });
     });
   }
@@ -1337,19 +1417,13 @@
   }
 
   // ---- buttons ----------------------------------------------------------------------
-  byId('setExtraChannelsBtn').addEventListener('click', function () {
-    var arr = byId('extraChannelsInput').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
-    call('config.setChannels', { channels: arr }).then(function (res) {
-      if (res && res.ok) { log('channels: ' + (res.value.channels || []).join(', ')); refresh(); }
-      else log('set channels failed: ' + ((res && res.reason) || 'unknown'));
-    });
-  });
   byId('viewChannelSel').addEventListener('change', function () { refresh(); });
-  byId('setChannelBtn').addEventListener('click', function () {
-    var v = byId('channelInput').value.trim();
-    if (!v) { log('enter a channel ID first'); return; }
-    call('config.setChannel', { channelId: v }).then(function (res) {
-      log(res.ok ? ('channel set: ' + res.value.channelId) : ('set channel failed: ' + res.reason));
+  byId('setChannelsBtn').addEventListener('click', function () {
+    var arr = byId('channelsBox').value.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (!arr.length) { log('enter at least one channel ID (one per line)'); return; }
+    call('config.setAllChannels', { channels: arr }).then(function (res) {
+      if (res && res.ok) { log('channels saved \u2014 primary ' + (res.value.primary || '?') + (res.value.channels.length > 1 ? ' (+' + (res.value.channels.length - 1) + ' more)' : '')); refresh(); }
+      else log('save channels failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('setTokenBtn').addEventListener('click', function () {
@@ -1445,6 +1519,11 @@
   byId('chansumChk').addEventListener('change', function () {
     call('config.setChannelSummary', { on: byId('chansumChk').checked }).then(function (res) {
       log(res && res.ok ? ('running channel summary: ' + res.value.channelSummary) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('goalChk').addEventListener('change', function () {
+    call('config.setGoalObjects', { on: byId('goalChk').checked }).then(function (res) {
+      log(res && res.ok ? ('goals: ' + res.value.goalObjects) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('reflectChk').addEventListener('change', function () {
@@ -1568,8 +1647,51 @@
     call('reset').then(function () { log('T0 state reset'); refresh(); });
   });
 
+  // ---- People batch actions ----------------------------------------------------------
+  function batchAct(action) {
+    var ids = rosterSelected();
+    if (!ids.length) { log('select some users first'); return; }
+    if (action === 'op' || action === 'deop') { opAct(action === 'op', ids); return; }
+    var roster = window.__roster || [];
+    function nameFor(id) { var p = roster.filter(function (x) { return x.id === id; })[0]; return (p && p.name) || id; }
+    if (action === 'permaban') {
+      if (!window.confirm('Permaban (ban + irreversible memory purge) ' + ids.length + ' user' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+      var pr = window.prompt('Reason (recorded in the mod log):', 'Chloe permaban'); if (pr == null) return;
+      var pchain = Promise.resolve();
+      ids.forEach(function (id) { pchain = pchain.then(function () { return call('mod.permaban', { id: id, name: nameFor(id), reason: pr, channelId: selChannel() }); }); });
+      pchain.then(function () { log('pruned ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); refresh(); });
+      return;
+    }
+    var args = { action: action };
+    if (action === 'timeout') { var d = window.prompt('Timeout ' + ids.length + ' user(s) for how long? (e.g. 30m, 1h, 1d)', '1h'); if (d == null) return; var ms = durToMs(d); if (!ms) { log('bad duration: ' + d); return; } args.durationMs = ms; }
+    var r = window.prompt('Reason (optional) for ' + action + ' on ' + ids.length + ' user(s):', ''); if (r) args.reason = r;
+    var chain = Promise.resolve(), done = 0;
+    ids.forEach(function (id) { chain = chain.then(function () { return call('mod.action', Object.assign({ channelId: selChannel(), id: id }, args)).then(function (res) { if (res && res.ok) done++; }); }); });
+    chain.then(function () { log(action + ' \u2192 ' + done + '/' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); refresh(); });
+  }
+  (function () {
+    var bar = byId('batchBar');
+    if (bar) {
+      var btns = bar.querySelectorAll('button[data-batch]');
+      for (var i = 0; i < btns.length; i++) {
+        (function (b) { b.addEventListener('click', function () { batchAct(b.getAttribute('data-batch')); }); })(btns[i]);
+      }
+    }
+    var all = byId('rosterAll');
+    if (all) all.addEventListener('change', function () {
+      var on = all.checked;
+      var rows = document.querySelectorAll('#rosterList .usel');
+      for (var i = 0; i < rows.length; i++) rows[i].checked = on;
+      syncBatchBar();
+    });
+    var filt = byId('rosterFilter');
+    if (filt) filt.addEventListener('input', function () { if (window.__roster) renderRoster(window.__roster); });
+  })();
+
   // ---- boot -------------------------------------------------------------------------
   function renderMods(list) {
+    rebuildModSet(list);   // keep the roster's MOD badges in sync
+    if (window.__roster && window.__roster.length) renderRoster(window.__roster);
     var box = byId('modListBox'); while (box.firstChild) box.removeChild(box.firstChild);
     setText('modCount', list.length + (list.length === 1 ? ' mod' : ' mods'));
     if (!list.length) { var em = document.createElement('div'); em.className = 'note'; em.textContent = 'no mods yet \u2014 add your own Discord user ID so you can run !chloe commands in-channel'; box.appendChild(em); return; }
@@ -1711,31 +1833,15 @@
   // ---- UI v2: tab rail (in-memory only; never touches location.hash — the worker role lives there)
   (function () {
     var names = 'setup behavior moderation people system about'.split(' ');
-    var titles = { setup:'Setup', behavior:'Behavior', moderation:'Moderation', people:'People', system:'System', about:'About' };
-    var current = null;
-    function showPane(name) {
-      names.forEach(function (n) { var pane = byId('pane_' + n); if (pane) pane.className = (n === name) ? 'pane active' : 'pane'; });
+    function activate(name) {
+      names.forEach(function (n) {
+        var pane = byId('pane_' + n), tab = byId('tab_' + n);
+        if (pane) pane.className = (n === name) ? 'pane active' : 'pane';
+        if (tab) tab.className = (n === name) ? 'tab active' : 'tab';
+      });
     }
-    function openModule(name) {
-      showPane(name);
-      setText('soTitle', titles[name] || 'Module');
-      byId('slideover').classList.add('open');
-      byId('scrim').classList.add('open');
-      names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.className = (n === name) ? 'mod sel' : 'mod'; });
-      current = name;
-      var body = byId('soBody'); if (body) body.scrollTop = 0;
-    }
-    function closeModule() {
-      byId('slideover').classList.remove('open');
-      byId('scrim').classList.remove('open');
-      names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.className = 'mod'; });
-      current = null;
-    }
-    names.forEach(function (n) { var m = byId('mod_' + n); if (m) m.addEventListener('click', function () { (current === n) ? closeModule() : openModule(n); }); });
-    byId('scrim').addEventListener('click', closeModule);
-    byId('soCloseBtn').addEventListener('click', closeModule);
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && current) closeModule(); });
-    window.__chloeOpenModule = openModule;   // setup auto-open hook below
+    names.forEach(function (n) { var tab = byId('tab_' + n); if (tab) tab.addEventListener('click', function () { activate(n); }); });
+    window.__chloeOpenModule = activate;   // first-run setup focus hook
   })();
   // Debug surface toggle (collapsed by default).
   byId('debugHead').addEventListener('click', function () { byId('debugBox').classList.toggle('open'); });

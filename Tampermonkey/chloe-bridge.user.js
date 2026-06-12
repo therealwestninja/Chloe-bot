@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.57.0
+// @version      0.61.3
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -153,6 +153,9 @@
       reactionAutoHighlight: true,// a message whose top reaction crosses the significance line auto-highlights
       reactionTallyMax: 40,      // how many distinct emoji the channel tally keeps
       reactionSweepEveryPolls: 6, // re-scan a recent window every Nth poll to catch reactions added late
+                                  // (activity-aware: ALSO sweeps the poll right after one that ingested
+                                  // messages — reactions cluster seconds after fresh messages, so summons
+                                  // and trust land in ~1 poll in active rooms; quiet rooms stay cheap)
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -252,6 +255,12 @@
       // target = assume answered) — trades duplicates for occasional non-resumption.
       replyResume: true,
       replyResumeMaxAgeMs: 600000,  // older than 10 min: a stale answer is worse than silence
+      // Goal objects (DESIGN-goals.md): prospective memory — durable, CROSS-CHANNEL goals promoted
+      // from what reflection already learns. Recall is owner-scoped; no new LLM call on any path.
+      goalObjects: true,
+      goalsMax: 40,                 // bounded list; closed goals evicted oldest-first
+      goalTextMax: 140,
+      goalStaleMs: 2592000000,      // 30d untouched -> auto-dropped (goals fade if the world moves on)
       // Round-trip awareness (DESIGN-roundtrip.md): when a generation COMPLETES, the next queued job
       // fires via cfg.defer(fn, ms) (host setTimeout) instead of waiting for the next poll tick.
       // Purely additive: with no defer hook, behavior is exactly the old poll-bound dispatch.
@@ -344,6 +353,7 @@
 
     var CURSOR_KEY = 'cursor:' + cfg.channelId;
     var INDEX_KEY = 'roster:index';
+    var GOALS_KEY = 'goals';   // CROSS-CHANNEL (no channelId): a goal known anywhere is hers everywhere
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
     var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
@@ -379,6 +389,7 @@
     // starve replies to everyone else. A lost queue on reload is acceptable.
     var reply = { queue: {}, replying: false };
     var lastReplyAt = {};                // per-author: when she last replied to that person
+    var lastPollIngested = false;        // activity-aware sweep: did the previous poll bring messages?
     var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
@@ -419,6 +430,62 @@
       });
     }
     function clearIntent() { return Promise.resolve(store.del(INTENT_KEY)); }
+
+    // ---- goal objects (prospective memory) -------------------------------------------------
+    function loadGoals() {
+      return Promise.resolve(store.get(GOALS_KEY)).then(function (g) { return Array.isArray(g) ? g : []; });
+    }
+    function saveGoals(list) {
+      // newest-first cap: keep all OPEN goals, evict oldest CLOSED beyond the cap
+      if (list.length > (cfg.goalsMax || 40)) {
+        var open = list.filter(function (x) { return x.status === 'open'; });
+        var closed = list.filter(function (x) { return x.status !== 'open'; }).sort(function (a, b) { return (b.lastTouchedAt || 0) - (a.lastTouchedAt || 0); });
+        list = open.concat(closed).slice(0, cfg.goalsMax || 40);
+      }
+      return Promise.resolve(store.set(GOALS_KEY, list)).then(function () { return list; });
+    }
+    function addGoal(text, owner, ownerName, source) {
+      var t = String(text || '').trim().slice(0, cfg.goalTextMax || 140);
+      if (!t) return Promise.resolve(null);
+      return loadGoals().then(function (list) {
+        var norm = normFact(t);
+        var dup = list.filter(function (x) { return x.status === 'open' && x.owner === (owner || null) && normFact(x.text) === norm; })[0];
+        if (dup) { dup.lastTouchedAt = clock.now(); return saveGoals(list).then(function () { return dup; }); }
+        var g = { id: 'g' + clock.now().toString(36) + Math.floor(Math.random() * 1000).toString(36),
+                  text: t, owner: owner || null, ownerName: ownerName || '', channel: cfg.channelId,
+                  createdAt: clock.now(), lastTouchedAt: clock.now(), status: 'open', source: source || 'command' };
+        list.push(g);
+        return saveGoals(list).then(function () { log('[chloe.goal] noted a goal for ' + (ownerName || 'the channel') + ': \u201c' + t + '\u201d'); return g; });
+      });
+    }
+    function closeGoal(id, byId, status) {
+      return loadGoals().then(function (list) {
+        var g = list.filter(function (x) { return x.id === id; })[0];
+        if (!g) return { ok: false, reason: 'no goal with that id' };
+        if (g.owner && byId && g.owner !== byId && !isMod(byId)) return { ok: false, reason: 'only the goal\u2019s owner or a mod can close it' };
+        g.status = status || 'done'; g.lastTouchedAt = clock.now();
+        return saveGoals(list).then(function () { return { ok: true, goal: g }; });
+      });
+    }
+    function goalsForOwner(ownerId) {
+      return loadGoals().then(function (list) {
+        var now = clock.now(), changed = false;
+        list.forEach(function (g) {   // lazy staleness: open goals untouched too long fade to dropped
+          if (g.status === 'open' && (now - (g.lastTouchedAt || g.createdAt || 0)) > (cfg.goalStaleMs || 2592000000)) { g.status = 'dropped'; g.lastTouchedAt = now; changed = true; }
+        });
+        var out = list.filter(function (g) { return g.status === 'open' && g.owner === ownerId; });
+        return (changed ? saveGoals(list) : Promise.resolve(list)).then(function () { return out; });
+      });
+    }
+    function dropGoalsFor(id) {
+      if (!id) return Promise.resolve(0);
+      return loadGoals().then(function (list) {
+        var before = list.length;
+        var kept = list.filter(function (g) { return g.owner !== id; });
+        if (kept.length === before) return 0;
+        return saveGoals(kept).then(function () { log('[chloe.goal] erased ' + (before - kept.length) + ' goal(s) for a forgotten user'); return before - kept.length; });
+      });
+    }
 
     // ---- reminders (poll-driven, front-end only, no AI call) --------------------------------
     function getReminders() { return Promise.resolve(store.get(REMIND_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
@@ -1227,6 +1294,7 @@
           .then(function () { return removeFromIndex(targetId); })
           .then(function () { return dropFromArchive(targetId); })   // erasure must include the cold copy, not just the hot one
           .then(function () { return dropEpisodesFor(targetId, name); })   // and episodes they took part in
+          .then(function () { return dropGoalsFor(targetId); })   // and any goals we tracked for them
           .then(function () { return Promise.resolve(store.get(partKey(targetId))); })   // read back
           .then(function (after) {
             return store.listIndex().then(function (ids) {
@@ -1274,6 +1342,34 @@
           if (/^clear\b/i.test(c.reason || '')) return clearPersonaNote().then(function () { return { ack: 'persona note cleared' }; });
           return getPersonaNote().then(function (pn) {
             return { ack: (pn && pn.text) ? ('current persona note (anchored by ' + (pn.by || 'a mod') + '): ' + pn.text) : ('no persona note anchored \u2014 a mod can react ' + (cfg.anchorEmoji || '\ud83d\udccc') + ' to a message to set one') };
+          });
+        } },
+      { verb: 'goals',     modOnly: false, help: 'goals  (your goals; mods: all)', handler: function (uid, c) {
+          var mid = c && c.messageId;
+          return loadGoals().then(function (list) {
+            var now = clock.now();
+            var mine = list.filter(function (g) { return g.status === 'open' && (isMod(uid) || g.owner === uid); });
+            if (!mine.length) return { ack: isMod(uid) ? 'no open goals on record' : 'I\u2019m not tracking any goals for you \u2014 set one with ' + (cfg.commandPrefix || '!chloe') + ' goal <what you\u2019re working on>' };
+            var linesOut = mine.slice(0, 12).map(function (g) {
+              var age = Math.max(1, Math.round((now - (g.createdAt || now)) / 86400000));
+              return '\u2022 [' + g.id + '] ' + g.text + (isMod(uid) && g.ownerName ? ' (' + g.ownerName + ')' : '') + ' \u2014 ' + age + 'd';
+            }).join('\n');
+            return { ack: null, embed: embedFor('Goals', linesOut), ackSrc: mid };
+          });
+        } },
+      { verb: 'goal',      modOnly: false, help: 'goal <text>  /  goal done <id>  /  goal drop <id>', handler: function (uid, c) {
+          var args = String((c && c.rawArgs) || '').trim();
+          var m = args.match(/^(done|drop)\s+(\S+)$/i);
+          if (m) {
+            return closeGoal(m[2], uid, /drop/i.test(m[1]) ? 'dropped' : 'done').then(function (r) {
+              return { ack: r.ok ? ('goal ' + (r.goal.status === 'done' ? 'marked done' : 'dropped') + ' \u2014 \u201c' + r.goal.text + '\u201d') : r.reason };
+            });
+          }
+          if (!args) return Promise.resolve({ ack: 'tell me what you\u2019re working on: ' + (cfg.commandPrefix || '!chloe') + ' goal <text>' });
+          return Promise.resolve(store.get(partKey(uid))).then(function (pp) {
+            return addGoal(args, uid, (pp && pp.name) || '', 'command').then(function (g) {
+              return { ack: g ? ('got it \u2014 I\u2019ll remember you\u2019re working on that (' + g.id + ')') : 'couldn\u2019t note that' };
+            });
           });
         } },
       { verb: 'poll',      modOnly: true, help: 'poll <question> | <a> | <b> [...]  /  poll close', handler: function (modId, c) {
@@ -1553,7 +1649,7 @@
         if (p.state && p.state !== 'active') {
           p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active'; p.trust = 0; p.trustDayEarned = 0;
           ackMsg = 'okay ' + name + ', I\u2019ve cleared what I remember (any moderation still stands).';
-          return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(ackSend);
+          return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(function () { return dropGoalsFor(id); }).then(ackSend);
         }
         ackMsg = 'okay ' + name + ', I\u2019ve forgotten you.';
         return purge(id, { targetName: name }).then(ackSend);
@@ -1751,6 +1847,13 @@
           indicateTyping();
           return Promise.resolve(cfg.greetFn(gctx)).then(function (res) {
             if (!res || !res.ok || !res.value) { greet.greeting = false; return null; }
+            // commit-point revalidation: were they moderated while she was composing the hello?
+            return Promise.resolve(store.get(partKey(p.id))).then(function (pp2) {
+              if (pp2 && isSuppressed(pp2, clock.now())) {
+                greet.greeting = false;
+                log('[chloe.abandon] greeting not sent — ' + p.name + ' was moderated mid-generation');
+                return null;
+              }
             return Promise.resolve(cfg.send(cfg.channelId, String(res.value))).then(function () {
               p.lastGreetedAt = now; lastActAt = now;
               return store.set(partKey(p.id), p).then(function () {
@@ -1758,6 +1861,7 @@
                 log('[chloe.T5] greeted ' + p.name + ' (' + g.tier + ')');
                 return { authorId: p.id, tier: g.tier };
               });
+            });
             });
           });
         });
@@ -1840,6 +1944,7 @@
           if (last && (now - last) < cfg.lullMinGapMs) return null;              // already filled recently
           if (now - lastActAt < cfg.lullMinGapMs) return null;                   // she spoke recently anyway
           reply.replying = true;
+          var lullEpoch = deferGen; var lullStartedAt = now;
           if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
           return assembleContext({ authorId: '', authorName: '', content: '' }).then(function (ctx) {
             ctx.lull = true;   // hint to the brain: the room went quiet, gently re-open it
@@ -1847,12 +1952,21 @@
           }).then(function (r) {
             var text = (r && r.ok) ? String(r.value || '').trim() : '';
             if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
+            // commit-point revalidation: did the room wake up while she was composing?
+            return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh2) {
+              if (lullEpoch !== deferGen || (rh2 && rh2.lastActivity > lullStartedAt)) {
+                reply.replying = false;
+                if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');
+                log('[chloe.abandon] lull filler not sent — ' + (lullEpoch !== deferGen ? 'engine stopped mid-generation' : 'the room woke up on its own (the silence she was filling is over)'));
+                return null;
+              }
             indicateTyping();
             return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
               lastActAt = clock.now(); reply.replying = false; rememberReply(text);
               log('[chloe.lull] filled a ' + Math.round(silentFor / 1000) + 's silence');
               return store.set(LULL_KEY, clock.now()).then(function () { return { lull: text }; });
             }, function () { reply.replying = false; return null; });
+            });
           }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
         });
       });
@@ -1899,6 +2013,7 @@
             if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
             // v0.57: check-ins ride the assembler with the ABSENT FRIEND as the addressed person —
             // her facts, insights, and trust tier arrive via the PERSON band for free.
+            var ciEpoch = deferGen; var ciStartedAt = clock.now();
             return assembleContext({ authorId: best.id, authorName: best.name, content: '' }).then(function (actx) {
               actx.name = best.name; actx.absentMs = best.absent; actx.interactions = best.interactions; actx.summary = best.summary;
               return cfg.checkinFn(actx);
@@ -1906,6 +2021,15 @@
               var text = (r && r.ok) ? String(r.value || '').trim() : '';
               if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
               var body = '<@' + best.id + '> ' + text;   // the mention only actually pings if the gate allows it
+              // commit-point revalidation: did they come back while she was composing? A
+              // “haven't seen you in a while” landing mid-conversation is the worst kind of stale.
+              return Promise.resolve(store.get(partKey(best.id))).then(function (pp2) {
+                if (ciEpoch !== deferGen || (pp2 && pp2.lastSeen > ciStartedAt)) {
+                  reply.replying = false;
+                  if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');
+                  log('[chloe.abandon] check-in not sent — ' + (ciEpoch !== deferGen ? 'engine stopped mid-generation' : best.name + ' came back on their own while she was writing it'));
+                  return null;   // no attempt counted, no gaps touched — the premise vanished
+                }
               indicateTyping();
               return Promise.resolve(cfg.send(cfg.channelId, body)).then(function () {
                 lastActAt = clock.now(); reply.replying = false;
@@ -1914,6 +2038,7 @@
                 log('[chloe.checkin] checked in on ' + best.name + ' (absent ' + Math.round(best.absent / 86400000) + 'd, attempt ' + (best.count + 1) + '/' + cfg.checkinMaxAttempts + ')');
                 return store.set(CHECKIN_KEY, ci).then(function () { return { checkin: best.name }; });
               }, function () { reply.replying = false; return null; });
+              });
             }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
           });
         });
@@ -2015,16 +2140,20 @@
             p.reflectImportanceAccum = 0; p.reflectAt = clock.now();   // reset even on an empty result (don't loop)
             var ins = Array.isArray(p.insights) ? p.insights : [];
             var seen = {}; ins.forEach(function (x) { seen[normFact(x.text)] = true; });
-            var added = 0;
+            var added = 0; var goalPromises = [];
             proposed.forEach(function (raw) {
               var text = String(raw || '').trim().slice(0, 160);
+              if (/^goal:/i.test(text)) {   // a forward-looking commitment -> a goal object, not an insight
+                if (cfg.goalObjects) goalPromises.push(addGoal(text.replace(/^goal:/i, '').trim(), due.id, due.name, 'reflect'));
+                return;
+              }
               var key = normFact(text);
               if (!key || seen[key]) return;
               seen[key] = true; ins.push({ text: text, at: clock.now() }); added++;
             });
             if (ins.length > (cfg.insightsPerUser || 3)) ins = ins.slice(-(cfg.insightsPerUser || 3));
             p.insights = ins;
-            return store.set(partKey(p.id), p).then(function () {
+            return Promise.all(goalPromises).then(function () { return store.set(partKey(p.id), p); }).then(function () {
               if (added) log('[chloe.reflect] formed ' + added + ' insight(s) about ' + due.name);
               return added ? { name: due.name, added: added } : null;
             });
@@ -2219,6 +2348,22 @@
       var g = deferGen;
       var wait = Math.max(50, (cfg.imageCooldownMs || 0) - (clock.now() - lastPaintAt));
       cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) kickImage(); }, wait);
+    }
+    // ---- commit-point revalidation (while-if-true) -------------------------------------------
+    // Every multi-second generation captures its premises at START and commits at END — but the
+    // world moves in between. Each slow path re-checks its premises at the moment of commitment
+    // and ABANDONS cheaply instead of committing on stale state. The epoch (deferGen) doubles as
+    // the engine-liveness check: stop()/demote bumps it, so an in-flight generation on a stopped
+    // engine never commits (its successor owns the work via the pending-reply record).
+    function revalidateReply(p, gen) {
+      if (gen !== deferGen) return Promise.resolve({ why: 'engine stopped/demoted mid-generation — the successor owns this reply now', keepPending: true });
+      var q2 = reply.queue[p.authorId];
+      if (q2 && q2.messageId !== p.messageId) return Promise.resolve({ why: p.authorName + ' re-addressed with a newer message mid-generation — answering THAT instead', chain: true });
+      if (engageMode === 'locked' && !isMod(p.authorId)) return Promise.resolve({ why: 'lockdown engaged mid-generation', lockAck: true });
+      return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp) {
+        if (pp && pp.state && pp.state !== 'active') return { why: 'author was moderated mid-generation' };
+        return null;
+      });
     }
     // Why-not indicators clear themselves (a stale ⏳ hours later would confuse more than help).
     function scheduleAckClear(messageId, emoji, ms) {
@@ -2436,7 +2581,10 @@
                   function finishPoll() {
                     pollCount++;
                     var tail = Promise.resolve(summary);
-                    if (cfg.reactionTracking && cfg.reactionSweepEveryPolls > 0 && (pollCount % cfg.reactionSweepEveryPolls) === 0) {
+                    var sweepDueByCadence = cfg.reactionSweepEveryPolls > 0 && (pollCount % cfg.reactionSweepEveryPolls) === 0;
+                    var sweepDueByActivity = lastPollIngested;   // reactions cluster seconds after fresh messages
+                    lastPollIngested = (summary.ingested || 0) > 0;
+                    if (cfg.reactionTracking && (sweepDueByCadence || sweepDueByActivity)) {
                       tail = tail.then(function () { return reactionSweep().then(function (n) { if (n) { summary.reactionSweep = n; log('[chloe.react] sweep scored ' + n + ' message(s)'); } return summary; }); });
                     }
                     if (cfg.maintenanceEveryPolls > 0 && (pollCount % cfg.maintenanceEveryPolls) === 0) {
@@ -2500,6 +2648,7 @@
       if (typeof cfg.noteSend === 'function') cfg.noteSend('text', p.priority || 0);
       delete reply.queue[p.authorId];
       reply.replying = true;
+      var genEpoch = deferGen;   // commit-point revalidation: premises re-checked before the send
       indicateTyping();
       keepTypingWhile(function () { return reply.replying; });
       if (p.throttleAcked) clearAck(p.messageId, cfg.ackThrottleEmoji);   // your turn came: ⏳ hands over
@@ -2524,7 +2673,18 @@
             scheduleTextChain();
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
           }
-          return Promise.resolve(cfg.send(cfg.channelId, text, (cfg.replyReference !== false && p.messageId) ? { replyTo: p.messageId } : undefined)).then(function () {
+          return revalidateReply(p, genEpoch).then(function (stale) {
+            if (stale) {
+              reply.replying = false;
+              clearAck(p.messageId, cfg.ackWorkingEmoji);
+              if (stale.lockAck) { ackWorking(p.messageId, cfg.ackLockdownEmoji); scheduleAckClear(p.messageId, cfg.ackLockdownEmoji); }
+              if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');
+              log('[chloe.abandon] reply not sent — ' + stale.why);
+              if (stale.chain) scheduleTextChain();   // answer the NEWER message at generation speed
+              if (stale.keepPending) return null;     // leave the pending record: resume-once belongs to the successor
+              return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
+            }
+            return Promise.resolve(cfg.send(cfg.channelId, text, (cfg.replyReference !== false && p.messageId) ? { replyTo: p.messageId } : undefined)).then(function () {
             var t = clock.now();
             lastActAt = t; lastReplyAt[p.authorId] = t;
             var lrKeys = Object.keys(lastReplyAt);   // bound the per-author map (in-memory leak class)
@@ -2537,6 +2697,7 @@
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return intent ? setIntent(intent) : null; }).then(function () {
               return bumpInteraction(p.authorId).then(function () { return text; });
             });
+          });
           });
         })
         .catch(function (e) { reply.replying = false; clearAck(p.messageId, cfg.ackWorkingEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); log('[chloe.T1] reply error:', (e && e.message) || e); scheduleTextChain(); return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; }, function () { return null; }); });
@@ -2561,6 +2722,7 @@
       if (now - lastPaintAt < cfg.imageCooldownMs) return null;           // courtesy gap (image clock only)
       if (typeof cfg.canSend === 'function' && !cfg.canSend('image')) return null;   // cross-channel global image budget
       var p = paint.queue.shift(); paint.painting = true;
+      var paintEpoch = deferGen;   // commit-point revalidation: ~14-60s of generation is the longest stale window in the system
       if (typeof cfg.noteSend === 'function') cfg.noteSend('image');      // claim the global image slot at start
       if (p.ackEmoji) { clearAck(p.messageId, p.ackEmoji); p.ackEmoji = null; }   // drop its queue-number
       ackWorking(p.messageId, cfg.ackImageEmoji);                        // instant "painting…" ack on the request
@@ -2581,6 +2743,15 @@
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
             return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I couldn't make that image just now.")).then(function () { return null; }, function () { return null; });
           }
+          // revalidate before delivery: were they moderated (or the engine stopped) mid-paint?
+          return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp2) {
+            if (paintEpoch !== deferGen || (pp2 && pp2.state && pp2.state !== 'active')) {
+              paint.painting = false; lastPaintAt = clock.now(); scheduleImageChain();
+              clearAck(p.messageId, cfg.ackImageEmoji);
+              if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
+              log('[chloe.abandon] image not delivered — ' + (paintEpoch !== deferGen ? 'engine stopped mid-paint' : p.authorName + ' was moderated mid-paint'));
+              return null;
+            }
           var target = Promise.resolve(cfg.channelId);
           if (p.dm && typeof cfg.openDM === 'function') {
             target = Promise.resolve(cfg.openDM(p.authorId)).then(function (id) { return id || cfg.channelId; }, function () { return cfg.channelId; });
@@ -2595,6 +2766,7 @@
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
               return bumpInteraction(p.authorId).then(function () { return { image: true, to: p.authorId }; });
             }, function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
+          });
           });
         })
         .catch(function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
@@ -2783,6 +2955,20 @@
           var text = 'A few memorable moments from this channel (reference only if naturally relevant, do not force them in):\n'
             + pick.map(function (h) { return '- ' + (h.who ? h.who + ': ' : '') + '\u201c' + String(h.text).slice(0, 120) + '\u201d' + (h.note ? ' (' + String(h.note).slice(0, 60) + ')' : ''); }).join('\n');
           return { text: text, tokens: toks };
+        });
+      } });
+
+    registerProvider({ id: 'goals', priority: BANDS.RECALL,
+      enabled: function (c) { return !!c.goalObjects; },
+      gather: function (g) {
+        var a = g.addressed;
+        if (!a || !a.id) return null;   // ownerless/channel goals are not auto-recalled (kept for command listing)
+        return goalsForOwner(a.id).then(function (open) {
+          if (!open.length) return null;
+          var pick = open.sort(function (x, y) { return (y.lastTouchedAt || 0) - (x.lastTouchedAt || 0); })[0];
+          var who = (g.p && g.p.authorName) || a.name || 'them';
+          var text = 'You know ' + who + ' is working on: ' + pick.text + '. Ask how it\u2019s going if it fits naturally \u2014 never force it.';
+          return { text: text, tokens: estimateTokens(text), touch: pick.id };
         });
       } });
 
@@ -3473,6 +3659,7 @@
       processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
       processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
+      addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
       procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
       resumePendingReply: resumePendingReply, summonCheckReactions: summonCheckReactions, pollCreate: pollCreate, pollClose: pollClose, checkPollExpiry: checkPollExpiry,
@@ -3910,7 +4097,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.57.0';
+  var VERSION = '0.61.3';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -4061,7 +4248,14 @@
       return requestJSON('GET', '/channels/' + channelId + '/messages/' + messageId, {});
     },
     sendEmbed: function (channelId, embed) {
-      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [embed], allowed_mentions: allowedMentions() } });
+      // v0.58 gate parity: embed text gets the same scrub as plain content. Pings already can't
+      // fire (allowed_mentions rides every send), but the link/channel-link/emoji gates only ran
+      // on .content — an AI-written URL inside an embed description walked straight past them.
+      var g = Object.assign({}, embed);
+      if (g.title) g.title = gateContent(String(g.title)).slice(0, 256);
+      if (g.description) g.description = gateContent(String(g.description)).slice(0, 4000);
+      if (Array.isArray(g.fields)) g.fields = g.fields.map(function (f) { return Object.assign({}, f, { name: gateContent(String(f.name || '')).slice(0, 256), value: gateContent(String(f.value || '')).slice(0, 1024) }); });
+      return requestJSON('POST', '/channels/' + channelId + '/messages', { json: true, body: { embeds: [g], allowed_mentions: allowedMentions() } });
     },
     addReaction: function (channelId, messageId, emoji) {
       return requestJSON('PUT', '/channels/' + channelId + '/messages/' + messageId + '/reactions/' + encodeURIComponent(emoji) + '/@me', {});
@@ -4246,6 +4440,7 @@
         reflection: cfgGet('reflection', false),
         episodeFn: function (ctx) { return brainCall('episodes', ctx); },
         episodicMemory: cfgGet('episodicMemory', false),
+        goalObjects: cfgGet('goalObjects', true),
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
@@ -4428,6 +4623,7 @@
       channelSummary: !!cfgGet('channelSummary', false),
       reflection: !!cfgGet('reflection', false),
       episodicMemory: !!cfgGet('episodicMemory', false),
+      goalObjects: cfgGet('goalObjects', true) !== false,
       relationshipTrust: !!cfgGet('relationshipTrust', false),
       ownAffect: !!cfgGet('ownAffect', false),
       proceduralModes: !!cfgGet('proceduralModes', false), procRules: cfgGet('procRules', []),
@@ -4548,6 +4744,18 @@
         cfgSet('channels', cleanC); applyConfigChange();
         return Promise.resolve({ ok: true, value: { channels: channelList() } });
       }
+      case 'config.setAllChannels': {
+        // One unified list (UI: a single textarea). First valid id = primary, the rest = extras.
+        var rawA = (args && args.channels);
+        if (!Array.isArray(rawA)) return Promise.resolve({ ok: false, reason: 'channels must be an array of channel ids' });
+        var cleanA = [], seenA = {};
+        rawA.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && !seenA[c]) { seenA[c] = 1; cleanA.push(c); } });
+        var primary = cleanA[0] || '';
+        cfgSet('channelId', primary);
+        cfgSet('channels', cleanA.slice(1));
+        applyConfigChange();
+        return Promise.resolve({ ok: true, value: { channels: channelList(), primary: primary } });
+      }
       case 'config.setEngageMode': {
         var mode = (args && args.mode);
         if (mode !== 'locked' && mode !== 'normal' && mode !== 'open') return Promise.resolve({ ok: false, reason: 'mode must be locked|normal|open' });
@@ -4608,6 +4816,8 @@
         { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
       case 'config.setChannelSummary':
         { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
+      case 'config.setGoalObjects':
+        { var gob = !!(args && args.on); cfgSet('goalObjects', gob); applyConfigChange(); return Promise.resolve({ ok: true, value: { goalObjects: gob } }); }
       case 'config.setReflection':
         { var rfl = !!(args && args.on); cfgSet('reflection', rfl); applyConfigChange(); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
       case 'config.setEpisodicMemory':
