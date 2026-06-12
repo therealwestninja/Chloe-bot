@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.69.0
+// @version      0.75.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -14,6 +14,7 @@
 // @grant        GM_openInTab
 // @grant        GM_addValueChangeListener
 // @connect      discord.com
+// @connect      translate.googleapis.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -257,11 +258,16 @@
       // who's here, the active goal, her recent decisions, her mood. Decays on read like affect.
       // Mostly synthesized from signals she already has; only `topic` can cost a (reused) call.
       workingMemory: false,
+      semanticInjections: [],   // arbitrary system/operator facts surfaced into context (DESIGN-semantic-inject.md): [{id,text,priority,ttlMs,at}]
+      cleanOutput: true,        // scrub model-mechanics noise from replies (DESIGN-clean.md): role-bleed, dangling tail, unbalanced fences
+      deviceClock: null,        // {time, date, tz, at} pushed by the page for instant !chloe time/date (no AI)
+      deviceClockStaleMs: 180000,   // a pushed clock older than this is considered stale (panel closed)
       // Idle deliberation (DESIGN-deliberation.md): a ReAct map-reduce reasoning loop. When genuinely
       // idle and curious, she decomposes a thought into atomic sub-questions, answers them (parallel
       // across worker tabs when a pool exists), and recomposes an insight/goal. NEVER sends. Curiosity-
       // gated (self-limiting: a resolved deliberation lowers curiosity). Opt-in (spends real calls).
       idleDeliberation: false,
+      attentionManager: false,   // utility-scored AI-pass selection (DESIGN-attention.md); off = today's fixed ladder
       deliberateCuriosityFloor: 0.62,   // only think when curiosity is meaningfully above neutral
       deliberateMinGapMs: 600000,       // hard floor between deliberations (10m) so bursts can't chain
       deliberateMaxSubQuestions: 4,     // cap the fan-out (decompose returns up to this many)
@@ -873,6 +879,24 @@
       if (personaName) { out.push(personaName); var ps = String(personaName).split(/[-_ ]/)[0]; if (ps && ps.length >= 2 && ps !== personaName) out.push(ps); }
       return out;
     }
+    // ---- per-user reply language (DESIGN-translate.md) ------------------------------------------
+    // A small ISO-639-1 subset we recognize for `!chloe lang`. The bridge does the actual translating
+    // at the transport boundary; the engine just records the preference (English-only cognition).
+    var LANG_NAMES = { fr: 'French', es: 'Spanish', de: 'German', it: 'Italian', pt: 'Portuguese',
+      nl: 'Dutch', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', ar: 'Arabic',
+      hi: 'Hindi', tr: 'Turkish', pl: 'Polish', sv: 'Swedish', uk: 'Ukrainian', vi: 'Vietnamese',
+      id: 'Indonesian', th: 'Thai', el: 'Greek', he: 'Hebrew', cs: 'Czech', ro: 'Romanian', fi: 'Finnish' };
+    function getUserLang(id) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && p.lang) ? p.lang : null; });
+    }
+    function setUserLang(id, lang) {
+      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        if (!p) p = { id: id, name: id, firstSeen: clock.now(), lastSeen: clock.now(), interactionCount: 0, state: 'active', recent: [] };
+        if (lang) p.lang = lang; else delete p.lang;
+        return store.set(partKey(id), p).then(function () { return lang || null; });
+      });
+    }
+
     function isAddressed(content) {
       if (cfg.addressMode === 'always') return true;   // DM channel: every message is to her
       var c = String(content || '');
@@ -1614,6 +1638,23 @@
             return { ack: 'current mode (set by ' + rec.by + ', ' + mins + 'm left): \u201c' + rec.mode + '\u201d' };
           });
         } },
+      { verb: 'time',      modOnly: false, help: 'time \u2014 the current time (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('time') }); } },
+      { verb: 'date',      modOnly: false, help: 'date \u2014 today\u2019s date (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('date') }); } },
+      { verb: 'lang',      modOnly: false, help: 'lang <code> (e.g. fr, es, de) / lang off / lang \u2014 your reply language', handler: function (uid, c) {
+          var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
+          if (!arg) {
+            return getUserLang(uid).then(function (lg) {
+              return { ack: (lg && lg !== 'en') ? ('I\u2019m talking to you in ' + (LANG_NAMES[lg] || lg) + ' (' + lg + '). Say \u201c' + (cfg.commandPrefix || '!chloe') + ' lang off\u201d to switch back to English.') : 'I\u2019m talking to you in English. Say \u201c' + (cfg.commandPrefix || '!chloe') + ' lang fr\u201d (or es, de, ja\u2026) to switch.' };
+            });
+          }
+          if (arg === 'off' || arg === 'en' || arg === 'english') {
+            return setUserLang(uid, null).then(function () { return { ack: 'okay \u2014 back to English.' }; });
+          }
+          if (!LANG_NAMES[arg]) {
+            return Promise.resolve({ ack: 'I don\u2019t know the code \u201c' + arg.slice(0, 12) + '\u201d. Try a 2-letter code like fr (French), es (Spanish), de (German), ja (Japanese), pt, ru, zh, ar\u2026 or \u201clang off\u201d for English.' });
+          }
+          return setUserLang(uid, arg).then(function () { return { ack: 'got it \u2014 I\u2019ll talk with you in ' + LANG_NAMES[arg] + ' from now on. (\u201c' + (cfg.commandPrefix || '!chloe') + ' lang off\u201d for English.)' }; });
+        } },
       { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' },
       { verb: 'forget-that', modOnly: true, help: 'forget-that (reply to a message, or @user) \u2014 excise it from my memory', handler: function (modId, c) {
           // reply target wins; then an @mentioned user's last line; then the most recent channel line.
@@ -1711,6 +1752,16 @@
         { name: 'images', value: cfg.image ? 'on' : 'off', inline: true },
         { name: 'auto-mod', value: (cfg.autoMod && (cfg.autoModRules || []).length) ? ((cfg.autoModRules || []).length + ' rule(s)') : 'off', inline: true }
       ]);
+    }
+    // Instant date/time from the page-pushed device clock (no AI). Honest when off/stale/absent so the
+    // command never fabricates a time. `which` = 'time' | 'date'.
+    function deviceClockAck(which) {
+      var dc = cfg.deviceClock;
+      if (!dc || (!dc.time && !dc.date)) return 'I don\u2019t have the current clock right now \u2014 turn on \u201cknow the current date & time\u201d in my settings (Behavior tab) and keep the control panel open.';
+      if (dc.at && (clock.now() - dc.at) > (cfg.deviceClockStaleMs || 180000)) return 'my clock reading is stale (the control panel may be closed) \u2014 reopen it and try again.';
+      var tz = dc.tz ? (' (' + dc.tz + ')') : '';
+      if (which === 'date') return 'Today is ' + (dc.date || dc.time) + tz + '.';
+      return 'It\u2019s ' + (dc.time || dc.date) + tz + '.';
     }
     function execCommand(modId, c) {
       var entry = c.entry || resolveVerb(c.cmd);
@@ -1945,7 +1996,7 @@
                 log('[chloe.abandon] greeting not sent — ' + p.name + ' was moderated mid-generation');
                 return null;
               }
-            return Promise.resolve(cfg.send(cfg.channelId, String(res.value))).then(function () {
+            return Promise.resolve(cfg.send(cfg.channelId, hygiene(String(res.value)))).then(function () {
               p.lastGreetedAt = now; lastActAt = now;
               return store.set(partKey(p.id), p).then(function () {
                 greet.greeting = false;
@@ -2004,7 +2055,7 @@
                 actx.id = fired.id; actx.prompt = fired.prompt;
                 return cfg.beatFn(actx);
               }).then(function (res) {
-                return deliver((res && res.ok && res.value) ? String(res.value) : pickBeatText(fired));
+                return deliver((res && res.ok && res.value) ? hygiene(String(res.value)) : pickBeatText(fired));
               }, function () { return deliver(pickBeatText(fired)); });
             }
             return deliver(pickBeatText(fired));
@@ -2041,7 +2092,7 @@
             ctx.lull = true;   // hint to the brain: the room went quiet, gently re-open it
             return cfg.lullFn(ctx);
           }).then(function (r) {
-            var text = (r && r.ok) ? String(r.value || '').trim() : '';
+            var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
             if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
             // commit-point revalidation: did the room wake up while she was composing?
             return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh2) {
@@ -2109,7 +2160,7 @@
               actx.name = best.name; actx.absentMs = best.absent; actx.interactions = best.interactions; actx.summary = best.summary;
               return cfg.checkinFn(actx);
             }).then(function (r) {
-              var text = (r && r.ok) ? String(r.value || '').trim() : '';
+              var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
               if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
               var body = '<@' + best.id + '> ' + text;   // the mention only actually pings if the gate allows it
               // commit-point revalidation: did they come back while she was composing? A
@@ -2833,27 +2884,35 @@
                       if (!cadenceOk) return false;
                       if (!cfg.adaptivePace || !paceReady()) return true;   // floor only engages once rhythm is established (else: exactly today's every-N-polls)
                       var now2 = clock.now(), last2 = paceLastAI[name] || 0;
-                      if (now2 - last2 < (cfg.paceMinAIIntervalMs || 90000)) return false;
-                      paceLastAI[name] = now2; return true;
+                      return (now2 - last2 >= (cfg.paceMinAIIntervalMs || 90000));   // TEST only; the chosen pass records via markRan
                     }
-                    // One gated AI pass per poll (each is an AI call): facts first, then rolling
-                    // channel summary, then reflection — whichever is due this poll.
-                    if (cfg.factMemory && aiPassDue('facts', cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0)) return processFacts();
-                    // (every-1) form: fires on the Nth poll, never poll 1 — the first poll can be a
-                    // cold-start backlog and the room should accumulate before being summarized.
-                    if (cfg.channelSummary && aiPassDue('summary', cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1))) return processChannelSummary().then(function (cs) { if (cs) { summary.channelSummary = true; summary._sumText = cs; } return null; });
-                    if (cfg.reflection && aiPassDue('reflect', cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1))) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
-                    if (cfg.episodicMemory && aiPassDue('episodes', cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1))) return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; });
-                    if (cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1)) {
-                      return channelIsIdle().then(function (idle) {
-                        if (!idle) return null;
-                        return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; });
+                    function markRan(name) { paceLastAI[name] = clock.now(); }   // stamp the pass that actually ran
+                    // One gated AI pass per poll. Collect the DUE candidates in priority order (each
+                    // with its run thunk + a base priority), then let the attention manager pick which
+                    // one runs (DESIGN-attention.md). attentionManager OFF -> candidates[0] (this exact
+                    // order); ON -> utility-scored, but base dominates so neutral signals == this order.
+                    var cands = [];
+                    if (cfg.factMemory && aiPassDue('facts', cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0))
+                      cands.push({ name: 'facts', base: 60, run: function () { return processFacts(); } });
+                    if (cfg.channelSummary && aiPassDue('summary', cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)))
+                      cands.push({ name: 'summary', base: 50, run: function () { return processChannelSummary().then(function (cs) { if (cs) { summary.channelSummary = true; summary._sumText = cs; } return null; }); } });
+                    if (cfg.reflection && aiPassDue('reflect', cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)))
+                      cands.push({ name: 'reflect', base: 40, run: function () { return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; }); } });
+                    if (cfg.episodicMemory && aiPassDue('episodes', cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)))
+                      cands.push({ name: 'episodes', base: 30, run: function () { return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; }); } });
+                    if (cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1))
+                      cands.push({ name: 'consolidate', base: 20, run: function () { return channelIsIdle().then(function (idle) { if (!idle) return null; return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; }); }); } });
+                    if (cfg.idleDeliberation)
+                      cands.push({ name: 'deliberate', base: 10, run: function () { return deliberate().then(function (d) { if (d) summary.deliberated = d.type; return null; }); } });
+                    if (cands.length) {
+                      // gather signals only when the manager is on (otherwise we just take candidates[0])
+                      if (!cfg.attentionManager) { markRan(cands[0].name); return cands[0].run(); }
+                      return attentionSignals().then(function (sig) {
+                        var chosen = chooseAttention(cands, sig) || cands[0];
+                        markRan(chosen.name);   // only the pass that actually runs resets its cadence floor + staleness
+                        return chosen.run();
                       });
                     }
-                    // idle deliberation: lowest priority (thinking yields to maintenance). Self-gated
-                    // inside deliberate() on curiosity + idle + min-gap, so calling it each poll is cheap
-                    // (a store read) until those align; only then does it spend the decompose/map/reduce calls.
-                    if (cfg.idleDeliberation) return deliberate().then(function (d) { if (d) summary.deliberated = d.type; return null; });
                     if (cfg.ownAffect) return affectTick().then(function () { return null; });   // not an AI pass; cheap ignored-check
                     return null;
                   }).then(function (facts) {
@@ -2916,11 +2975,14 @@
       var p = null;
       Object.keys(reply.queue).forEach(function (id) {
         var e = reply.queue[id];
-        if (now - e.at < currentDebounce()) return;                     // still bursting (rhythm-relative)
+        // Cooldown feedback FIRST and independent of debounce: if she answered this person recently,
+        // the wait is real (seconds), so tell them now (⏳) rather than leaving confusing silence that
+        // reads as her ignoring or "re-reading" them. Checked before the debounce early-return.
         if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) {            // per-author cooldown
           if (!e.throttleAcked) { e.throttleAcked = true; ackWorking(e.messageId, cfg.ackThrottleEmoji); scheduleAckClear(e.messageId, cfg.ackThrottleEmoji); }   // ⏳ why she's not answering yet
           return;
         }
+        if (now - e.at < currentDebounce()) return;                     // still bursting (rhythm-relative)
         var ep = e.priority || 0;
         if (!p) { p = e; return; }
         var pp = p.priority || 0;
@@ -2953,7 +3015,7 @@
           return cfg.respond(ctx);
         })
         .then(function (r) {
-          var text = (r && r.ok) ? String(r.value || '').trim() : '';
+          var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
           var intent = (r && r.intent) ? r.intent : null;   // standing-intention update from the brain
           if (!text) {
             reply.replying = false;
@@ -2974,7 +3036,7 @@
               if (stale.keepPending) return null;     // leave the pending record: resume-once belongs to the successor
               return Promise.resolve(store.del(PENDING_KEY)).then(function () { return null; });
             }
-            return Promise.resolve(cfg.send(cfg.channelId, text, (cfg.replyReference !== false && p.messageId) ? { replyTo: p.messageId } : undefined)).then(function () {
+            return Promise.resolve(cfg.send(cfg.channelId, text, Object.assign({ toUser: p.authorId }, (cfg.replyReference !== false && p.messageId) ? { replyTo: p.messageId } : {}))).then(function () {
             var t = clock.now();
             lastActAt = t; lastReplyAt[p.authorId] = t;
             var lrKeys = Object.keys(lastReplyAt);   // bound the per-author map (in-memory leak class)
@@ -3102,7 +3164,7 @@
             // action === 'reply'
             indicateTyping();
             return Promise.resolve(cfg.respond(heldCtx)).then(function (r) {
-              var text = (r && r.ok) ? String(r.value || '').trim() : '';
+              var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
               if (!text) { reply.replying = false; log('[chloe.T2] volunteer reply empty'); return null; }
               return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
                 lastActAt = clock.now(); reply.replying = false; log('[chloe.T2] volunteered a reply'); return bumpInteraction(g.authorId).then(function () { return text; });
@@ -3120,10 +3182,105 @@
     // actually replying to always survives), kept in chronological order for the prompt. Estimate is
     // deliberately conservative (~4 chars/token + a little per-line overhead for the speaker label)
     // so we under-fill rather than overflow the window.
+    // ---- attention manager (DESIGN-attention.md): utility-scored AI-pass selection ---------------
+    // Among the passes DUE this poll, pick which one runs by a utility score instead of fixed order.
+    // base = today's standing priority (dominant term, so neutral signals == today's order). Modifiers
+    // are small re-rankers driven by her state; staleness is monotonic so nothing starves. Pure +
+    // deterministic; exported for the harness. `candidates`: [{name, base}]; `signals`: see chooseAttention.
+    function attentionScore(cand, signals) {
+      var s = cand.base;
+      var st = (signals.staleness && signals.staleness[cand.name]) || 0;   // 0..1, time since it last ran
+      s += st * 3;                                                          // overdue passes rise (anti-starvation)
+      if (signals.idle) {
+        if (cand.name === 'consolidate') s += 4;
+        if (cand.name === 'deliberate') s += 3;
+      }
+      if (signals.curiosity != null && cand.name === 'deliberate') s += (signals.curiosity - 0.5) * 8;   // high curiosity lifts thinking
+      if (signals.memoryPressure != null && cand.name === 'consolidate') s += signals.memoryPressure * 6; // clutter lifts tidying
+      return s;
+    }
+    // Choose the winning due candidate. Off -> first in list (today's fixed order). On -> highest score,
+    // ties to the lower base-order index (deterministic, == today when modifiers are zero).
+    function chooseAttention(candidates, signals) {
+      if (!candidates.length) return null;
+      if (!cfg.attentionManager) return candidates[0];   // fixed ladder: list is already in priority order
+      var best = candidates[0], bestScore = attentionScore(candidates[0], signals), bestIdx = 0;
+      for (var i = 1; i < candidates.length; i++) {
+        var sc = attentionScore(candidates[i], signals);
+        if (sc > bestScore + 1e-9) { best = candidates[i]; bestScore = sc; bestIdx = i; }
+      }
+      if (best !== candidates[0]) log('[chloe.attend] chose ' + best.name + ' (score ' + bestScore.toFixed(1) + ') over ' + candidates[0].name);
+      return best;
+    }
+    // Gather the signals the scorer needs (only called when attentionManager is on). Cheap reads.
+    function attentionSignals() {
+      var now = clock.now();
+      var staleWindow = cfg.attentionStaleWindowMs || 600000;   // ~10min -> full staleness weight
+      var staleness = {};
+      ['facts', 'summary', 'reflect', 'episodes', 'consolidate', 'deliberate'].forEach(function (n) {
+        var last = paceLastAI[n] || 0;
+        staleness[n] = last ? Math.min(1, (now - last) / staleWindow) : 1;   // never-run = maximally stale
+      });
+      return channelIsIdle().then(function (idle) {
+        return (cfg.ownAffect ? affectLoad() : Promise.resolve(null)).then(function (a) {
+          // memory pressure: cheap proxy — fraction of the roster whose fact list is at/near the cap.
+          return getRoster().then(function (roster) {
+            var cap = cfg.factsPerUser || 6, pressured = 0, counted = 0;
+            (roster || []).forEach(function (p) { if (p && Array.isArray(p.facts)) { counted++; if (p.facts.length >= cap - 1) pressured++; } });
+            var memoryPressure = counted ? (pressured / counted) : 0;
+            return { idle: !!idle, curiosity: a ? (a.curiosity != null ? a.curiosity : 0.5) : null, staleness: staleness, memoryPressure: memoryPressure };
+          });
+        });
+      });
+    }
+
+    // ---- output hygiene (DESIGN-clean.md): scrub model-mechanics noise from a reply -------------
+    // Removes artifacts that are never intended output: a leading "Name:" role-bleed prefix, a 3x word
+    // stutter, an unbalanced code fence, and a clearly-incomplete dangling tail. Each step is no-op-safe
+    // and NEVER empties a valid reply. Idempotent. opts.names = her name + aliases (only those + generic
+    // speaker labels are stripped, so mid-message colons survive).
+    function cleanReply(text, opts) {
+      opts = opts || {};
+      var s = String(text == null ? '' : text);
+      if (!s) return s;
+      var original = s;
+      // 1) strip a LEADING role-name prefix ("Name:" / "Name \u2014" / "Name -"), once, only her own
+      //    names/aliases + known generic labels (not arbitrary capitalized words).
+      var labels = [];
+      (opts.names || []).forEach(function (n) { if (n) labels.push(String(n)); });
+      ['user', 'assistant', 'someone', 'system', 'bot'].forEach(function (n) { labels.push(n); });
+      var stripped = s.replace(/^\s+/, '');
+      for (var i = 0; i < labels.length; i++) {
+        var nm = labels[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // escape regex
+        var re = new RegExp('^' + nm + '\\s*[:\\u2014-]\\s+', 'i');
+        if (re.test(stripped)) { stripped = stripped.replace(re, ''); break; }   // once only
+      }
+      if (stripped.trim()) s = stripped;   // never empty via prefix-strip
+      // 2) collapse an exact 3+ consecutive word stutter ("no no no no" -> "no")
+      s = s.replace(/\b(\w+)(\s+\1\b){2,}/gi, '$1');
+      // 3) trim a clearly-incomplete dangling tail: if the message doesn't end on terminal
+      //    punctuation/quote/emoji and has more than one sentence, drop the trailing fragment back to
+      //    the last complete sentence. NEVER empty the message.
+      var endsClean = /[.!?\u2026"\u201d'\u2019)\]]\s*$/.test(s) || /[\u{1F000}-\u{1FAFF}\u2600-\u27BF]\s*$/u.test(s);
+      if (!endsClean) {
+        var m = s.match(/^[\s\S]*[.!?\u2026]["\u201d'\u2019)\]]?(?=\s|$)/);
+        // Trim only if it leaves a substantial complete sentence (>=10 chars) AND actually drops a
+        // trailing fragment. A short punctuation-less reply ("lol ok") has no match -> left alone.
+        if (m && m[0].trim().length >= 10 && m[0].trim().length < s.trim().length) s = m[0].trim();
+      }
+      // 4) balance code fences: odd count of ``` -> append a closing fence
+      var fences = (s.match(/```/g) || []).length;
+      if (fences % 2 === 1) s = s.replace(/\s*$/, '') + '\n```';
+      s = s.replace(/^\s+|\s+$/g, '');
+      return s || original;   // absolute guard: never return empty for a non-empty input
+    }
+    // Apply cleanReply only when enabled; otherwise pass through (today's behavior).
+    function hygiene(text) { return cfg.cleanOutput === false ? text : cleanReply(text, { names: [cfg.botName].concat(cfg.botAliases || []) }); }
+
     function estimateTokens(s) {
       s = String(s || '');
       if (!s.length) return 0;
-      if (typeof cfg.countTokens === 'function') { try { var n = cfg.countTokens(s); if (n >= 0) return Math.ceil(n); } catch (e) {} }
+      if (typeof cfg.countTokens === 'function') { try { var n = cfg.countTokens(s); if (typeof n === 'number' && isFinite(n) && n >= 0) return Math.ceil(n); } catch (e) {} }
       return Math.ceil(s.length / 4);   // fallback heuristic when the page's countTokens isn't wired
     }
     function packByTokens(lines, budget) {
@@ -3211,6 +3368,22 @@
           if (g.legacyOut) g.legacyOut.mood = d;
           return { text: 'The room feels ' + d + ' right now — match that energy rather than working against it (don’t name the mood).', tokens: 12 };
         });
+      } });
+
+    // Arbitrary semantic-memory injection: surface each operator/system-set fact, skipping any that
+    // have expired (ttlMs). One generic slot so a new system fact never needs a new provider.
+    registerProvider({ id: 'seminject', priority: BANDS.SITUATION,
+      enabled: function (c) { return Array.isArray(c.semanticInjections) && c.semanticInjections.length > 0; },
+      gather: function (g) {
+        var now = clock.now();
+        var live = (cfg.semanticInjections || []).filter(function (s) {
+          if (!s || !s.text) return false;
+          if (s.ttlMs && s.at && (now - s.at) > s.ttlMs) return false;   // expired -> skip (never assert stale)
+          return true;
+        });
+        if (!live.length) return null;
+        var text = live.map(function (s) { return String(s.text); }).join(' ');
+        return { text: text, tokens: estimateTokens(text) };
       } });
 
     registerProvider({ id: 'workspace', priority: BANDS.SITUATION,
@@ -4352,7 +4525,7 @@
       botLoopReplyChance: botLoopReplyChance,
       noteAuthorForLoop: noteAuthorForLoop,
       setIntent: setIntent, getIntent: getIntent, clearIntent: clearIntent,
-      estimateTokens: estimateTokens, packByTokens: packByTokens,
+      estimateTokens: estimateTokens, packByTokens: packByTokens, cleanReply: cleanReply, attentionScore: attentionScore, chooseAttention: chooseAttention,
       parseImageJson: parseImageJson,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
@@ -4362,6 +4535,7 @@
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
+      getUserLang: getUserLang, setUserLang: setUserLang,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
@@ -4811,7 +4985,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.69.0';
+  var VERSION = '0.75.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -4819,6 +4993,11 @@
   var workerSelfHealTried = false;   // one-shot: a worker-roled tab that turns out to host the panel reclaims queen
 
   function cfgGet(k, d) { var v = GM_getValue(NS + 'cfg:' + k, null); return v == null ? d : v; }
+  // Arbitrary semantic-injection store (DESIGN-semantic-inject.md): a map of id -> {id,text,priority,ttlMs,at}.
+  function semInjectMap() { var m = GM_getValue(NS + 'seminject:map', null); return (m && typeof m === 'object') ? m : {}; }
+  function semInjectList() { var m = semInjectMap(); return Object.keys(m).map(function (k) { return m[k]; }); }
+  function semInjectUpsert(entry) { var m = semInjectMap(); m[entry.id] = entry; GM_setValue(NS + 'seminject:map', m); }
+  function semInjectDrop(id) { var m = semInjectMap(); if (m[id]) { delete m[id]; GM_setValue(NS + 'seminject:map', m); } }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
   // #17: a small in-memory ring of link/transport/poll events, readable after the fact (the link's
   // failure modes are timing-dependent and easy to miss live). Mirrors to console; capped at 60.
@@ -4940,10 +5119,98 @@
     return t.replace(/[ \t]{2,}/g, ' ').replace(/ +([,.!?])/g, '$1').trim(); // tidy, preserve newlines
   }
 
+  // ---- translation client (DESIGN-translate.md) ----------------------------------------------
+  // Free/unofficial endpoint. NO key. CARDINAL RULE: failure is a NON-EVENT \u2014 on any error/timeout/
+  // parse-failure we return the ORIGINAL text, so a message is never dropped or blocked. Mentions and
+  // custom emoji are protected (pulled out, prose translated, reassembled) so a translated reply still
+  // pings/renders. A bounded LRU cache avoids re-hitting the endpoint for repeated lines.
+  var TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
+  var translateCache = new Map();           // key "src|tgt|text" -> { text, src } ; bounded below
+  var TRANSLATE_CACHE_MAX = 300;
+  function cacheGet(k) { return translateCache.has(k) ? translateCache.get(k) : null; }
+  function cachePut(k, v) { translateCache.set(k, v); if (translateCache.size > TRANSLATE_CACHE_MAX) { var first = translateCache.keys().next().value; translateCache.delete(first); } }
+  // Protect <@123> / <@!123> / <#123> / <@&123> mentions and <a:emoji:123> / :emoji: tokens by swapping
+  // them for inert placeholders the translator won't touch, then restoring them after.
+  function protectTokens(text) {
+    var tokens = [], i = 0;
+    var protectedText = String(text).replace(/<a?:\w+:\d+>|<[@#][!&]?\d+>|:[a-z0-9_]+:/gi, function (m) {
+      var ph = '\uE000' + (i++) + '\uE001';   // private-use sentinels, unlikely to be altered
+      tokens.push(m); return ph;
+    });
+    return { text: protectedText, restore: function (out) {
+      return String(out).replace(/\uE000(\d+)\uE001/g, function (_, n) { return tokens[+n] != null ? tokens[+n] : ''; });
+    } };
+  }
+  function parseTranslateResponse(responseText) {
+    // shape: [ [ [translatedSeg, origSeg, ...], ... ], ..., detectedSourceLang(maybe) ]
+    var data = JSON.parse(responseText);
+    var out = '';
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      for (var i = 0; i < data[0].length; i++) { if (data[0][i] && data[0][i][0] != null) out += data[0][i][0]; }
+    }
+    var src = null;
+    if (data && data[2]) src = data[2];                       // common slot for detected source
+    else if (data && data[8] && data[8][0] && data[8][0][0]) src = data[8][0][0];
+    return { text: out, src: src };
+  }
+  // translate(text, target, source?) -> Promise<{text, src}>. ALWAYS resolves; never rejects.
+  function translate(text, target, source) {
+    var input = String(text == null ? '' : text);
+    if (!input.trim() || !target) return Promise.resolve({ text: input, src: source || null });
+    var src = source || 'auto';
+    var key = src + '|' + target + '|' + input;
+    var hit = cacheGet(key); if (hit) return Promise.resolve(hit);
+    var prot = protectTokens(input);
+    var url = TRANSLATE_URL + '?client=gtx&sl=' + encodeURIComponent(src) + '&tl=' + encodeURIComponent(target) + '&dt=t&q=' + encodeURIComponent(prot.text);
+    return new Promise(function (resolve) {
+      var settled = false;
+      function done(val) { if (settled) return; settled = true; resolve(val); }
+      var to = setTimeout(function () { trace('translate', 'timeout -> original text'); done({ text: input, src: src }); }, 6000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
+          onload: function (r) {
+            clearTimeout(to);
+            try {
+              if (r.status < 200 || r.status >= 300) { trace('translate', 'HTTP ' + r.status + ' -> original'); return done({ text: input, src: src }); }
+              var parsed = parseTranslateResponse(r.responseText);
+              var restored = prot.restore(parsed.text) || input;
+              var val = { text: restored, src: parsed.src || src };
+              cachePut(key, val); done(val);
+            } catch (e) { trace('translate', 'parse failed -> original'); done({ text: input, src: src }); }
+          },
+          onerror: function () { clearTimeout(to); trace('translate', 'error -> original'); done({ text: input, src: src }); },
+          ontimeout: function () { clearTimeout(to); done({ text: input, src: src }); } });
+      } catch (e) { clearTimeout(to); done({ text: input, src: src }); }
+    });
+  }
+
+  // Translate inbound messages from a non-English-preference author into English for the engine. Only
+  // touches messages whose author has a set lang != 'en'; everyone else passes through untouched and
+  // free. Failure (per translate()) leaves the original text. Replaces content in place.
+  function translateInbound(channelId, msgs) {
+    if (!cfgGet('translate', false) || !Array.isArray(msgs) || !msgs.length) return Promise.resolve(msgs);
+    var eng = engineFor(channelId);
+    if (!eng || typeof eng.getUserLang !== 'function') return Promise.resolve(msgs);
+    var langCache = {};
+    function langOf(uid) { if (uid in langCache) return Promise.resolve(langCache[uid]); return Promise.resolve(eng.getUserLang(uid)).then(function (l) { langCache[uid] = l || null; return langCache[uid]; }); }
+    var chain = Promise.resolve();
+    msgs.forEach(function (m) {
+      if (!m || !m.author || !m.content) return;
+      chain = chain.then(function () {
+        return langOf(m.author.id).then(function (lang) {
+          if (!lang || lang === 'en') return;
+          return translate(m.content, 'en', lang).then(function (res) { if (res && res.text) m.content = res.text; });
+        });
+      });
+    });
+    return chain.then(function () { return msgs; });
+  }
+
   var transport = {
     getMe: function () { return requestJSON('GET', '/users/@me'); },
     getMessagesAfter: function (channelId, afterId, limit) {
-      return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 50) + (afterId ? '&after=' + afterId : ''));
+      return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 50) + (afterId ? '&after=' + afterId : ''))
+        .then(function (msgs) { return translateInbound(channelId, msgs); });
     },
     getRecentMessages: function (channelId, limit) {
       return requestJSON('GET', '/channels/' + channelId + '/messages?limit=' + (limit || 30));   // newest window, no cursor — catches reactions added after a message scrolled past
@@ -5040,6 +5307,44 @@
   // #14: some userscript managers sandbox `window` so the page's postMessages miss a listener bound
   // to the wrapped window; bind to the real page window when available (Tampermonkey works either way).
   var LINKWIN = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+
+  // ---- exact token counting (DESIGN-tokens.md) ------------------------------------------------
+  // Lazy-load the SAME DeepSeek-R1 tokenizer Perchance's AI broker uses, so token budgets become exact
+  // instead of a chars/4 guess. The engine's estimateTokens is SYNCHRONOUS (hot path), so we never
+  // await in it: we load in the background and expose a synchronous countSync that returns null until
+  // the model is ready, at which point the engine's existing cfg.countTokens hook starts using it.
+  // PIN the transformers version (a long-running bot shouldn't silently pull a breaking tokenizer).
+  // All failures are swallowed -> countSync stays null -> chars/4 fallback. The bot never breaks on this.
+  var TOKENIZER_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2/+esm';
+  var tokLoader = (function () {
+    var tok = null, state = 'idle', promise = null, lastErr = null;
+    function load() {
+      if (promise) return promise;
+      state = 'loading';
+      promise = Promise.resolve().then(function () {
+        // import() must run in the page realm (Perchance origin); LINKWIN is that window.
+        var imp = (LINKWIN && LINKWIN.eval) ? LINKWIN.eval('(u)=>import(u)') : function (u) { return import(u); };
+        return imp(TOKENIZER_CDN);
+      }).then(function (mod) {
+        return mod.AutoTokenizer.from_pretrained('deepseek-ai/DeepSeek-R1-0528');
+      }).then(function (t) {
+        tok = t; state = 'ready'; log('[chloe.tok] exact tokenizer ready'); return t;
+      }).catch(function (err) {
+        lastErr = err; state = 'fallback'; log('[chloe.tok] tokenizer load failed (' + ((err && err.message) || err) + ') \u2014 using chars/4'); return null;
+      });
+      return promise;
+    }
+    return {
+      preload: function () { try { return load(); } catch (e) { state = 'fallback'; return Promise.resolve(null); } },
+      countSync: function (str) { try { return tok ? tok.encode(String(str)).length : null; } catch (e) { return null; } },
+      state: function () { return state; }
+    };
+  })();
+  // The hook handed to every engine: exact when warm, null (-> chars/4) when cold/failed/off.
+  function countTokensHook(str) {
+    if (!cfgGet('exactTokens', true)) return null;   // off -> engine falls through to chars/4
+    return tokLoader.countSync(str);
+  }
   // #15: a sandboxed frame can report origin 'null'; posting back to targetOrigin 'null' is dropped,
   // so fall back to '*' in that one case (responses are nonce-matched, so this stays safe).
   function replyTarget(o) { return (o && o !== 'null') ? o : '*'; }
@@ -5193,7 +5498,15 @@
         pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
         adaptivePace: cfgGet('adaptivePace', true),
         workingMemory: cfgGet('workingMemory', false),
+        cleanOutput: cfgGet('cleanOutput', true),
+        semanticInjections: semInjectList(),
+        deviceTime: cfgGet('deviceTime', false),
+        translate: cfgGet('translate', false),
+        deviceClock: GM_getValue(NS + 'deviceClock', null),
+        countTokens: countTokensHook,   // exact tokenizer when warm; returns null -> engine's chars/4 fallback
         idleDeliberation: cfgGet('idleDeliberation', false),
+        attentionManager: cfgGet('attentionManager', false),
+        attentionStaleWindowMs: cfgGet('attentionStaleWindowMs', 600000),
         pollBusyCeilMs: cfgGet('pollBusyCeilMs', 12000),
         volunteerCooldownMs: 45000, judgeMinConfidence: 0.6,
         respond: function (ctx) { return brainCall('respond', ctx); },   // timeout now ADAPTIVE (the meter: srtt+4var, 10-90s; hardcoded values had been silently bypassing it since v0.54)
@@ -5234,7 +5547,16 @@
           delete engines[chId];
           pushEvent('channelGone', { channelId: chId });
         },
-        send: function (cid, text, opts) { return transport.sendMessage(cid, text, opts); },
+        send: function (cid, text, opts) {
+          var toUser = opts && opts.toUser;
+          if (!cfgGet('translate', false) || !toUser) return transport.sendMessage(cid, text, opts);
+          var eng = engineFor(cid);
+          var langP = (eng && typeof eng.getUserLang === 'function') ? eng.getUserLang(toUser) : Promise.resolve(null);
+          return Promise.resolve(langP).then(function (lang) {
+            if (!lang || lang === 'en') return transport.sendMessage(cid, text, opts);
+            return translate(text, lang, 'en').then(function (res) { return transport.sendMessage(cid, res.text, opts); });
+          });
+        },
         canSend: canSend, noteSend: noteSend, releaseSend: releaseSend,
         sendBudgetMs: cfgGet('sendBudgetMs', 60000),
         botLoopGrace: cfgGet('botLoopGrace', 2),
@@ -5369,7 +5691,12 @@
       episodeGraph: cfgGet('episodeGraph', true) !== false,
       adaptivePace: cfgGet('adaptivePace', true) !== false,
       workingMemory: cfgGet('workingMemory', false) !== false,
+      exactTokens: cfgGet('exactTokens', true) !== false,
+      cleanOutput: cfgGet('cleanOutput', true) !== false,
+      translate: cfgGet('translate', false) !== false,
+      tokenizer: tokLoader.state(),
       idleDeliberation: cfgGet('idleDeliberation', false) !== false,
+      attentionManager: cfgGet('attentionManager', false) !== false,
       goalObjects: cfgGet('goalObjects', true) !== false,
       idleConsolidation: cfgGet('idleConsolidation', true) !== false,
       relationshipTrust: !!cfgGet('relationshipTrust', false),
@@ -5585,6 +5912,27 @@
         { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); applyConfigChange(); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
       case 'config.setIdleDeliberation':
         { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); applyConfigChange(); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
+      case 'config.setAttentionManager':
+        { var amn = !!(args && args.on); cfgSet('attentionManager', amn); applyConfigChange(); return Promise.resolve({ ok: true, value: { attentionManager: amn } }); }
+      case 'config.setCleanOutput':
+        { var con = !!(args && args.on); cfgSet('cleanOutput', con); applyConfigChange(); return Promise.resolve({ ok: true, value: { cleanOutput: con } }); }
+      case 'config.setTranslate':
+        { var trn = !!(args && args.on); cfgSet('translate', trn); applyConfigChange(); return Promise.resolve({ ok: true, value: { translate: trn } }); }
+      case 'config.setUserLang':
+        { var ulE = engineFor(args && args.channelId); if (!ulE) return Promise.resolve({ ok: false, reason: 'no channel' }); return ulE.setUserLang(args && args.id, (args && args.lang) || null).then(function (v) { return { ok: true, value: { lang: v } }; }); }
+      case 'config.setDeviceTime':
+        { var dtn = !!(args && args.on); cfgSet('deviceTime', dtn); if (!dtn) semInjectDrop('devicetime'); applyConfigChange(); return Promise.resolve({ ok: true, value: { deviceTime: dtn } }); }
+      case 'config.setDeviceClock':
+        { var dc = (args && args.clock) ? args.clock : null; if (dc) GM_setValue(NS + 'deviceClock', { time: String(dc.time || ''), date: String(dc.date || ''), tz: String(dc.tz || ''), at: Date.now() }); else GM_deleteValue(NS + 'deviceClock'); applyConfigChange(); return Promise.resolve({ ok: true, value: { set: !!dc } }); }
+      case 'config.setSemanticInjection':
+        { var sid = String((args && args.id) || '').trim(); if (!sid) return Promise.resolve({ ok: false, reason: 'id required' });
+          var txt = String((args && args.text) || '').trim(); if (!txt) { semInjectDrop(sid); applyConfigChange(); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }
+          semInjectUpsert({ id: sid, text: txt, priority: (args && args.priority) || null, ttlMs: (args && args.ttlMs) || null, at: Date.now() });
+          applyConfigChange(); return Promise.resolve({ ok: true, value: { id: sid } }); }
+      case 'config.clearSemanticInjection':
+        { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); applyConfigChange(); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
+      case 'config.setExactTokens':
+        { var etn = !!(args && args.on); cfgSet('exactTokens', etn); if (etn) tokLoader.preload(); applyConfigChange(); return Promise.resolve({ ok: true, value: { exactTokens: etn, tokenizer: tokLoader.state() } }); }
       case 'work.get':
         { var ew = engineFor(args && args.channelId); if (!ew) return Promise.resolve({ ok: true, value: null }); return ew.workLoad().then(function (w) { return { ok: true, value: w }; }); }
       case 'config.setEpisodeGraph':
@@ -5880,6 +6228,9 @@
   }
   GM_registerMenuCommand('Set bot token', promptToken);
   GM_registerMenuCommand('Reset T0 state (keeps token)', function () { resetState(false); });
+
+  // Warm the exact tokenizer in the background so the first reply's budget is already precise.
+  if (cfgGet('exactTokens', true)) { try { tokLoader.preload(); } catch (e) {} }
 
   console.log('[chloe-bridge ' + VERSION + '] loaded as ' + TAB_ROLE + '. token set:', hasToken(),
     '| channel set:', !!cfgGet('channelId', ''), '\n  Open your Chloe control generator on this same perchance.org tab to drive it.');
