@@ -147,6 +147,13 @@
   .batchsel{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;cursor:pointer}
   .batchsep{width:1px;height:16px;background:var(--line);margin:0 3px}
 
+  /* character import */
+  .chardrop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px;border:1px dashed var(--line);border-radius:8px;transition:border-color .12s,background .12s}
+  .chardrop.drag{border-color:var(--sel);background:var(--surface2)}
+  #charInstruction{color:var(--muted)}
+  .charrow{cursor:pointer}
+  .charrow.sel{border-color:var(--sel);background:var(--surface2)}
+
   /* collapsible debug */
   .debug{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
   .debughead{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;font-size:12px;color:var(--muted)}
@@ -200,6 +207,7 @@
   <!-- tab bar: switches the content of the panel box below it (in place, no popover) -->
   <nav class="tabs">
     <button class="tab active" id="tab_setup">Setup</button>
+    <button class="tab" id="tab_character">Character</button>
     <button class="tab" id="tab_behavior">Behavior</button>
     <button class="tab" id="tab_moderation">Moderation</button>
     <button class="tab" id="tab_people">People</button>
@@ -225,6 +233,53 @@
         <button class="ghost" id="setTokenBtn">Set bot token&hellip;</button>
         <button id="validateBtn">Validate token</button>
         <span class="note">The token lives only in the userscript (the trusted surface) &mdash; it never enters this page.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="pane" id="pane_character">
+    <div class="card">
+      <h2>Import a character</h2>
+      <div class="note" style="margin-bottom:8px">Bring in a character from an <strong>AI Character Chat</strong> export and let Chloe <em>become</em> them &mdash; their personality replaces the default, and their remembered facts seed her context. Everything runs in your browser; nothing is uploaded.</div>
+      <div id="charDrop" class="chardrop">
+        <input type="file" id="charFile" accept=".gz,.cbor,.json,application/gzip,application/cbor,application/json" hidden>
+        <button class="ghost" id="charPickBtn">Choose a file&hellip;</button>
+        <span class="note">or drop a <code>.cbor.gz</code> / <code>.gz</code> / <code>.cbor</code> / <code>.json</code> here</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input class="grow" id="charUrlInput" placeholder="or paste a share link, a user.uploads.dev link, a file ID, or raw character JSON">
+        <button class="ghost" id="charPasteBtn" title="Paste from clipboard">Paste</button>
+        <button class="ghost" id="charUrlBtn">Load</button>
+      </div>
+      <div id="charStatus" class="note" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" id="charListCard" style="display:none">
+      <h2>Pick a character</h2>
+      <div id="charList" class="userlist"></div>
+    </div>
+
+    <div class="card" id="charPreviewCard" style="display:none">
+      <div class="row"><h2 style="margin:0">Preview</h2><span class="spacer"></span><span class="note" id="charPreviewName"></span></div>
+      <div class="codehead">role instruction (their personality)</div>
+      <textarea id="charInstruction" rows="6" readonly spellcheck="false"></textarea>
+      <div class="codehead" id="charMemHead" style="display:none">respooled memories</div>
+      <div id="charMemList" class="udetail" style="display:none"></div>
+      <div class="chiprow" style="margin-top:10px">
+        <label class="chip"><input type="checkbox" id="charReplaceChk" checked> replace Chloe&rsquo;s personality with this character</label>
+        <label class="chip"><input type="checkbox" id="charSeedChk" checked> seed these memories as her context</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="charInstallBtn">Become this character</button>
+        <span class="note" id="charInstallNote"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 style="margin:0">Current character</h2><span class="spacer"></span><span class="note" id="charCurrent">default Chloe</span></div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost danger" id="charClearBtn">Restore default Chloe</button>
+        <span class="note">Clears the imported personality. Any seeded memories stay until you forget them.</span>
       </div>
     </div>
   </section>
@@ -261,7 +316,9 @@
         <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
         <label class="chip"><input type="checkbox" id="goalChk"> remember what people are working on (goals)</label>
+        <label class="chip"><input type="checkbox" id="sleepChk"> tidy memory when idle (consolidation)</label>
         <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
+        <label class="chip"><input type="checkbox" id="epiGraphChk"> connect related memories (event graph)</label>
         <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
         <label class="chip"><input type="checkbox" id="affectChk"> give her an inner weather (own mood)</label>
         <label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label>
@@ -507,7 +564,7 @@
     <div class="card">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
+        Three optional layers deepen what Chloe remembers (Behavior tab). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
       </div>
     </div>
     <div class="card">
@@ -608,6 +665,7 @@
       else if (d.method === 'facts') handler = facts;
       else if (d.method === 'channelSummary') handler = channelSummary;
       else if (d.method === 'reflect') handler = reflect;
+      else if (d.method === 'consolidate') handler = consolidate;
       else if (d.method === 'episodes') handler = episodes;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
@@ -713,13 +771,27 @@
   }
 
   // ---- Chloe's brain (T1): persona + respond()/paint() the userscript calls back ------
-  // PERSONA is Tier A: authored here, isolated from user data, never written by the loop.
+  // personaBase is Tier A: authored here (Chloe by default, or an imported character's instruction),
+  // isolated from user DATA and never written by the loop; safety/gates apply on top, not overridable.
   // Edit this to change Chloe's voice.
-  var PERSONA =
+  var CHLOE_PERSONA =
     'You are Chloe: warm, quick-witted, and a little playful. ' +
     'You speak casually and concisely, like a friend in a group chat. ' +
     'You are openly a bot character and never pretend to be a human. ' +
     'Keep replies short, usually one to three sentences, and react to what was actually said.';
+  // When a character has been imported (Character tab), her base persona BECOMES that character's
+  // role instruction, wrapped in a minimal spine. The instruction is voice/personality only — the
+  // engine's safety, moderation, and output gates are applied separately and are NOT overridable here.
+  function personaBase(ctx) {
+    var ch = ctx && ctx.character;
+    if (ch && ch.instruction) {
+      var nm = String(ch.name || 'this character').replace(/"/g, "'");
+      return 'You are ' + nm + '. Stay fully in character as ' + nm + ', speaking in the first person; never mention being Chloe or that you are playing a role.\n\n'
+        + String(ch.instruction) + '\n\n'
+        + 'You are openly a bot character and never pretend to be a human. Keep replies conversational and react to what was actually said.';
+    }
+    return CHLOE_PERSONA;
+  }
 
   function grabAiText() {
     try { if (typeof root !== 'undefined' && root.aiTextPlugin) return root.aiTextPlugin; } catch (e) {}
@@ -768,7 +840,7 @@
     var softContext = (ctx && ctx.injections && ctx.injections.length)
       ? (ctx.injections.join('\n') + '\n')
       : (intentLine + hiLine + memLine + timeLine + moodLine + arcLine);
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + ', chatting in a Discord channel with several people. Each line below is one person speaking, labelled with their name.\n'
       + softContext
       + 'Recent conversation:\n' + transcript + '\n'
@@ -885,6 +957,31 @@
     }).catch(function (e) { dlog('episodes: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
+  // consolidate(ctx) -> { ok, value: array of cleaned fact strings }. The “sleep” pass: review ONE
+  // person's facts and return a tidied list — MERGE redundant ones, DROP the older side of a
+  // contradiction. Never invent: every returned fact must come from the input (the engine re-checks).
+  function consolidate(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var facts = (ctx && ctx.facts && ctx.facts.length) ? ctx.facts : [];
+    if (facts.length < 2) return Promise.resolve({ ok: true, value: facts });
+    var name = (ctx && ctx.name) ? String(ctx.name) : 'this person';
+    var instruction =
+      'You are tidying your memory about ' + name + ' while things are quiet — like consolidating memories during sleep.\n'
+      + 'Here are the facts you currently hold:\n' + facts.map(function (f, i) { return (i + 1) + '. ' + String(f); }).join('\n') + '\n\n'
+      + 'Return a CLEANED list of these facts. You may ONLY:\n'
+      + '- merge two facts that say the same thing into the clearer one,\n'
+      + '- when two facts CONTRADICT, keep the one that is most likely current (usually the later/more-specific) and drop the other,\n'
+      + '- drop a fact fully implied by another.\n'
+      + 'STRICT: never invent a new fact, never add detail not already present, never change meaning. Every line you return must correspond to a fact above. If nothing needs changing, return the list as-is.\n'
+      + 'Respond ONLY with a JSON array of the kept fact strings.';
+    return Promise.resolve(ai({ instruction: instruction, startWith: '[', stopSequences: [']'] })).then(function (result) {
+      var arr = safeJsonArray('[' + String(result || '').trim().replace(/^\[/, '') + ']');
+      var clean = (arr || []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim().slice(0, 200); });
+      return { ok: true, value: clean.length ? clean : facts };
+    }).catch(function (e) { dlog('consolidate: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   // reflect(ctx) -> { ok, value: array-of-strings }. Synthesis: turn a person's accumulated facts into
   // 1-2 higher-level durable insights — what the facts ADD UP TO, not a restatement of them.
   function reflect(ctx) {
@@ -915,7 +1012,7 @@
     var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + 'You are ' + myName + '. The channel was chatting and has now gone quiet for a bit.\n'
       + (transcript ? ('Recent conversation:\n' + transcript + '\n') : '')
       + 'Say one short, natural thing to gently re-open the conversation \u2014 a light follow-up to what was just said, a small observation, or an easy question. Do NOT announce that it went quiet or that this is automated. Just speak as you naturally would. One or two sentences, no name prefix.\n'
@@ -935,7 +1032,7 @@
     var name = (ctx && ctx.name) ? String(ctx.name) : 'friend';
     var days = (ctx && ctx.absentMs) ? Math.max(1, Math.round(ctx.absentMs / 86400000)) : null;
     var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context (mood, time, modes, what she knows of them)
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are Chloe. ' + name + ' is someone you talk with a lot, and they have not been around for ' + (days ? (days + ' days') : 'a while') + '.\n'
       + ((ctx && ctx.summary && !soft) ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')   // v0.58: the assembler context already carries her facts (PERSON band) — the bespoke summary would say it twice
@@ -952,7 +1049,7 @@
     var prompt = (ctx && ctx.prompt) ? String(ctx.prompt) : '';
     if (!prompt) return Promise.resolve({ ok: false, reason: 'no beat prompt' });
     var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context rides into beats too
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are Chloe. Write a short, natural, in-character message to the channel based on this idea: ' + prompt + '\n'
       + 'One or two sentences. Do not prefix with your name. Do not say that this is scheduled or automated \u2014 just say it as you would in the moment.';
@@ -973,7 +1070,7 @@
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var youName = (ctx && ctx.recent && ctx.recent.you && ctx.recent.you.name) ? ctx.recent.you.name : 'Chloe';
     var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // v0.58: recaps written under the same mood/mode awareness as everything else
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are ' + youName + '. A moderator asked for a quick recap of what\u2019s been happening in the channel.\n'
       + 'Recent conversation:\n' + transcript + '\n'
@@ -1045,7 +1142,7 @@
     var warmth = familiar >= 5
       ? ('You know ' + who + ' well \u2014 be warm and familiar.')
       : ('You barely know ' + who + ' yet \u2014 keep it light, not over-familiar.');
-    var instruction = PERSONA + personaStyle(ctx) + '\n\n'
+    var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are ' + youName + ', chatting in a Discord channel.\n'
       + (transcript ? ('Recent conversation:\n' + transcript + '\n') : '')
@@ -1082,7 +1179,7 @@
     lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var myName = (ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe';
     var shape = LB + '"action":"reply","confidence":0.0,"emoji":""' + RB;
-    var instruction = PERSONA + '\n\n'
+    var instruction = personaBase(ctx) + '\n\n'
       + 'You are ' + myName + ', deciding whether to join a Discord channel UNPROMPTED.\n'
       + 'Recent conversation:\n' + transcript + '\n'
       + 'No one addressed you directly. Decide whether to reply, react, or stay silent. '
@@ -1193,7 +1290,10 @@
     var cs = byId('chansumChk'); if (cs) cs.checked = !!s.channelSummary;
     var rf = byId('reflectChk'); if (rf) rf.checked = !!s.reflection;
     var go = byId('goalChk'); if (go) go.checked = (s.goalObjects !== false);
+    var sl = byId('sleepChk'); if (sl) sl.checked = (s.idleConsolidation !== false);
+    var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
     var ep = byId('epiChk'); if (ep) ep.checked = !!s.episodicMemory;
+    var eg = byId('epiGraphChk'); if (eg) eg.checked = (s.episodeGraph !== false);
     var tr = byId('trustChk'); if (tr) tr.checked = !!s.relationshipTrust;
     var af = byId('affectChk'); if (af) af.checked = !!s.ownAffect;
     var pc = byId('procChk'); if (pc) pc.checked = !!s.proceduralModes;
@@ -1526,9 +1626,19 @@
       log(res && res.ok ? ('goals: ' + res.value.goalObjects) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
+  byId('sleepChk').addEventListener('change', function () {
+    call('config.setIdleConsolidation', { on: byId('sleepChk').checked }).then(function (res) {
+      log(res && res.ok ? ('idle consolidation: ' + res.value.idleConsolidation) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
   byId('reflectChk').addEventListener('change', function () {
     call('config.setReflection', { on: byId('reflectChk').checked }).then(function (res) {
       log(res && res.ok ? ('reflection: ' + res.value.reflection) : ('failed: ' + ((res && res.reason) || 'unknown')));
+    });
+  });
+  byId('epiGraphChk').addEventListener('change', function () {
+    call('config.setEpisodeGraph', { on: byId('epiGraphChk').checked }).then(function (res) {
+      log(res && res.ok ? ('event graph: ' + res.value.episodeGraph) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('epiChk').addEventListener('change', function () {
@@ -1688,6 +1798,236 @@
     if (filt) filt.addEventListener('input', function () { if (window.__roster) renderRoster(window.__roster); });
   })();
 
+
+  // ===== Character import (vendored from aicc-recovery + respool, both west-ninja) =============
+  // Pure in-browser: decompress -> decode (CBOR/JSON/scavenge) -> extract characters + their
+  // thread memories. No upload, no network except the CBOR decoder CDN on first .cbor.gz.
+  var CHARCBOR = null;
+  function charLoadCBOR() {
+    if (CHARCBOR) return Promise.resolve(CHARCBOR);
+    return import('https://cdn.jsdelivr.net/npm/cbor-x@1.6.0/dist/index.js')
+      .then(function (m) { CHARCBOR = (m && m.default) ? m.default : m; return CHARCBOR; })
+      .catch(function () { return null; });
+  }
+  function charGunzip(arrayBuffer) {
+    if (typeof DecompressionStream === 'undefined') return Promise.resolve(new Uint8Array(arrayBuffer));
+    try {
+      var ds = new DecompressionStream('gzip');
+      var blobParts = []; blobParts.push(arrayBuffer);
+      return new Response(new Blob(blobParts).stream().pipeThrough(ds)).arrayBuffer()
+        .then(function (buf) { return new Uint8Array(buf); })
+        .catch(function () { return new Uint8Array(arrayBuffer); });
+    } catch (e) { return Promise.resolve(new Uint8Array(arrayBuffer)); }
+  }
+  function charScavenge(text) {
+    var open = String.fromCharCode(123), close = String.fromCharCode(125);
+    var start = text.indexOf(open); if (start < 0) return null;
+    var depth = 0, inStr = false, esc = false;
+    for (var i = start; i < text.length; i++) {
+      var ch = text[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; }
+      else { if (ch === '"') inStr = true; else if (ch === open) depth++; else if (ch === close) { depth--; if (depth === 0) { try { return JSON.parse(text.slice(start, i + 1)); } catch (e) { return null; } } } }
+    }
+    return null;
+  }
+  function charDecode(bytes) {
+    if (CHARCBOR && typeof CHARCBOR.decode === 'function') { try { return CHARCBOR.decode(bytes); } catch (e) {} }
+    var text = ''; try { text = new TextDecoder('utf-8', { fatal: false }).decode(bytes); } catch (e) {}
+    if (text) { try { return JSON.parse(text); } catch (e) {} var s = charScavenge(text); if (s) return s; }
+    return null;
+  }
+  function charExtractStores(obj) {
+    var out = { characters: [], threads: [], messages: [] };
+    if (!obj || typeof obj !== 'object') return out;
+    if (obj.stores && typeof obj.stores === 'object') {
+      ['characters', 'threads', 'messages'].forEach(function (k) { if (Array.isArray(obj.stores[k])) out[k] = obj.stores[k]; });
+      return out;
+    }
+    if (obj.addCharacter) { var addList = []; addList.push(obj.addCharacter); out.characters = addList; return out; }
+    if (Array.isArray(obj.characters)) { ['characters', 'threads', 'messages'].forEach(function (k) { if (Array.isArray(obj[k])) out[k] = obj[k]; }); return out; }
+    if (obj.name || obj.roleInstruction || obj.systemMessage) { var oneChar = []; oneChar.push(obj); out.characters = oneChar; return out; }
+    return out;
+  }
+  function charNormalize(c) {
+    if (c.roleInstruction === undefined && c.systemMessage != null) c.roleInstruction = c.systemMessage;
+    if (c.roleInstruction === undefined) c.roleInstruction = '';
+    if (!c.name) c.name = 'Unnamed';
+    var avatar = (c.avatar && c.avatar.url) ? c.avatar.url : (c.avatarUrl || '');
+    return { name: String(c.name), instruction: String(c.roleInstruction || ''), avatar: avatar, id: (c.id != null ? c.id : null), uuid: c.uuid || null };
+  }
+  // respool's replay-from-file: timeless memories already stored on a thread's messages.
+  function charMemoriesForCharacter(stores, character) {
+    var threads = (stores.threads || []).filter(function (t) {
+      return t && (t.characterId === character.id || (character.id == null && (stores.characters || []).length === 1));
+    });
+    var threadIds = {}; threads.forEach(function (t) { threadIds[t.id] = true; });
+    var texts = [], seen = {};
+    (stores.messages || []).forEach(function (m) {
+      if (!m || !m.memoriesEndingHere) return;
+      if (threads.length && !threadIds[m.threadId]) return;
+      var levels = m.memoriesEndingHere;
+      Object.keys(levels).forEach(function (lvl) {
+        (levels[lvl] || []).forEach(function (mem) {
+          var t = (mem && mem.text) ? mem.text : (typeof mem === 'string' ? mem : null);
+          if (!t) return; var k = t.toLowerCase().replace(/[^a-z0-9 ]+/g, '').trim();
+          if (k && !seen[k]) { seen[k] = true; texts.push(String(t).slice(0, 200)); }
+        });
+      });
+    });
+    return texts;
+  }
+
+  var CHARSTATE = { stores: null, chars: [], picked: null, memories: [] };
+  function charSetStatus(msg, kind) { var el = byId('charStatus'); if (el) { el.textContent = msg; el.style.color = kind === 'er' ? 'var(--bad)' : (kind === 'ok' ? 'var(--good)' : 'var(--muted)'); } }
+
+  // Shared sink for raw bytes from ANY source (file, fetched link). Decompress if gzipped, decode,
+  // extract characters. needCbor preloads the decoder for .cbor/.gz payloads.
+  function charIngestBytes(buf, label, needCbor) {
+    var pre = needCbor ? charLoadCBOR() : Promise.resolve(null);
+    return pre.then(function () {
+      var bytes = new Uint8Array(buf);
+      var gz = bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+      return (gz ? charGunzip(buf) : Promise.resolve(bytes));
+    }).then(function (bytes) {
+      var obj = charDecode(bytes);
+      return charIngestObject(obj, label);
+    });
+  }
+  // Shared sink for an already-decoded object (raw pasted JSON skips decompression).
+  function charIngestObject(obj, label) {
+    if (!obj) { charSetStatus('Could not read ' + (label || 'that input') + ' \u2014 it may be empty or an unsupported format.', 'er'); return false; }
+    var stores = charExtractStores(obj);
+    var chars = (stores.characters || []).map(charNormalize).filter(function (c) { return c.name; });
+    if (!chars.length) { charSetStatus('No characters found in ' + (label || 'that input') + '.', 'er'); return false; }
+    CHARSTATE.stores = stores; CHARSTATE.chars = chars; CHARSTATE.picked = null;
+    charSetStatus('Found ' + chars.length + ' character' + (chars.length === 1 ? '' : 's') + '. Pick one below.', 'ok');
+    charRenderList();
+    return true;
+  }
+
+  function charLoadFile(file) {
+    if (!file) return;
+    charSetStatus('Reading ' + file.name + ' (' + Math.round(file.size / 1024) + ' KB)\u2026');
+    var needCbor = /\.cbor(\.gz)?$/i.test(file.name) || /\.gz$/i.test(file.name);
+    file.arrayBuffer()
+      .then(function (buf) { return charIngestBytes(buf, file.name, needCbor); })
+      .catch(function (e) { charSetStatus('Failed to read the file: ' + ((e && e.message) || e), 'er'); });
+  }
+
+  // Recover an AICC upload id from a share link, a direct user.uploads.dev link, or a bare hex id
+  // (mined from aicc-recovery). Returns a normalized FILEID.gz, or null.
+  function charExtractFileId(raw) {
+    var s = String(raw || '').trim();
+    var m = s.match(/[?&]data=[^~]*~([a-z0-9]{16,}(?:\.gz)?)/i);
+    if (m) return m[1].replace(/\.gz$/i, '') + '.gz';
+    m = s.match(/user\.uploads\.dev\/file\/([a-z0-9]{16,}(?:\.gz)?)/i);
+    if (m) return m[1].replace(/\.gz$/i, '') + '.gz';
+    m = s.match(/^([a-f0-9]{24,})(?:\.gz)?$/i);
+    if (m) return m[1] + '.gz';
+    return null;
+  }
+
+  // Load a character from pasted text: a link/file-id (fetched from user.uploads.dev) OR raw JSON.
+  function charLoadText(raw) {
+    var s = String(raw || '').trim();
+    if (!s) { var ie = byId('charUrlInput'); if (ie) ie.focus(); return; }
+    var fileId = charExtractFileId(s);
+    if (fileId) {
+      var url = 'https://user.uploads.dev/file/' + fileId;
+      charSetStatus('Fetching ' + url + '\u2026');
+      charLoadCBOR().then(function () { return fetch(url); })
+        .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status + ' \u2014 the file may have been removed or quarantined'); return res.arrayBuffer(); })
+        .then(function (buf) { return charIngestBytes(buf, 'the fetched file', true); })
+        .catch(function (e) { charSetStatus('Could not fetch that link: ' + ((e && e.message) || e) + '. You can also download the file and drop it here.', 'er'); });
+      return;
+    }
+    // Not a link/id -> try to parse it as raw character JSON directly.
+    var startsObj = s.charAt(0) === String.fromCharCode(123) || s.charAt(0) === '[';
+    if (startsObj) {
+      var obj = null; try { obj = JSON.parse(s); } catch (e) { obj = charScavenge(s); }
+      if (obj) { charSetStatus('Reading pasted character data\u2026'); charIngestObject(obj, 'the pasted data'); return; }
+      charSetStatus('That looked like JSON but could not be parsed. Check it is a complete character export.', 'er');
+      return;
+    }
+    charSetStatus('Paste a share link, a user.uploads.dev link, a file ID, or raw character JSON.', 'er');
+  }
+
+  function charRenderList() {
+    var box = byId('charList'); while (box.firstChild) box.removeChild(box.firstChild);
+    byId('charListCard').style.display = CHARSTATE.chars.length ? '' : 'none';
+    CHARSTATE.chars.forEach(function (c, idx) {
+      var row = document.createElement('div'); row.className = 'urow charrow';
+      var grow = document.createElement('div'); grow.className = 'ugrow';
+      var nm = document.createElement('div'); nm.className = 'uname'; nm.textContent = c.name; grow.appendChild(nm);
+      var meta = document.createElement('div'); meta.className = 'umeta';
+      var memCount = charMemoriesForCharacter(CHARSTATE.stores, c).length;
+      var st = document.createElement('span'); st.className = 'uid';
+      st.textContent = (c.instruction ? (c.instruction.length + ' chars of personality') : 'no personality text') + ' \u00b7 ' + memCount + ' memor' + (memCount === 1 ? 'y' : 'ies');
+      meta.appendChild(st); grow.appendChild(meta); row.appendChild(grow);
+      row.addEventListener('click', function () {
+        CHARSTATE.picked = c;
+        var rows = box.querySelectorAll('.charrow'); for (var i = 0; i < rows.length; i++) rows[i].className = 'urow charrow';
+        row.className = 'urow charrow sel';
+        charRenderPreview(c);
+      });
+      box.appendChild(row);
+    });
+  }
+
+  function charRenderPreview(c) {
+    byId('charPreviewCard').style.display = '';
+    setText('charPreviewName', c.name);
+    byId('charInstruction').value = c.instruction || '(this character has no role instruction)';
+    CHARSTATE.memories = charMemoriesForCharacter(CHARSTATE.stores, c);
+    var mh = byId('charMemHead'), ml = byId('charMemList');
+    if (CHARSTATE.memories.length) {
+      mh.style.display = ''; ml.style.display = '';
+      while (ml.firstChild) ml.removeChild(ml.firstChild);
+      CHARSTATE.memories.slice(0, 30).forEach(function (t) { var d = document.createElement('div'); d.textContent = '\u2022 ' + t; ml.appendChild(d); });
+      byId('charSeedChk').checked = true; byId('charSeedChk').disabled = false;
+    } else {
+      mh.style.display = 'none'; ml.style.display = 'none';
+      byId('charSeedChk').checked = false; byId('charSeedChk').disabled = true;
+    }
+    setText('charInstallNote', '');
+  }
+
+  function charInstall() {
+    var c = CHARSTATE.picked; if (!c) { setText('charInstallNote', 'pick a character first'); return; }
+    var replace = byId('charReplaceChk').checked;
+    var seed = byId('charSeedChk').checked && CHARSTATE.memories.length;
+    var jobs = [];
+    if (replace) jobs.push(call('config.setCharacter', { name: c.name, instruction: c.instruction, avatar: c.avatar }));
+    if (seed) jobs.push(call('character.seedMemories', { name: c.name, memories: CHARSTATE.memories, channelId: selChannel() }));
+    if (!jobs.length) { setText('charInstallNote', 'nothing selected to apply'); return; }
+    Promise.all(jobs).then(function () {
+      setText('charInstallNote', 'done \u2014 she is now ' + c.name + (seed ? ' (with ' + CHARSTATE.memories.length + ' memories)' : ''));
+      log('character installed: ' + c.name + (replace ? ' (personality replaced)' : '') + (seed ? ', ' + CHARSTATE.memories.length + ' memories seeded' : ''));
+      refresh();
+    });
+  }
+
+  (function charWire() {
+    var pick = byId('charPickBtn'), fileEl = byId('charFile'), drop = byId('charDrop');
+    if (pick && fileEl) { pick.addEventListener('click', function () { fileEl.click(); }); fileEl.addEventListener('change', function () { if (fileEl.files && fileEl.files[0]) charLoadFile(fileEl.files[0]); }); }
+    if (drop) {
+      ['dragover', 'dragenter'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.className = 'chardrop drag'; }); });
+      ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.className = 'chardrop'; }); });
+      drop.addEventListener('drop', function (e) { var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) charLoadFile(f); });
+    }
+    var ub = byId('charUrlBtn'); if (ub) ub.addEventListener('click', function () { charLoadText(byId('charUrlInput').value); });
+    var ui = byId('charUrlInput'); if (ui) ui.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); charLoadText(ui.value); } });
+    var pb = byId('charPasteBtn'); if (pb) pb.addEventListener('click', function () {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(function (txt) { byId('charUrlInput').value = txt; charLoadText(txt); }, function () { charSetStatus('Clipboard read was blocked \u2014 paste into the box manually, then click Load.', 'er'); });
+      } else { charSetStatus('This browser won\u2019t allow clipboard reads here \u2014 paste into the box manually, then click Load.', 'er'); byId('charUrlInput').focus(); }
+    });
+    var ib = byId('charInstallBtn'); if (ib) ib.addEventListener('click', charInstall);
+    var cb = byId('charClearBtn'); if (cb) cb.addEventListener('click', function () {
+      call('config.setCharacter', { name: null }).then(function () { setText('charCurrent', 'default Chloe'); log('character cleared \u2014 back to default Chloe'); refresh(); });
+    });
+  })();
+
   // ---- boot -------------------------------------------------------------------------
   function renderMods(list) {
     rebuildModSet(list);   // keep the roster's MOD badges in sync
@@ -1832,7 +2172,7 @@
 
   // ---- UI v2: tab rail (in-memory only; never touches location.hash — the worker role lives there)
   (function () {
-    var names = 'setup behavior moderation people system about'.split(' ');
+    var names = 'setup character behavior moderation people system about'.split(' ');
     function activate(name) {
       names.forEach(function (n) {
         var pane = byId('pane_' + n), tab = byId('tab_' + n);

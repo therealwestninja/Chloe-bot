@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.61.3
+// @version      0.64.1
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -217,6 +217,14 @@
       episodeEveryPolls: 24,               // extraction cadence (it's an AI call); (every-1) form, never poll 1
       episodeRecallCount: 2,               // max episodes recalled into one reply
       episodeRecencyHalfLifeMs: 604800000, // recall decay half-life (7d): old episodes fade, never vanish
+      // Event-graph (DESIGN-eventgraph.md): link episodes by shared people/topics/time at EXTRACTION
+      // (no LLM), so recall can walk ONE hop ("…and connected to that…"). Default ON.
+      episodeGraph: true,
+      episodeLinkHalfLifeMs: 21600000,     // 6h: events in one session associate; weeks apart don't (unless people/topics carry them)
+      episodeLinkFloor: 0.15,              // below this weight, episodes stay unlinked (sparse graph)
+      episodeLinkWp: 0.5,                  // weight: shared participants (strongest associative signal)
+      episodeLinkWt: 0.3,                  // weight: shared topics
+      episodeLinkWd: 0.2,                  // weight: temporal adjacency
       // Relationship trust (DESIGN §7b): a 0-100 per-person scalar EARNED through positive signals
       // only — never penalized, daily-capped so it can't be farmed, decaying with long absence.
       // Tone + a reply-priority tiebreak ONLY: trust never loosens moderation, gates, or policy.
@@ -261,6 +269,16 @@
       goalsMax: 40,                 // bounded list; closed goals evicted oldest-first
       goalTextMax: 140,
       goalStaleMs: 2592000000,      // 30d untouched -> auto-dropped (goals fade if the world moves on)
+      characterMemoryMax: 24,       // cap on respooled character self-memories
+      // Idle consolidation (DESIGN-consolidation.md): the “sleep” pass — during genuine idle, tidy
+      // memory. Structural dedup is pure local compute (every idle pass); semantic merge/contradiction
+      // is one gated LLM pass (one user). Never sends. Default ON.
+      idleConsolidation: true,
+      consolidateIdleMs: 1800000,   // channel quiet this long = idle enough to tidy (30m; lighter than the day-scale lull filler)
+      consolidateEveryPolls: 50,    // don't sweep every poll in a perpetually-quiet channel
+      consolidateSliceSize: 5,      // structural sweep: partitions cleaned per pass (spreads a big roster)
+      consolidateMinFacts: 6,       // semantic pass skips anyone with fewer facts than this
+      episodeDropImportanceFloor: 3, // stale + low-importance episodes get hard-dropped from the ring
       // Round-trip awareness (DESIGN-roundtrip.md): when a generation COMPLETES, the next queued job
       // fires via cfg.defer(fn, ms) (host setTimeout) instead of waiting for the next poll tick.
       // Purely additive: with no defer hook, behavior is exactly the old poll-bound dispatch.
@@ -354,6 +372,8 @@
     var CURSOR_KEY = 'cursor:' + cfg.channelId;
     var INDEX_KEY = 'roster:index';
     var GOALS_KEY = 'goals';   // CROSS-CHANNEL (no channelId): a goal known anywhere is hers everywhere
+    var CHARMEM_KEY = 'charmem';   // CROSS-CHANNEL: the installed character's own respooled memories (background context)
+    var CONSOLIDATE_KEY = 'consolidate:' + cfg.channelId;   // { lastSweepAt, sliceCursor } for the idle “sleep” pass
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
     var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
@@ -486,6 +506,25 @@
         return saveGoals(kept).then(function () { log('[chloe.goal] erased ' + (before - kept.length) + ' goal(s) for a forgotten user'); return before - kept.length; });
       });
     }
+
+    // ---- character self-memory (respooled from an imported character's chat) ----------------
+    // Background context about WHO SHE IS now (the imported character) and their world — not facts
+    // about a person. Stored cross-channel, deduped, capped; surfaced as a SELF band injection.
+    function seedCharacterMemories(name, mems) {
+      var texts = (mems || []).map(function (m) { return String(m && m.text != null ? m.text : m).trim(); }).filter(Boolean);
+      if (!texts.length) return Promise.resolve(0);
+      return Promise.resolve(store.get(CHARMEM_KEY)).then(function (rec) {
+        rec = rec || { name: name, facts: [] };
+        rec.name = name;
+        var seen = {}; rec.facts.forEach(function (f) { seen[normFact(f)] = true; });
+        var added = 0;
+        texts.forEach(function (t) { var k = normFact(t); if (k && !seen[k]) { seen[k] = true; rec.facts.push(t.slice(0, 200)); added++; } });
+        var cap = (cfg.characterMemoryMax || 24);
+        if (rec.facts.length > cap) rec.facts = rec.facts.slice(-cap);
+        return store.set(CHARMEM_KEY, rec).then(function () { log('[chloe.character] seeded ' + added + ' memor' + (added === 1 ? 'y' : 'ies') + ' for ' + name); return added; });
+      });
+    }
+    function clearCharacterMemories() { return Promise.resolve(store.del(CHARMEM_KEY)); }
 
     // ---- reminders (poll-driven, front-end only, no AI call) --------------------------------
     function getReminders() { return Promise.resolve(store.get(REMIND_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
@@ -2076,6 +2115,41 @@
     }
     // Episodic extraction: fold recent activity into 0-2 short episode records. Gated cadence (one
     // AI pass per poll, shared chain). No send — it's memory, not a message.
+    // ---- event-graph: cheap edges from fields episodes already carry (no LLM) ----------------
+    function jaccard(a, b) {
+      a = a || []; b = b || [];
+      if (!a.length || !b.length) return 0;
+      var setA = {}; a.forEach(function (x) { setA[String(x).toLowerCase()] = true; });
+      var inter = 0, seen = {};
+      b.forEach(function (x) { var k = String(x).toLowerCase(); if (setA[k] && !seen[k]) { inter++; seen[k] = true; } });
+      var unionN = Object.keys(setA).length; b.forEach(function (x) { var k = String(x).toLowerCase(); if (!setA[k]) unionN++; });
+      return unionN ? inter / unionN : 0;
+    }
+    function episodeEdgeWeight(a, b) {
+      var wp = jaccard(a.participants, b.participants) * (cfg.episodeLinkWp || 0.5);
+      var wt = jaccard(a.topics, b.topics) * (cfg.episodeLinkWt || 0.3);
+      var gap = Math.abs((a.at || 0) - (b.at || 0));
+      var wd = Math.pow(0.5, gap / (cfg.episodeLinkHalfLifeMs || 21600000)) * (cfg.episodeLinkWd || 0.2);
+      return wp + wt + wd;
+    }
+    var episodeSeq = 0;
+    function mintEpisodeId() { episodeSeq++; return 'e' + clock.now().toString(36) + episodeSeq.toString(36); }
+    // Link a freshly-added episode to its single strongest existing neighbor (mutual: upgrade the
+    // neighbor's link too if this new edge beats its current one). Sparse: only above the floor.
+    function linkEpisode(ring, fresh) {
+      if (!cfg.episodeGraph) return;
+      var floor = cfg.episodeLinkFloor || 0.15;
+      var best = null, bestW = floor;
+      ring.forEach(function (other) {
+        if (other === fresh || !other.id) return;
+        var w = episodeEdgeWeight(fresh, other);
+        if (w > bestW) { bestW = w; best = other; }
+        // mutual upgrade: does THIS edge beat the neighbor's current best?
+        if (w >= floor && (!other.relatesTo || w > other.relatesTo.weight)) other.relatesTo = { id: fresh.id, weight: w };
+      });
+      fresh.relatesTo = best ? { id: best.id, weight: bestW } : null;
+    }
+
     function processEpisodes() {
       if (!cfg.episodicMemory || typeof cfg.episodeFn !== 'function') return Promise.resolve(null);
       return recentTranscript(40).then(function (lines) {
@@ -2089,10 +2163,12 @@
             var added = 0;
             proposed.forEach(function (raw) {
               if (!raw || typeof raw !== 'object' || typeof raw.t !== 'string' || !raw.t.trim()) return;
-              ring.push({ text: raw.t.trim().slice(0, 120), at: clock.now(),
+              var ep = { id: mintEpisodeId(), text: raw.t.trim().slice(0, 120), at: clock.now(),
                           participants: Array.isArray(raw.who) ? raw.who.map(function (w) { return String(w).slice(0, 40); }).slice(0, 6) : [],
                           topics: Array.isArray(raw.topics) ? raw.topics.map(function (t) { return String(t).toLowerCase().slice(0, 24); }).slice(0, 6) : [],
-                          importance: Math.max(1, Math.min(10, Math.round(Number(raw.i)) || 5)) });
+                          importance: Math.max(1, Math.min(10, Math.round(Number(raw.i)) || 5)), relatesTo: null };
+              ring.push(ep);
+              linkEpisode(ring, ep);   // cheap edge to its strongest existing neighbor (no LLM)
               added++;
             });
             if (!added) return null;
@@ -2115,6 +2191,124 @@
         var removed = before - ring.length;
         if (!removed) return 0;
         return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] erased ' + removed + ' episode(s) for ' + name); return removed; });
+      });
+    }
+
+    // ---- idle consolidation (the “sleep” pass) -------------------------------------------
+    function channelIsIdle() {
+      return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
+        var last = rh && rh.lastActivity;
+        if (last == null) return false;   // no activity recorded yet = nothing to tidy
+        return (clock.now() - last) >= (cfg.consolidateIdleMs || 1800000);
+      });
+    }
+    // Structural: pure local compute, no LLM. Dedup exact/near facts (keep higher importance + newer),
+    // drop empties, trim to cap; hard-drop stale low-importance episodes. Bounded slice per pass.
+    function consolidateStructural() {
+      return Promise.resolve(store.get(CONSOLIDATE_KEY)).then(function (meta) {
+        meta = meta || { lastSweepAt: 0, sliceCursor: 0 };
+        return getRoster().then(function (roster) {
+          var active = roster.filter(function (p) { return p && (!p.state || p.state === 'active'); });
+          var start = meta.sliceCursor % Math.max(1, active.length);
+          var slice = active.slice(start, start + (cfg.consolidateSliceSize || 5));
+          var mergedTotal = 0, droppedTotal = 0;
+          var chain = Promise.resolve();
+          slice.forEach(function (p) {
+            chain = chain.then(function () {
+              var facts = Array.isArray(p.facts) ? p.facts : [];
+              if (!facts.length) return;
+              var byNorm = {}; var out = [];
+              facts.forEach(function (f) {
+                var key = normFact(f && f.text);
+                if (!key) { droppedTotal++; return; }   // empty/whitespace fact
+                if (byNorm[key]) {   // duplicate: keep the stronger/newer, count a merge
+                  var keep = byNorm[key];
+                  keep.i = Math.max(keep.i || 5, f.i || 5);
+                  keep.at = Math.max(keep.at || 0, f.at || 0);
+                  mergedTotal++;
+                } else { byNorm[key] = f; out.push(f); }
+              });
+              if (out.length > (cfg.factsPerUser || 6)) { droppedTotal += out.length - cfg.factsPerUser; out = out.slice(-(cfg.factsPerUser || 6)); }
+              var changed = out.length !== facts.length;
+              if (changed) p.facts = out;
+              return changed ? store.set(partKey(p.id), p) : null;
+            });
+          });
+          // stale-episode drop (channel-level, once per sweep)
+          chain = chain.then(function () {
+            return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+              if (!Array.isArray(ring) || !ring.length) return;
+              var now = clock.now(), half = cfg.episodeRecencyHalfLifeMs || 604800000, floor = cfg.episodeDropImportanceFloor || 3;
+              var kept = ring.filter(function (ep) {
+                var decay = Math.pow(0.5, Math.max(0, now - (ep.at || 0)) / half);
+                // drop only when BOTH faded (≥4 half-lives) AND low importance — never a recent or important memory
+                return !(decay < 0.0625 && (ep.importance || 5) <= floor);
+              });
+              if (kept.length !== ring.length) {
+                droppedTotal += ring.length - kept.length;
+                var liveIds = {}; kept.forEach(function (e2) { if (e2.id) liveIds[e2.id] = true; });
+                kept.forEach(function (e2) { if (e2.relatesTo && !liveIds[e2.relatesTo.id]) e2.relatesTo = null; });   // drop edges to evicted episodes
+                return store.set(EPI_KEY, kept);
+              }
+            });
+          });
+          return chain.then(function () {
+            meta.lastSweepAt = clock.now();
+            meta.sliceCursor = (start + slice.length) % Math.max(1, active.length);
+            return store.set(CONSOLIDATE_KEY, meta).then(function () {
+              if (mergedTotal || droppedTotal) log('[chloe.sleep] tidied memory — merged ' + mergedTotal + ', dropped ' + droppedTotal);
+              return { merged: mergedTotal, dropped: droppedTotal };
+            });
+          });
+        });
+      });
+    }
+    // Semantic: ONE gated LLM pass over one overdue person's facts. The page may only MERGE or DROP;
+    // the engine re-validates every returned fact traces to an input (no invention survives).
+    function consolidateSemantic() {
+      if (typeof cfg.consolidateFn !== 'function') return Promise.resolve(null);
+      return getRoster().then(function (roster) {
+        var due = null, oldest = Infinity;
+        roster.forEach(function (p) {
+          if (!p || (p.state && p.state !== 'active')) return;
+          if (!Array.isArray(p.facts) || p.facts.length < (cfg.consolidateMinFacts || 6)) return;
+          var ca = p.consolidatedAt || 0;
+          if (ca < oldest) { oldest = ca; due = p; }
+        });
+        if (!due) return null;
+        var inputs = due.facts.map(function (f) { return f.text; });
+        return Promise.resolve(cfg.consolidateFn({ name: due.name, facts: inputs })).then(function (r) {
+          return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+            if (!p) return null;
+            p.consolidatedAt = clock.now();
+            var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : null;
+            if (!proposed) return store.set(partKey(p.id), p).then(function () { return null; });   // failed call: timestamp still bumped (don't re-pick immediately)
+            // no-invention guard: keep only proposed facts that trace to an input (normalized substring overlap)
+            var inNorms = inputs.map(normFact);
+            var clean = [];
+            proposed.forEach(function (t) {
+              var nt = normFact(t);
+              if (!nt) return;
+              var traces = inNorms.some(function (inn) { return inn === nt || inn.indexOf(nt) >= 0 || nt.indexOf(inn) >= 0; });
+              if (traces) clean.push(String(t).slice(0, 200));
+            });
+            if (!clean.length) return store.set(partKey(p.id), p).then(function () { return null; });   // nothing validated: leave facts as-is
+            // map cleaned texts back onto fact objects, preserving importance/at of the best-matching input
+            var oldFacts = Array.isArray(p.facts) ? p.facts : [];
+            var newFacts = clean.map(function (t) {
+              var nt = normFact(t);
+              var match = oldFacts.filter(function (f) { var nf = normFact(f.text); return nf === nt || nf.indexOf(nt) >= 0 || nt.indexOf(nf) >= 0; }).sort(function (a, b) { return (b.i || 5) - (a.i || 5); })[0];
+              return { text: t, i: (match && match.i) || 5, at: (match && match.at) || clock.now() };
+            });
+            if (newFacts.length > (cfg.factsPerUser || 6)) newFacts = newFacts.slice(-(cfg.factsPerUser || 6));
+            var delta = oldFacts.length - newFacts.length;
+            p.facts = newFacts;
+            return store.set(partKey(p.id), p).then(function () {
+              if (delta > 0) log('[chloe.sleep] consolidated ' + due.name + '’s memory (' + oldFacts.length + ' → ' + newFacts.length + ' facts)');
+              return delta > 0 ? { name: due.name, before: oldFacts.length, after: newFacts.length } : null;
+            });
+          });
+        }, function () { return null; });
       });
     }
 
@@ -2572,6 +2766,12 @@
                     if (cfg.channelSummary && cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)) return processChannelSummary().then(function (cs) { if (cs) summary.channelSummary = true; return null; });
                     if (cfg.reflection && cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)) return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; });
                     if (cfg.episodicMemory && cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)) return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; });
+                    if (cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1)) {
+                      return channelIsIdle().then(function (idle) {
+                        if (!idle) return null;
+                        return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; });
+                      });
+                    }
                     if (cfg.ownAffect) return affectTick().then(function () { return null; });   // not an AI pass; cheap ignored-check
                     return null;
                   }).then(function (facts) {
@@ -2958,6 +3158,17 @@
         });
       } });
 
+    registerProvider({ id: 'charmem', priority: BANDS.RECALL,
+      enabled: function (c) { return !!c.character; },
+      gather: function () {
+        return Promise.resolve(store.get(CHARMEM_KEY)).then(function (rec) {
+          if (!rec || !rec.facts || !rec.facts.length) return null;
+          var pick = rec.facts.slice(-2);   // a couple of the most-recent background memories
+          var text = 'Things you (' + (rec.name || 'you') + ') remember: ' + pick.join('; ') + '.';
+          return { text: text, tokens: estimateTokens(text) };
+        });
+      } });
+
     registerProvider({ id: 'goals', priority: BANDS.RECALL,
       enabled: function (c) { return !!c.goalObjects; },
       gather: function (g) {
@@ -2997,8 +3208,19 @@
           });
           if (!scored.length) return null;   // nothing relevant -> zero cost this turn
           scored.sort(function (a, b) { return b.score - a.score; });
-          var pick = scored.slice(0, cfg.episodeRecallCount || 2).map(function (x) { return x.e.text; });
-          var text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
+          var top = scored.slice(0, cfg.episodeRecallCount || 2);
+          var pickedIds = {}; top.forEach(function (x) { if (x.e.id) pickedIds[x.e.id] = true; });
+          var pick = top.map(function (x) { return x.e.text; });
+          // one-hop event-graph expansion: pull in the top episode's strongest neighbor (ONE hop,
+          // never transitive) if it's linked, present, and not already surfaced. Tiny fixed cost.
+          var hop = null;
+          if (cfg.episodeGraph && top.length && top[0].e.relatesTo && top[0].e.relatesTo.id) {
+            var nb = ring.filter(function (e2) { return e2.id === top[0].e.relatesTo.id; })[0];   // dangling id -> no hop
+            if (nb && !pickedIds[nb.id]) hop = nb.text;
+          }
+          var text;
+          if (hop) text = 'You remember from this channel: ' + pick.join('; ') + '; and connected to that, ' + hop + '. Bring it up only if it genuinely fits.';
+          else text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
           return { text: text, tokens: estimateTokens(text) };
         });
       } });
@@ -3660,6 +3882,8 @@
       processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
+      seedCharacterMemories: seedCharacterMemories, clearCharacterMemories: clearCharacterMemories,
+      consolidateStructural: consolidateStructural, consolidateSemantic: consolidateSemantic, channelIsIdle: channelIsIdle,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
       procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
       resumePendingReply: resumePendingReply, summonCheckReactions: summonCheckReactions, pollCreate: pollCreate, pollClose: pollClose, checkPollExpiry: checkPollExpiry,
@@ -4097,7 +4321,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.61.3';
+  var VERSION = '0.64.1';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -4358,6 +4582,8 @@
     if (kind !== 'paint') {
       var dials = cfgGet('personality', null);
       if (dials) args = Object.assign({}, args || {}, { personality: dials });
+      var character = cfgGet('character', null);
+      if (character) args = Object.assign({}, args || {}, { character: character });
     }
     function local() { return callPage(kind, args, timeoutMs); }
     var t0 = Date.now();
@@ -4440,6 +4666,10 @@
         reflection: cfgGet('reflection', false),
         episodeFn: function (ctx) { return brainCall('episodes', ctx); },
         episodicMemory: cfgGet('episodicMemory', false),
+        episodeGraph: cfgGet('episodeGraph', true),
+        consolidateFn: function (ctx) { return brainCall('consolidate', ctx); },   // the “sleep” semantic pass (adaptive timeout, like every other text brainCall)
+        character: cfgGet('character', null),
+        idleConsolidation: cfgGet('idleConsolidation', true),
         goalObjects: cfgGet('goalObjects', true),
         factMemory: cfgGet('factMemory', false),
         timeAware: cfgGet('timeAware', false),
@@ -4623,7 +4853,9 @@
       channelSummary: !!cfgGet('channelSummary', false),
       reflection: !!cfgGet('reflection', false),
       episodicMemory: !!cfgGet('episodicMemory', false),
+      episodeGraph: cfgGet('episodeGraph', true) !== false,
       goalObjects: cfgGet('goalObjects', true) !== false,
+      idleConsolidation: cfgGet('idleConsolidation', true) !== false,
       relationshipTrust: !!cfgGet('relationshipTrust', false),
       ownAffect: !!cfgGet('ownAffect', false),
       proceduralModes: !!cfgGet('proceduralModes', false), procRules: cfgGet('procRules', []),
@@ -4640,6 +4872,7 @@
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
       personality: cfgGet('personality', null), personaAnchor: !!cfgGet('personaAnchor', false),
+      character: cfgGet('character', null),
       gates: { emoji: gate('emoji', true), pings: gate('pings', false), everyone: gate('everyone', false), links: gate('links', false), channelLinks: gate('channelLinks', false) },
       pageLinked: !!pageSource,
       running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
@@ -4728,6 +4961,20 @@
       }
       case 'config.setPersonaAnchor':
         { var paOn = !!(args && args.on); cfgSet('personaAnchor', paOn); return Promise.resolve({ ok: true, value: { personaAnchor: paOn } }); }
+      case 'config.setCharacter': {
+        var nm = (args && args.name != null) ? String(args.name).trim() : null;
+        if (!nm) { cfgSet('character', null); applyConfigChange(); return Promise.resolve({ ok: true, value: { character: null } }); }
+        var ch = { name: nm.slice(0, 80), instruction: String((args && args.instruction) || '').slice(0, 8000), avatar: String((args && args.avatar) || '').slice(0, 2000) };
+        cfgSet('character', ch); applyConfigChange();
+        return Promise.resolve({ ok: true, value: { character: { name: ch.name } } });
+      }
+      case 'character.seedMemories': {
+        var eS = engineFor(args && args.channelId); if (!eS) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var mems = (args && Array.isArray(args.memories)) ? args.memories : [];
+        var who = String((args && args.name) || 'this character');
+        if (!mems.length) return Promise.resolve({ ok: true, value: { seeded: 0 } });
+        return eS.seedCharacterMemories(who, mems).then(function (n) { return { ok: true, value: { seeded: n } }; });
+      }
       case 'persona.get': {
         var eP = engineFor(args && args.channelId); if (!eP) return Promise.resolve({ ok: true, value: null });
         return eP.getPersonaNote().then(function (n) { return { ok: true, value: n }; });
@@ -4816,6 +5063,10 @@
         { var ma = !!(args && args.on); cfgSet('moodAware', ma); applyConfigChange(); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
       case 'config.setChannelSummary':
         { var csm = !!(args && args.on); cfgSet('channelSummary', csm); applyConfigChange(); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
+      case 'config.setEpisodeGraph':
+        { var egn = !!(args && args.on); cfgSet('episodeGraph', egn); applyConfigChange(); return Promise.resolve({ ok: true, value: { episodeGraph: egn } }); }
+      case 'config.setIdleConsolidation':
+        { var icn = !!(args && args.on); cfgSet('idleConsolidation', icn); applyConfigChange(); return Promise.resolve({ ok: true, value: { idleConsolidation: icn } }); }
       case 'config.setGoalObjects':
         { var gob = !!(args && args.on); cfgSet('goalObjects', gob); applyConfigChange(); return Promise.resolve({ ok: true, value: { goalObjects: gob } }); }
       case 'config.setReflection':
