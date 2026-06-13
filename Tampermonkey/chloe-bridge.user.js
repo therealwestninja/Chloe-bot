@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.89.0
+// @version      0.90.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -319,6 +319,13 @@
       selfIntentRevisitMs: 21600000,   // 6h: how far out a revisit is scheduled when she finds a topic worth coming back to
       attentionManager: false,   // utility-scored AI-pass selection (DESIGN-attention.md); off = today's fixed ladder
       selfKnowledge: false,      // ground her in her own basics (name, prefix, summon) from config (DESIGN-selfknow.md)
+      botVersion: '',            // for operational self-state grounding (passed from the shell); '' -> omitted
+      // ---- user-model register (DESIGN-usermodel, roadmap #5): a light, inferred per-person register
+      // (how THEY write: typical length + tone) so she can MATCH it. Deterministic (reuses styleOf over
+      // their recent messages, no AI), opt-in. Insights already cover the "what they're into" dimension;
+      // this adds the communication-style dimension they don't. ----
+      userModeling: false,
+      userModelMinMsgs: 3,       // need at least this many of their recent messages to infer a register
       deliberateCuriosityFloor: 0.62,   // only think when curiosity is meaningfully above neutral
       deliberateMinGapMs: 600000,       // hard floor between deliberations (10m) so bursts can't chain
       deliberateMaxSubQuestions: 4,     // cap the fan-out (decompose returns up to this many)
@@ -2610,6 +2617,23 @@
       return wp + wt + wd;
     }
     // ---- semantic recall + FSRS-lite helpers (DESIGN-semantic) -----------------------------------
+    // Unified bounded store (DESIGN-eviction, roadmap #8): keep all PINNED items plus the newest unpinned
+    // ones up to `cap`, evicting oldest-unpinned-first and preserving order. Pinned items survive even if
+    // they alone exceed the cap. Replaces the scattered slice(-cap) + bespoke operator-fact protection,
+    // so the next "protect this from eviction" need is one predicate, not new bespoke code.
+    function boundedEvict(items, cap, isPinned) {
+      if (!Array.isArray(items) || items.length <= cap) return items;
+      isPinned = isPinned || function () { return false; };
+      var pinnedCount = 0, i;
+      for (i = 0; i < items.length; i++) { if (isPinned(items[i])) pinnedCount++; }
+      var room = Math.max(0, cap - pinnedCount), kept = 0, keepFlag = new Array(items.length);
+      for (i = items.length - 1; i >= 0; i--) {          // walk newest -> oldest
+        if (isPinned(items[i])) keepFlag[i] = true;      // pinned always survives
+        else if (kept < room) { keepFlag[i] = true; kept++; }
+        else keepFlag[i] = false;
+      }
+      return items.filter(function (_, idx) { return keepFlag[idx]; });
+    }
     function cosine(a, b) {
       if (!a || !b || a.length !== b.length) return 0;
       var dot = 0, na = 0, nb = 0;
@@ -2680,7 +2704,7 @@
               added++;
             });
             if (!added) return null;
-            if (ring.length > cfg.episodesPerChannel) ring = ring.slice(-cfg.episodesPerChannel);
+            ring = boundedEvict(ring, cfg.episodesPerChannel);
             // semantic recall: embed the new episodes once, at creation (cached on the record). If the
             // embedder isn't available this is a no-op and recall falls back to keyword overlap.
             return embedTexts(fresh.map(function (e) { return e.text + ' ' + (e.topics || []).join(' '); })).then(function (vecs) {
@@ -3815,6 +3839,15 @@
       var emo = (cfg.summonEmoji && cfg.summonEmoji.length) ? cfg.summonEmoji[0] : '';
       if (emo) reach.push('reacting ' + emo + ' to their own message also gets your attention');
       if (reach.length) parts.push('To reach you: ' + reach.join('; ') + '.');
+      // Operational self-state (DESIGN-semantic §5b): so she can answer "how long have you been up?",
+      // "what version are you?", "what mode are you in?" truthfully instead of guessing. TRUE facts
+      // auto-built from runtime state, like the device clock — grounding, never instructions.
+      var op = [];
+      if (cfg.botVersion) op.push('version ' + cfg.botVersion);
+      if (startedAt) { var hrs = (clock.now() - startedAt) / 3600000; op.push(hrs < 1 ? ('running for about ' + Math.max(1, Math.round(hrs * 60)) + ' minutes') : ('running for about ' + (hrs < 10 ? hrs.toFixed(1) : Math.round(hrs)) + ' hours')); }
+      var modeWord = engageMode === 'locked' ? 'lockdown (raid-protection) mode' : (engageMode === 'open' ? 'open mode' : 'normal mode');
+      op.push('currently in ' + modeWord);
+      if (op.length) parts.push('About your current state: ' + op.join(', ') + '. Share this only if asked.');
       parts.push('You can tell someone this if they ask how to use you or whether you\u2019re a bot \u2014 state it plainly rather than deflecting.');
       return parts.join(' ');
     }
@@ -4122,6 +4155,31 @@
         if ((clock.now() - (cf.at || 0)) > (cfg.contradictionFreshMs || 7200000)) return Promise.resolve(null);
         var who = (g.p && g.p.authorName) || (a && a.name) || 'they';
         var text = 'You\u2019ve got two things on record about ' + who + ' that don\u2019t line up: earlier \u201c' + cf.a + '\u201d, and more recently \u201c' + cf.b + '\u201d. If it comes up naturally you might gently check which is current \u2014 lightly, once, no interrogation \u2014 otherwise just let it be.';
+        return Promise.resolve({ text: text, tokens: estimateTokens(text) });
+      } });
+
+    // User-model register (DESIGN-usermodel, roadmap #5): infer how the ADDRESSED person tends to write
+    // — typical message length + tone — from their own recent messages, and surface it as register-matching
+    // guidance ("Mo writes in short, playful bursts — match that"). Deterministic (reuses styleOf), no AI,
+    // gated. Complements facts/insights (the "what they're into" layer) with the communication-style layer.
+    function userRegister(recent) {
+      var lines = (recent || []).filter(function (ln) { return ln && ln.content; }).slice(-8);
+      if (lines.length < (cfg.userModelMinMsgs || 3)) return null;
+      var total = 0, playful = 0;
+      lines.forEach(function (ln) { var c = String(ln.content); total += c.length; if (styleOf(c).tone === 'playful') playful++; });
+      var avg = total / lines.length;
+      var len = avg < 60 ? 'short' : (avg > 220 ? 'long, detailed' : 'medium-length');
+      var tone = playful > lines.length / 2 ? 'playful, casual' : 'measured';
+      return { len: len, tone: tone };
+    }
+    registerProvider({ id: 'usermodel', priority: BANDS.PERSON,
+      enabled: function (c) { return !!c.userModeling; },
+      gather: function (g) {
+        var a = g.addressed; if (!a) return Promise.resolve(null);
+        var reg = userRegister(a.recent);
+        if (!reg) return Promise.resolve(null);
+        var who = (g.p && g.p.authorName) || a.name || 'they';
+        var text = who + ' tends to write ' + reg.len + ', ' + reg.tone + ' messages \u2014 match their register so you land naturally with them, without forcing it.';
         return Promise.resolve({ text: text, tokens: estimateTokens(text) });
       } });
 
@@ -4553,7 +4611,7 @@
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           ring = Array.isArray(ring) ? ring : [];
           ring.push({ id: mintEpisodeId(), text: t, at: clock.now(), participants: [], topics: [], importance: 5, relatesTo: null, source: 'deliberate' });
-          if (ring.length > cfg.episodesPerChannel) ring = ring.slice(-cfg.episodesPerChannel);
+          ring = boundedEvict(ring, cfg.episodesPerChannel);
           return store.set(EPI_KEY, ring).then(function () { return true; });
         });
       }
@@ -4992,7 +5050,7 @@
           seen[key] = true; facts.push({ id: mintFactId(), text: text, at: clock.now(), source: source || 'observed', importance: imp }); added++; impAdded += imp;
         });
         if (!added) return 0;
-        if (facts.length > cfg.factsPerUser) facts = facts.slice(-cfg.factsPerUser);   // keep newest
+        facts = boundedEvict(facts, cfg.factsPerUser, function (f) { return f.source === 'operator'; });   // keep newest, never evict operator-pinned facts
         p.facts = facts; p.factsAt = clock.now();
         // reflection fuel: accumulate the importance of what we learned (Step 3 reads this threshold)
         p.reflectImportanceAccum = (p.reflectImportanceAccum || 0) + impAdded;
@@ -5300,6 +5358,7 @@
       'conversationMemory',
       'feedbackLearning',
       'semanticRecall',
+      'userModeling',
       'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
@@ -5340,6 +5399,8 @@
       creditContinuation: creditContinuation,
       recordReplyStyle: function (style, who) { lastReplyStyle = style; fbPending.push({ style: style, who: who, at: clock.now(), done: false }); },
       cosine: cosine, fsrsRetrievability: fsrsRetrievability, fsrsStrengthen: fsrsStrengthen,
+      boundedEvict: boundedEvict,
+      userRegister: userRegister,
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
       getUserLang: getUserLang, setUserLang: setUserLang, updateConfig: updateConfig,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
@@ -5802,7 +5863,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.89.0';
+  var VERSION = '0.90.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6401,6 +6462,8 @@
         countTokens: countTokensHook,   // exact tokenizer when warm; returns null -> engine's chars/4 fallback
         embedFn: embedHook,             // local embeddings when semanticRecall is on + warm; null -> keyword recall
         semanticRecall: cfgGet('semanticRecall', false),
+        userModeling: cfgGet('userModeling', false),
+        botVersion: VERSION,
         embedModel: cfgGet('embedModel', 'Xenova/bge-small-en-v1.5'),
         idleDeliberation: cfgGet('idleDeliberation', false),
         deferredIntents: cfgGet('deferredIntents', false),
@@ -6622,6 +6685,7 @@
       translate: cfgGet('translate', false) !== false,
       tokenizer: tokLoader.state(),
       semanticRecall: !!cfgGet('semanticRecall', false),
+      userModeling: !!cfgGet('userModeling', false),
       embedder: embedLoader.state(),
       idleDeliberation: cfgGet('idleDeliberation', false) !== false,
       deferredIntents: !!cfgGet('deferredIntents', false),
@@ -6882,7 +6946,7 @@
       case 'config.setUserLang':
         { var ulE = engineFor(args && args.channelId); if (!ulE) return Promise.resolve({ ok: false, reason: 'no channel' }); return ulE.setUserLang(args && args.id, (args && args.lang) || null).then(function (v) { return { ok: true, value: { lang: v } }; }); }
       case 'config.setDeviceTime':
-        { var dtn = !!(args && args.on); cfgSet('deviceTime', dtn); if (!dtn) semInjectDrop('devicetime'); patchEngines({ deviceTime: dtn }); return Promise.resolve({ ok: true, value: { deviceTime: dtn } }); }
+        { var dtn = !!(args && args.on); cfgSet('deviceTime', dtn); if (!dtn) semInjectDrop('devicetime'); return Promise.resolve({ ok: true, value: { deviceTime: dtn } }); }   // not in LIVE_PATCHABLE: read fresh at use; the real effect is the 'devicetime' injection + deviceClock
       case 'config.setDeviceClock':
         { var dc = (args && args.clock) ? args.clock : null; var dcVal = dc ? { time: String(dc.time || ''), date: String(dc.date || ''), tz: String(dc.tz || ''), at: Date.now() } : null; if (dcVal) GM_setValue(NS + 'deviceClock', dcVal); else GM_deleteValue(NS + 'deviceClock'); patchEngines({ deviceClock: dcVal }); return Promise.resolve({ ok: true, value: { set: !!dc } }); }
       case 'config.setSemanticInjection':
@@ -6892,6 +6956,8 @@
           patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
         { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
+      case 'config.setUserModeling':
+        { var umn = !!(args && args.on); cfgSet('userModeling', umn); patchEngines({ userModeling: umn }); return Promise.resolve({ ok: true, value: { userModeling: umn } }); }
       case 'config.setSemanticRecall':
         { var srn = !!(args && args.on); cfgSet('semanticRecall', srn); if (srn) embedLoader.preload(cfgGet('embedModel','Xenova/bge-small-en-v1.5')); patchEngines({ semanticRecall: srn }); return Promise.resolve({ ok: true, value: { semanticRecall: srn, embedder: embedLoader.state() } }); }
       case 'config.setExactTokens':

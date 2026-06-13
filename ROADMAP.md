@@ -1,7 +1,7 @@
 # Chloe-on-Discord bridge — roadmap
 
 Adapter A (Tampermonkey userscript ⇄ Perchance generator page over an origin-checked
-postMessage link). Current shipped version: **v0.87.0**.
+postMessage link). Current shipped version: **v0.90.0**.
 
 > **Reconstruction note (2026-06-11):** the live ROADMAP.md was zeroed by a write race during an
 > I/O hiccup. This file = the operator's recovered v0.28-era copy (authoritative for v0.28 and the
@@ -11,6 +11,197 @@ postMessage link). Current shipped version: **v0.87.0**.
 > and the entry pipeline is now atomic (`roadmap_update.py`). Some backlog
 > items below have since shipped (notably F1 facts → v0.44.0, G5 time → v0.45.0, G6 mood → v0.46.0,
 > E1 highlights → v0.39.0, reaction significance → v0.40.0); they're left in place as history.
+
+### Shipped in v0.90.0 (user-model register + operational self-state — the Discord bot is feature-complete)
+
+The last buildable items on the roadmap. With this, every recommended-order item (#1–10, the §5b grounding
+consumers) and the optional #5 are shipped — the Discord bot is feature-complete. (The only forward item
+left is #11, "Chloe Solo," a separate standalone-Perchance product, not part of finishing this bot.)
+
+**#5 — user-model register.** Facts and insights already model *what* a person is into; what they didn't
+capture is *how the person writes*, which is what register-matching needs. A new `usermodel` provider infers
+the addressed person's communication style — typical message length + tone — from their own recent messages
+(reusing the `styleOf` machinery from feedback learning, so it's deterministic and adds no AI call), and
+surfaces it as soft guidance: "Mo tends to write short, playful messages — match their register so you land
+naturally." Needs a few messages before it'll guess (no register from one line), opt-in (`userModeling`,
+default off), per the roadmap's "a few inferred tags, not a questionnaire."
+
+**#5b — operational self-state.** Folded into the existing self-knowledge grounding: when that's on, she now
+also knows her own version, roughly how long she's been running, and her current engagement mode — so "how
+long have you been up?" / "what version are you?" / "what mode are you in?" get truthful answers instead of
+guesses. Auto-built from runtime state like the device clock; grounding, never instructions; shared only if
+asked. (The sibling #5b idea, browser-safe locale, was deliberately *not* built — `navigator.language`
+reflects the operator's browser, not the remote Discord users', so it's meaningless for a Discord bot and was
+reassigned to #11 Chloe Solo, where the chatter is the browser.)
+
+**Cleanup.** Removed the long-standing `deviceTime` `patchEngines` no-op (deviceTime was never in
+LIVE_PATCHABLE; its real effect is the 'devicetime' injection + a fresh config read). The wider-net symmetry
+scan is now **fully clean** for the first time — patchEngines ⊆ LIVE_PATCHABLE with no exceptions, every
+panel call has a handler, every status field the panel reads exists, every engine-API name is defined.
+
+**Docs.** `full-list-of-commands.md` now lists `!chloe good` / `!chloe bad`.
+
+Validation: new harness-usermodel (length/tone inference, the gated provider, silence when sparse or off);
+98/98 + golden + audit clean; defined-once on the assembled build across all the session's additions
+(userRegister, boundedEvict, cosine, fsrsRetrievability, styleOf, recordFeedback, resolveRefs,
+assembleContext, detectContradiction, selfKnowledgeText, listReminders — all single).
+
+---
+
+**Feature-complete summary (v0.85 → v0.90).** Contradiction flag-and-clarify (#4) · conversation memory:
+her own turns + resolved @mentions in the transcript · AICC Dexie `.json.gz` import + inline character
+authoring · Activity/Debug log separation · feedback/preference learning (#7) · semantic recall + FSRS-lite
+(#10) · transport full-jitter retry (#9) · unified bounded-store eviction (#8) · user-model register (#5) +
+operational self-state (§5b). The forward roadmap's only remaining entry is #11 (Chloe Solo).
+
+### Shipped in v0.89.2 (unify eviction — bounded store with pinned-protection)
+
+Roadmap item #8. Partition fact caps, the two episode rings, and the operator-fact protection each
+reimplemented "bounded store + eviction" by hand (`slice(-cap)` plus, for operator facts, a bespoke
+carve-out that only existed in the consolidation path). Unified under one helper — and in doing so, fixed
+a real inconsistency.
+
+**Mined.** The bounded-store-with-pinned-protection pattern (lru-cache's "no-eviction" entries, weld.gallery's
+bounded store) reduces to one primitive: keep all PINNED items + the newest unpinned ones up to `cap`,
+evict oldest-unpinned first, preserve order, and let pins survive even if they alone exceed the cap.
+
+`boundedEvict(items, cap, isPinned)` is that primitive. Migrated three sites: the per-user fact cap (pin =
+`source === 'operator'`), and both episode rings (no pins — behaviorally identical to the old `slice(-cap)`).
+
+**The fix it surfaced.** The fact cap was a plain `slice(-cap)` with NO operator protection — operator
+facts were only shielded during *consolidation*, so a burst of new observed facts could silently evict an
+operator-pinned fact ("this channel is in beta") at the cap. With the pin predicate, operator facts now
+survive the cap, matching consolidation's intent. Pure debt-paydown turned into a correctness fix.
+
+The next "protect this from eviction" need is now one predicate, not new bespoke code — e.g. pinning
+high-stability (frequently-recalled) episodes from the v0.89.0 FSRS work becomes a one-liner if wanted.
+
+Validation: new harness-eviction proves the helper's invariants (under-cap unchanged; no-pin == slice(-cap);
+pins survive; pins-over-cap all kept; order preserved) AND the behavioral fix (an old operator fact survives
+a flood of observed facts; without pins, byte-identical to the old behavior). 97/97 + golden + audit clean.
+
+### Shipped in v0.89.1 (transport resilience: full-jitter retry)
+
+Roadmap item #9. The AICC character fetch was a bare `fetch(url)` — one shot, so a transient 429 or a
+momentary network blip failed the import outright with "Could not fetch that link". Hardened with a
+reusable retry helper.
+
+**Mined, not invented.** The canonical design is AWS's "Exponential Backoff and Jitter" — specifically
+FULL JITTER: wait a random time in `[0, min(cap, base·2^attempt))`. AWS's own analysis found full jitter
+minimizes both retries and completion time versus plain backoff (which synchronizes clients into
+thundering retries), and it's what p-retry, cockatiel, and exponential-backoff all implement. Confirmed
+the current packages on npm; reimplemented the (tiny) algorithm rather than pulling a dependency, since
+the userscript ships as one file.
+
+**`fetchRetry(url, opts)`** retries the transient classes — 429, 408, 5xx, and network rejects — up to a
+bound (default 3), with full-jitter backoff (base 500ms, cap 8s). A `Retry-After` header is honored as a
+floor (so a server that says "wait 2s" is obeyed, then jitter can only push it later, never sooner).
+Non-retryable statuses (404 removed/quarantined, other 4xx) fail fast — the final non-ok response is handed
+straight back to the caller, which already renders a helpful message. The character fetch now reports
+progress between attempts ("Fetch hit HTTP 429 — retry 1/3 in ~1s…"). `fetchImpl` and `sleep` are
+injectable, so the helper is fully testable and reusable for any future fetch (the "next fetch is trivial"
+payoff).
+
+Scoped precisely: a tree-wide scan found exactly one bare `fetch` (this one). The Discord transport already
+honors 429 + `Retry-After` via its GM_xmlhttpRequest path, so it was intentionally left alone — adding
+jitter where the server hands you an exact wait would only make it slower.
+
+Validation: new harness-fetch-retry lifts the helper out of the panel and drives it with a scripted fake
+fetch + recording sleep — retry-then-succeed (429/5xx/network), fail-fast on 404, exhaustion returns the
+final non-ok, network exhaustion throws, Retry-After floored at ≥2000ms, and the full-jitter bound
+(0 ≤ wait < min(cap, base·2^n)) held across 300 trials. 96/96 + golden + audit clean; extracted-page
+`node --check`; no bare `fetch(` left in the tree.
+
+---
+
+**Roadmap status.** With #9 done, the only remaining forward-roadmap items are #8 (unify eviction — a pure
+internal refactor, explicitly "do when touching that machinery anyway") and #5 (explicit user-model schema
+— flagged "only if insights prove insufficient in practice"). Neither is a clear-value standalone build;
+the recommended-order roadmap is complete.
+
+### Shipped in v0.89.0 (semantic recall + FSRS-lite)
+
+Roadmap item #10 — the highest-value/highest-effort memory upgrade, and the one item that lifts the
+"no embeddings" constraint the research kept working around. Recall episodes by MEANING instead of
+keyword overlap, and let memories she REVISITS stay sharp via a spaced-repetition forgetting curve.
+
+**Mined, not invented.** The AICC export we imported earlier named its embedding model
+(`Xenova/bge-base-en-v1.5`) — i.e. AI Character Chat already runs **transformers.js** with bge embeddings
+in the browser on this same Perchance platform, and our own exact-tokenizer already loads transformers.js
+the same way. So the embedder reuses that proven path: a small bge model (`Xenova/bge-small-en-v1.5`,
+~33MB, 384-dim) loaded lazily via the page-realm `import()`, no new plumbing, no postMessage channel —
+`embedFn` is a direct bootstrap hook exactly like `countTokens`. The scheduler reuses the published **FSRS**
+forgetting curve (open-spaced-repetition): R(t) = (1 + 0.2346·t/S)^(−0.5), with the constants chosen so
+retrievability hits 0.9 at t = stability. Two real, current tools (transformers.js 4.x, ts-fsrs 5.x) read
+for the algorithm; reimplemented, not copied.
+
+**What it does.** When `semanticRecall` is on, the episodes provider embeds the current query and ranks
+stored episodes by cosine similarity to it (with a similarity floor) rather than token overlap — so "is the
+server back up?" recalls "we got the minecraft server running" even with no shared keywords. Episodes are
+embedded once at creation and the vector is cached on the record. The recency term becomes an FSRS
+retrievability curve over each episode's own stability, and **recalling an episode strengthens it** (stability
+× growth, clock reset) — the spacing effect, so memories she keeps returning to decay slowly while the rest
+fade. The one-hop event-graph expansion is unchanged.
+
+**Degrades at every layer.** No embedder loaded / load failed / model still downloading → the query embed
+resolves null → keyword overlap (today's behavior). `semanticRecall` off → the original keyword × importance
+× 7-day-half-life scoring, byte-for-byte, with no FSRS fields written. The model is the one heavy download,
+so it's opt-in (default off) and preloads only when the toggle is switched on.
+
+Fully wired: config + LIVE_PATCHABLE, `embedFn`/`semanticRecall`/`embedModel` into buildEngine, the lazy
+`embedLoader` (mirroring `tokLoader`, same pinned transformers build), status (`embedder` state +
+`semanticRecall`), `config.setSemanticRecall` (preloads on enable), and a panel checkbox that notes the
+one-time model load. Episode vectors live in the existing `epi:` ring (already reset/exported).
+
+Validation: new harness-semantic injects a deterministic bag-of-words embedder to exercise the real engine
+paths — cosine correctness, the FSRS curve (R(S)=0.9 exactly, monotonic decay, higher stability = better
+retention), strengthen-on-recall (4 → ~7.6, clock reset, capped), meaning-based ranking with the unrelated
+filtered out, keyword fallback when the embedder is absent, and untouched behavior when the feature is off.
+95/95 + golden + audit clean; wider-net symmetry scan clean; defined-once on the assembled build (cosine,
+fsrsRetrievability, fsrsStrengthen, embedTexts all single).
+
+**With this, the recommended-order roadmap is complete** (#1–4, #6, #7, #10, §5b all shipped). What remains
+is genuinely optional: #5 (explicit user-model schema — only if insights prove insufficient), and #8/#9
+(eviction-unify and transport jitter — opportunistic refactors to fold in when that machinery is next touched).
+
+### Shipped in v0.88.0 (feedback / preference learning)
+
+Roadmap item #7 — the research's "genuinely missing pillar": she OBSERVED (facts, mood, reactions) but
+never ADAPTED from whether her own replies landed. Now she does, as a gentle nudge.
+
+**The design (mined, then fit to her envelope).** The textbook shape for "learn which option works from
+sparse feedback without training" is a multi-armed bandit. Used here in its lightest form: two style
+"arms" — reply LENGTH (short / medium / long) and TONE (playful / measured) — each holding an EWMA reward
+(recent feedback weighted heavier, since rooms drift) plus a sample count. No exploration schedule, no
+model: she just leans toward the arm that's winning, exactly the "bandit-lite nudge, not training" the
+research prescribed.
+
+**Three free poll-side signals, all already available:**
+- **Reaction-as-reward** — a reaction on HER message is scored right in `processMessageReactions` (which
+  already had her message and content in hand): positives reuse the trust emoji set, negatives a small
+  set (👎), counted once per emoji/message. The reply's style is read from its own text.
+- **Continuation** — if the person she replied to keeps talking within a 10-minute window, that reply's
+  style gets a soft positive. Silence is never penalized (someone going offline isn't negative feedback).
+- **Explicit `!chloe good` / `!chloe bad`** (mod) — a strong ±1 on her last reply's style.
+
+**Surfaced as a nudge, not a rule.** A new `feedback` context provider reads the per-channel arms and,
+ONLY when one clearly leads (≥ minSamples and beating the runner-up by a margin), adds one soft line:
+"In this channel lately, your shorter and more playful replies have landed best — lean that way when it
+feels natural, not every time." AI-discretionary, goes quiet when the signal is weak or split. Per-channel
+(in a DM, the isolated DM bucket).
+
+Opt-in (`feedbackLearning`, default off — it's a behavior change), fully wired: LIVE_PATCHABLE, command,
+status, buildEngine, a panel checkbox, `!chloe good/bad` verbs, and the `feedback:` key in reset + export.
+
+**Scope honesty.** Length + tone are the two arms the research named; more dimensions (formality,
+question-asking) are easy to add later under the same machinery if the two prove too coarse. This is a
+deliberate v1 of a large surface, kept conservative.
+
+Validation: new harness-feedback covers style classification, the EWMA update (right arms, sample counts),
+continuation crediting (in-window only, unrelated speakers don't credit, silence never penalized), and the
+nudge provider (fires with samples+margin, silent when too few / no clear winner / feature off). 94/94 +
+golden + audit clean; wider-net symmetry scan clean; defined-once on the assembled build (styleOf,
+recordFeedback, creditContinuation, fbBestBucket all single).
 
 ### Shipped in v0.87.0 (AICC Dexie import fix + inline character authoring)
 
