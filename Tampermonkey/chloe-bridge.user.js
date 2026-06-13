@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.77.2
+// @version      0.77.3
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -4744,7 +4744,13 @@
     var lease = opts.lease || null;
     var queenDeadAfterMs = opts.queenDeadAfterMs || 90000;
     var claimSettleMs = opts.claimSettleMs || 1500;
-    var wakeJumpMs = opts.wakeJumpMs || 30000;
+    // Wake-jump guard threshold. Must sit ABOVE Chrome's background-tab timer throttle (~60s
+    // ticks), or every routine background tick looks like a sleep-wake and permanently resets the
+    // election claim — a demoted ex-queen in a background tab could then never re-promote after
+    // the reigning queen died (the v0.77.3 People-memory outage). 150s: routine throttling never
+    // trips it; genuine sleeps (minutes+) still do. Promotion safety does not rest on this guard —
+    // the lease freshness check + claim read-back are what prevent promoting over a live queen.
+    var wakeJumpMs = opts.wakeJumpMs || 150000;
     var leaseRenewMs = opts.leaseRenewMs || 10000;
     // D7 pool autosizing. The queen keeps the live worker count near a target. It only ever
     // SPAWNS (never kills healthy workers — quiet just means it stops replacing reaped ones),
@@ -4799,7 +4805,11 @@
       if (!claimState) { claimState = { phase: 'waiting', dueAt: now + rankDelay() }; return Promise.resolve(); }
       if (claimState.phase === 'waiting' && now >= claimState.dueAt) {
         return Promise.resolve(lease.get()).then(function (l) {
-          if (l && (now - (l.at || 0)) < queenDeadAfterMs) { claimState = null; lastQueenSeenAt = now; return; }   // a live queen renews this
+          // A lease younger than the dead-bar means a queen MAY be alive — back off. Credit her
+          // with life as of the lease TIMESTAMP, not as of this check: l.at is the actual evidence.
+          // (Using `now` here restarted the full 90s window each cycle, doubling worst-case
+          // failover when the last ping trailed the last lease renewal by a few seconds.)
+          if (l && (now - (l.at || 0)) < queenDeadAfterMs) { claimState = null; lastQueenSeenAt = Math.max(lastQueenSeenAt, l.at || now); return; }   // a live queen renews this
           var nonce = tabId + ':' + now + ':' + (++seq);
           claimState = { phase: 'claimed', dueAt: now + claimSettleMs, nonce: nonce };
           return lease.set({ id: tabId, at: now, nonce: nonce });
@@ -5042,7 +5052,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.77.2';
+  var VERSION = '0.77.3';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
