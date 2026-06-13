@@ -42,8 +42,13 @@ The panel is a small console: a sticky command bar (Chloe's heartbeat pulses whi
 Mention her or use her name — both work:
 
 - `@chloe-bot how's it going?`
-- `chloe, draw me a fox in a raincoat` (image replies, delivered as native attachments)
-- `!chloe forget me` — anyone can ask her to prune their own conversation history (moderation records are kept)
+- `chloe, draw me a fox in a raincoat` (image replies, delivered as native attachments). With **image memory** on, she remembers what she drew and understands natural follow-ups like "make it bigger", "another one", or "now at night".
+- `!chloe forget me` — anyone can ask her to prune their own conversation history and stop being remembered (moderation records are kept); `!chloe remember me` re-enables memory later, without resurrecting anything from before.
+- `!chloe time` / `!chloe date` — instant, no-AI answers from the operator's device clock (or, with the panel closed, an approximate reading from the latest message's timestamp).
+- `!chloe lang fr` — set your own reply language; she reads and replies to you in it while her thinking and moderation stay in English. `!chloe lang off` returns to English.
+- `!chloe goal <what you're working on>` — she keeps it as a lasting goal that follows you across channels and can resurface in a check-in.
+
+See `full-list-of-commands.md` for everything.
 
 She also volunteers into conversations she can help with (configurable), greets people proportionally to how well she knows them, and can post scheduled in-character "beats" when the room is active.
 
@@ -62,9 +67,11 @@ Mods (managed from the panel) can use `!chloe <verb>` in-channel — or the `!c`
 | `block @u [reason]` / `unblock @u` | Permanently forget a user: blocked users are never scanned or remembered again, even if they keep talking. Unblock lets memory form again. |
 | `clear @u` | Clean slate — state and strikes reset |
 | `note @u <text>` | Attach a mod note |
-| `recap` / `status` / `help` | Channel summary, engine status, command list |
+| `recap` / `status` / `help` | Channel summary, engine status, command list (moderator-only in the current build) |
 | `lockdown` / `unlock` / `open` | Mods-only mode / normal / reply-to-everyone |
-| `permaban @u` | Irreversible: ban + verified memory purge, requires explicit confirmation |
+
+**Permaban** (irreversible: Discord ban + verified memory purge) is **not** a chat command — it can
+only be run from the control panel, with explicit confirmation. Auto-moderation never escalates to it.
 
 ## Auto-moderation and the strike ladder
 
@@ -84,17 +91,45 @@ Pings use Discord's own `allowed_mentions` system — the platform itself decide
 
 ## DMs
 
-Chloe can hold a two-way DM conversation with anyone she's opened a DM with (`dm.open` from the panel, or any DM she initiates — e.g. a future away/paging feature). Once a DM is open she polls it like any channel and replies to **every** message there (no @-mention needed — a DM is one-to-one), with all the same moderation. Turn this on with the **DM replies** toggle. One Discord limit to know: she can't receive a *cold* DM from someone she's never messaged, because Discord only delivers those through the realtime Gateway, which this REST-polling bridge doesn't use — so DMs work for any conversation Chloe is part of, just not unsolicited inbound ones.
+Chloe can hold a two-way DM conversation. Because Discord's REST API gives no per-message "this is a
+DM" signal, you declare DM channels explicitly: the Setup tab has two boxes — **Public channels** and
+**Private DMs** — and any channel id you put in the DMs box is polled and treated as a one-to-one DM
+(she replies to every message there, no @-mention needed), with all the same moderation. She can also
+open a DM herself (`dm.open` from the panel). Turn replies on with the **DM replies** toggle.
+
+What she knows about you in public **follows you into a DM** (facts, insights, familiarity) so a DM
+isn't a cold start — but the flow is one-way and DMs are isolated: anything learned *in* a DM (memories,
+goals, your forget/remember state) stays in that DM and never leaks back into public channels or into
+anyone else's DM. One Discord limit to know: she can't receive a *cold* DM from someone she's never
+messaged, because Discord only delivers those through the realtime Gateway, which this REST-polling
+bridge doesn't use — so DMs work for any conversation Chloe is part of, just not unsolicited inbound ones.
 
 ## Personalities
 
 When a mod anchors a persona note (the 📌 reaction, or the Personality card) that names a character — e.g. *"Name: Seraphina, regal and aloof"* or *"you are Marcus the merchant"* — Chloe **becomes** that character: she answers to that name, speaks in first person as them, and won't narrate that she's Chloe playing a role. Clear the note and she's Chloe again.
 
+## Grounding (what she actually knows)
+
+A few optional features feed her *true* facts she would otherwise have to guess at, kept strictly as
+grounding (never as instructions that could change her rules):
+
+- **Date & time** — with this on she's told the current date/time from your device clock (timezone name
+  included; no IP, GPS, or address). `!chloe time` / `!chloe date` answer instantly with no AI. With the
+  panel closed she falls back to the timestamp of the latest Discord message rather than guessing.
+- **Her own basics** — her name, the command prefix people use, that she can be @-mentioned, and the
+  summon reaction, so "how do I use you?" / "are you a bot?" get straight answers.
+- **An operator note** — the "Tell Chloe a fact about right now" card lets you inject a short, true
+  situational fact ("#support is for bug reports", "the server is in beta this week", "event Saturday"),
+  with an optional expiry. She states it when relevant. Don't put anyone's location or private details there.
+
 ## Privacy and transparency
 
-- `forget me` lets anyone self-prune.
+- `forget me` lets anyone self-prune and stop being remembered; `remember me` re-enables memory without
+  resurrecting anything from before.
 - The panel can post and pin an editable transparency notice in the channel.
-- The mod log survives purges; user memory does not survive `forget me` or permaban.
+- The mod log survives purges; user memory does not survive `forget me`, `block`, or permaban.
+- All memory lives in the operator's own browser (userscript + Perchance page storage). There is no
+  server and nothing is sent to the author. See `PrivacyPolicy.md`.
 
 ## Troubleshooting
 

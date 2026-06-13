@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.77.3
+// @version      0.83.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -51,6 +51,13 @@
     if (b == null) return a;
     return snowflakeCmp(a, b) >= 0 ? a : b;
   }
+  // A Discord snowflake encodes its own creation time: (id >> 22) + the Discord epoch. So any message
+  // id is an authoritative UTC clock reading from Discord's servers — usable to ground the bot's sense
+  // of time and as a fallback when no device clock is being pushed. Returns ms since the Unix epoch.
+  var DISCORD_EPOCH = 1420070400000;
+  function snowflakeTime(id) {
+    try { return Number(BigInt(id) >> 22n) + DISCORD_EPOCH; } catch (e) { return null; }
+  }
 
   // ---- engine -----------------------------------------------------------------------------
   // deps: { transport, store, clock, config, log }
@@ -85,8 +92,7 @@
       paceGapBeta: 0.25,           // deviation EWMA weight (mirrors the brain meter)
       paceDebounceWgap: 0.5,       // debounce ≈ avgGap*Wgap + gapVar*Wdev ...
       paceDebounceWdev: 1.0,
-      debounceFloorMs: 800,        // ... clamped: never interrupt-fast
-      debounceCeilMs: 2500,        // ... and never slower than the old fixed debounce
+      debounceFloorMs: 800,        // ... clamped: never interrupt-fast (the ceiling is debounceMs itself, see currentDebounce)
       pollAdditiveStepMs: 4000,    // AIMD additive increase per silent poll (default = floor)
       pollBusyCeilMs: 12000,       // busy room: relax polling only PARTWAY to here (passive ingest, still mention-responsive) — not the full pollCeilMs
       paceQuietZ: 3,               // silence counts as "quiet" at this many deviations past typical
@@ -119,6 +125,19 @@
       // beyond what's in flight wait in a global FIFO queue (no per-author cooldown for images).
       imageCooldownMs: 2000,  // courtesy gap between images (generation time is the real spacing)
       imageQueueMax: 8,       // global image queue depth (adjustable); extra requests are dropped with a note
+      // Image memory + natural-language iteration (DESIGN: "the bot knows what it generated, and you
+      // can ask for changes in plain language"). When imageMemory is on, each delivered image is
+      // recorded on the user's partition (prompt, resolution, when), capped to a small ring, so the
+      // bot can both reference what it drew and resolve follow-ups like "make it bigger" / "another"
+      // / "same but at night" against the LAST image. Editing rebuilds the PROMPT and regenerates —
+      // there is no img2img/seed lock on this backend, so an edit yields a fresh composition, not a
+      // pixel-level tweak (the ack phrasing reflects this honestly).
+      imageMemory: false,            // opt-in: record + surface what she generated; enables NL edits
+      imageMemoryRing: 6,            // how many recent generations to keep per user
+      imageEditWindowMs: 600000,     // after an image, a bare edit phrase targets it for this long (10m)
+      imageEnhanceOffer: false,      // opt-in: after delivering, offer "want me to refine it?" once
+      editPrompt: null,              // OPTIONAL async ({ prev, request }) -> { ok, value:newPrompt } AI hook;
+                                     //   when absent, a deterministic rewrite (resolution/detail/add/style) is used
       // ---- auto-moderation (off unless autoMod + rules supplied) ----
       autoMod: false,         // apply rule-based moderation with no mod present
       autoModRules: [],       // [{ pattern, type:'text'|'regex'|'confusables'|'link', action:'ignore'|'timeout'|'softban'|'warn', durationMs?, reason? }]
@@ -261,6 +280,8 @@
       semanticInjections: [],   // arbitrary system/operator facts surfaced into context (DESIGN-semantic-inject.md): [{id,text,priority,ttlMs,at}]
       cleanOutput: true,        // scrub model-mechanics noise from replies (DESIGN-clean.md): role-bleed, dangling tail, unbalanced fences
       globalStore: null,        // optional: a store at root prefix for keys shared across ALL channels (e.g. blocklist)
+      isDM: false,              // true for a DM engine: it MERGES public facts (from globalStore) into context
+                                //   read-only, but writes only to its own bucket — DM content never crosses back to public.
       deviceClock: null,        // {time, date, tz, at} pushed by the page for instant !chloe time/date (no AI)
       deviceClockStaleMs: 180000,   // a pushed clock older than this is considered stale (panel closed)
       // Idle deliberation (DESIGN-deliberation.md): a ReAct map-reduce reasoning loop. When genuinely
@@ -277,7 +298,6 @@
       workTopicTtlMs: 1200000,      // 20m of inactivity -> the "current topic" goes null (not stale)
       workDecisionTtlMs: 1800000,   // a recorded decision ages out after 30m
       workDecisionsMax: 5,          // bounded ring of recent notable actions
-      workTopicEveryPolls: 20,      // name the topic at most this often (and only when not reusing the summary)
       workParticipantsMax: 5,
       affectDecayPerHour: 0.8,      // each value relaxes toward neutral 0.5 by this factor per hour
       affectConfidenceFloor: 0.3,   // she never drops below this — quieter, not despondent
@@ -408,11 +428,32 @@
       startupBacklogThreshold: 8,    // a cold-start first poll bigger than this is treated as a history backlog (observe-only)
       maintenanceEveryPolls: 10      // run the quiet-sweep (active->quiet) every Nth poll, not every poll
     }, deps.config || {});
+    // globalStore is a top-level dep (the root-prefix store shared across channels). Bind it onto cfg
+    // so the helpers that look for it — blockStore() (global blocklist) and the DM public-profile
+    // merge — actually find it. Without this it stayed null and blockStore()/merge silently fell back
+    // to the per-channel store, so a ban or a public fact never reached secondary/DM engines.
+    if (deps.globalStore) cfg.globalStore = deps.globalStore;
 
     var CURSOR_KEY = 'cursor:' + cfg.channelId;
     var INDEX_KEY = 'roster:index';
-    var GOALS_KEY = 'goals';   // CROSS-CHANNEL (no channelId): a goal known anywhere is hers everywhere
-    var CHARMEM_KEY = 'charmem';   // CROSS-CHANNEL: the installed character's own respooled memories (background context)
+    // GDPR / ethereal mode. A user who asks to be forgotten becomes invisible to memory in THIS
+    // bucket: no partition, no facts, no roster/summary/episode contribution, no image tracking —
+    // but the bot can still reply to them in the moment. Per-context by design: the public bucket
+    // (globalStore for any public channel) and each DM bucket hold their own flag, so a user can be
+    // ethereal in public while still on the record in a DM, or vice versa. The forget-floor is a
+    // per-user timestamp that survives `remember me`, so re-enabling memory never lets backfill or a
+    // cold start reach back and re-learn the history they erased.
+    var ETHEREAL_KEY = 'ethereal';        // { ids: { id: { at, name } } }  (in etherealStore())
+    var FORGETFLOOR_KEY = 'forgetfloor';  // { id: ts }                     (in etherealStore())
+    var GOALS_KEY = 'goals';   // goals are USER data: shared across PUBLIC channels, but kept LOCAL to each DM
+    var CHARMEM_KEY = 'charmem';   // CROSS-CHANNEL (via globalStore): the installed character's own respooled memories (background context)
+    // charmem is the BOT's own character background (operator-authored, not user data), so it lives in
+    // globalStore and is identical everywhere. Goals, by contrast, are the user's — so they go through
+    // goalStore(): shared across public channels (globalStore) but isolated to the local bucket inside a
+    // DM, so a goal set in a DM can NEVER surface in a public channel or in another user's DM. (Same
+    // per-context rule as etherealStore.)
+    function crossStore() { return cfg.globalStore || store; }
+    function goalStore() { return cfg.isDM ? store : (cfg.globalStore || store); }
     var CONSOLIDATE_KEY = 'consolidate:' + cfg.channelId;   // { lastSweepAt, sliceCursor } for the idle “sleep” pass
     var RING_KEY = 'speaker:ring:' + cfg.channelId;
     var RHYTHM_KEY = 'rhythm:' + cfg.channelId;
@@ -496,7 +537,7 @@
 
     // ---- goal objects (prospective memory) -------------------------------------------------
     function loadGoals() {
-      return Promise.resolve(store.get(GOALS_KEY)).then(function (g) { return Array.isArray(g) ? g : []; });
+      return Promise.resolve(goalStore().get(GOALS_KEY)).then(function (g) { return Array.isArray(g) ? g : []; });
     }
     function saveGoals(list) {
       // newest-first cap: keep all OPEN goals, evict oldest CLOSED beyond the cap
@@ -505,7 +546,7 @@
         var closed = list.filter(function (x) { return x.status !== 'open'; }).sort(function (a, b) { return (b.lastTouchedAt || 0) - (a.lastTouchedAt || 0); });
         list = open.concat(closed).slice(0, cfg.goalsMax || 40);
       }
-      return Promise.resolve(store.set(GOALS_KEY, list)).then(function () { return list; });
+      return Promise.resolve(goalStore().set(GOALS_KEY, list)).then(function () { return list; });
     }
     function addGoal(text, owner, ownerName, source) {
       var t = String(text || '').trim().slice(0, cfg.goalTextMax || 140);
@@ -556,7 +597,7 @@
     function seedCharacterMemories(name, mems) {
       var texts = (mems || []).map(function (m) { return String(m && m.text != null ? m.text : m).trim(); }).filter(Boolean);
       if (!texts.length) return Promise.resolve(0);
-      return Promise.resolve(store.get(CHARMEM_KEY)).then(function (rec) {
+      return Promise.resolve(crossStore().get(CHARMEM_KEY)).then(function (rec) {
         rec = rec || { name: name, facts: [] };
         rec.name = name;
         var seen = {}; rec.facts.forEach(function (f) { seen[normFact(f)] = true; });
@@ -564,10 +605,10 @@
         texts.forEach(function (t) { var k = normFact(t); if (k && !seen[k]) { seen[k] = true; rec.facts.push(t.slice(0, 200)); added++; } });
         var cap = (cfg.characterMemoryMax || 24);
         if (rec.facts.length > cap) rec.facts = rec.facts.slice(-cap);
-        return store.set(CHARMEM_KEY, rec).then(function () { log('[chloe.character] seeded ' + added + ' memor' + (added === 1 ? 'y' : 'ies') + ' for ' + name); return added; });
+        return crossStore().set(CHARMEM_KEY, rec).then(function () { log('[chloe.character] seeded ' + added + ' memor' + (added === 1 ? 'y' : 'ies') + ' for ' + name); return added; });
       });
     }
-    function clearCharacterMemories() { return Promise.resolve(store.del(CHARMEM_KEY)); }
+    function clearCharacterMemories() { return Promise.resolve(crossStore().del(CHARMEM_KEY)); }
 
     // ---- reminders (poll-driven, front-end only, no AI call) --------------------------------
     function getReminders() { return Promise.resolve(store.get(REMIND_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
@@ -799,6 +840,7 @@
     var lastActAt = 0;                   // global last-action clock (light global gap + volunteer cooldown)
     var startedAt = 0;                   // when the loop started (drives the greeting settle window)
     var startupPending = true;           // the first poll after start handles a history backlog specially (image clamp)
+    var lastSeenAt = 0;                  // ms (UTC) of the newest message seen, derived from its snowflake id — an authoritative Discord-server clock used to ground time and as a device-clock fallback
     var pollCount = 0;                   // drives the periodic quiet-sweep cadence
     var warnedEmpty = false;             // one-time empty-content (Message Content Intent) notice
     var greetSettleLogged = false;       // one-time "suppressing greetings (just started)" notice
@@ -958,6 +1000,77 @@
       if (/\b(portrait|selfie|headshot)\b/i.test(p)) return '512x768';
       if (/\b(landscape|wide.?angle|scenery|panorama|vista)\b/i.test(p)) return '768x512';
       return '768x768';
+    }
+    // ---- image memory + natural-language iteration --------------------------------------
+    // Record a delivered generation on the user's partition (ethereal users have no partition, so
+    // this no-ops for them — the image surface stays untracked, matching forget-me). Keeps a small
+    // ring + a `lastImage` pointer used to resolve "make it ..." follow-ups.
+    function recordImage(authorId, item) {
+      if (!cfg.imageMemory) return Promise.resolve();
+      return Promise.resolve(store.get(partKey(authorId))).then(function (p) {
+        if (!p) return;   // no partition (ethereal / never ingested) -> keep nothing, by design
+        var rec = { prompt: item.prompt, resolution: item.resolution, dm: !!item.dm, at: clock.now() };
+        if (item.guidanceScale != null) rec.guidanceScale = item.guidanceScale;
+        if (item.removeBackground) rec.removeBackground = true;
+        p.images = Array.isArray(p.images) ? p.images : [];
+        p.images.push(rec);
+        var cap = cfg.imageMemoryRing || 6;
+        if (p.images.length > cap) p.images = p.images.slice(-cap);
+        p.lastImage = rec;            // fast pointer for "edit the last one"
+        p.imageWindowAt = clock.now();   // opens the bare-edit window
+        return store.set(partKey(authorId), p);
+      });
+    }
+    // Does this message look like a request to CHANGE the last image (rather than a brand-new one)?
+    // Conservative: needs a recent image in scope AND either a back-reference to it ("it", "that",
+    // "the image", "same", "another") or a bare modifier phrase ("more detailed", "bigger", "in
+    // landscape", "without the hat"). A verb with a fresh subject ("make a dragon") is NOT an edit —
+    // it falls through to parseImageRequest as a new generation. Returns the change text, or null.
+    function parseImageEdit(content, lastImage, now) {
+      if (!cfg.imageMemory || !lastImage) return null;
+      if (now - (lastImage.at || 0) > (cfg.imageEditWindowMs || 600000)) return null;   // window closed
+      var body = stripAddressing(String(content || '')).replace(/^[\s,:;.!?-]+/, '').trim();
+      if (!body || body.length > 160) return null;   // long message -> probably chat, not a tweak
+      var lc = body.toLowerCase();
+      // a back-reference to the image just made (the recency window is the real disambiguator)
+      var backRef = /\b(it|that|this one|the (image|picture|pic|photo|drawing|art|one)|same|another|again)\b/.test(lc)
+                 || /^(redo|regenerate|regen|redraw|try again|do it again|one more)\b/.test(lc);
+      // a bare modifier with no fresh subject of its own
+      var bareMod = /^(?:a bit |a little |way |much |slightly )?(more|less|bigger|smaller|larger|darker|brighter|wider|taller|cuter|scarier|cooler|softer|sharper)\b/.test(lc)
+                 || /^(?:in|as|with|without|but|now)\b/.test(lc);
+      if (!(backRef || bareMod)) return null;
+      return body.slice(0, 200);
+    }
+    // Deterministic prompt rewrite used when no AI editPrompt hook is wired. Folds the change into the
+    // previous prompt with vivid descriptors (the backend strips [..] and ignores negativePrompt, so
+    // we build POSITIVELY and use (term:weight) parens for emphasis only).
+    function buildEditedPrompt(prev, change) {
+      prev = String(prev || '').trim();
+      var c = String(change || '').toLowerCase().trim();
+      var out = prev;
+      // pure "another / again" with no specifics -> regenerate the same prompt (fresh composition)
+      if (/^(another|again|one more|do it again|regenerate|regen|redo|try again)\b/.test(c) && c.length < 24) return { prompt: prev, resolution: pickResolution(prev) };
+      // detail / quality
+      if (/\b(more detail|detailed|higher quality|sharper|crisper|hd|4k|better)\b/.test(c)) out += ', (highly detailed:1.3), sharp focus, intricate';
+      // explicit additions: "add X", "with X", "and X", "but X", "make it X", "in X", "as X"
+      var addM = c.match(/\b(?:add|with|and|but|make it|in|as|wearing|holding|now)\s+(.{2,80})$/);
+      if (addM && addM[1]) {
+        var frag = addM[1].replace(/[.!?]+$/, '').trim();
+        // "make it bigger/smaller" affects resolution, not the prompt text
+        if (!/^(bigger|smaller|larger)$/.test(frag)) out += ', ' + frag;
+      }
+      // removals can't use negativePrompt (dropped) — drop the word from the prompt if it's there
+      var rm = c.match(/\b(?:without|remove|no|drop|lose the)\s+(.{2,40})$/);
+      if (rm && rm[1]) {
+        var term = rm[1].replace(/[.!?]+$/, '').trim().split(/\s+/).slice(0, 3).join(' ');
+        var re = new RegExp('[,;]?\\s*[^,;]*' + escRe(term) + '[^,;]*', 'ig');
+        out = out.replace(re, '').replace(/\s*,\s*,/g, ',').replace(/^[\s,]+|[\s,]+$/g, '');
+      }
+      // resolution / orientation from the change text first, then the prompt
+      var resolution = pickResolution(c) !== '768x768' ? pickResolution(c) : pickResolution(out);
+      out = out.replace(/\s+/g, ' ').replace(/^[\s,]+|[\s,]+$/g, '').slice(0, 400);
+      if (!out || out.replace(/[^a-z0-9]/ig, '').length < 2) out = prev;   // never send an empty/degenerate prompt (hangs)
+      return { prompt: out, resolution: resolution };
     }
     // JSON image request: `{ "prompt": "...", "resolution": "768x768", "guidanceScale": 9,
     // "removeBackground": true, "weights": {"detailed":1.4}, "dm": false }`. Only options the SD
@@ -1358,6 +1471,18 @@
     function ingestHistorical(msg) {
       var id = msg.author.id;
       if (cfg.botUserId && id === cfg.botUserId) return Promise.resolve();
+      // ethereal users learn nothing from history either; and even for a user who has since done
+      // `remember me`, never reach back across their forget-floor and resurrect erased lines.
+      return isEthereal(id).then(function (eth) {
+        if (eth) return Promise.resolve();
+        return forgetFloorOf(id).then(function (floor) {
+          if (floor && toEpoch(msg.timestamp) < floor) return Promise.resolve();   // pre-forget history stays forgotten
+          return ingestHistoricalCore(msg);
+        });
+      });
+    }
+    function ingestHistoricalCore(msg) {
+      var id = msg.author.id;
       return Promise.resolve(store.get(partKey(id))).then(function (p) {
         var seenAt = toEpoch(msg.timestamp);
         if (!p) p = { id: id, name: msg.author.username, firstSeen: seenAt, lastSeen: seenAt, interactionCount: 0, state: 'active', lifecycle: 'quiet', recent: [] };
@@ -1662,7 +1787,8 @@
           }
           return setUserLang(uid, arg).then(function () { return { ack: 'got it \u2014 I\u2019ll talk with you in ' + LANG_NAMES[arg] + ' from now on. (\u201c' + (cfg.commandPrefix || '!chloe') + ' lang off\u201d for English.)' }; });
         } },
-      { verb: 'forget',    modOnly: false, special: 'forget', help: 'forget me  /  forget <a thing>' },
+      { verb: 'forget',    modOnly: false, help: 'forget me  /  forget <a thing>' },
+      { verb: 'remember',  modOnly: false, help: 'remember me' },
       { verb: 'forget-that', modOnly: true, help: 'forget-that (reply to a message, or @user) \u2014 excise it from my memory', handler: function (modId, c) {
           // reply target wins; then an @mentioned user's last line; then the most recent channel line.
           if (c.referenced && c.referenced.id) {
@@ -1764,11 +1890,24 @@
     // command never fabricates a time. `which` = 'time' | 'date'.
     function deviceClockAck(which) {
       var dc = cfg.deviceClock;
+      var fresh = dc && (dc.time || dc.date) && !(dc.at && (clock.now() - dc.at) > (cfg.deviceClockStaleMs || 180000));
+      if (fresh) {   // the panel-pushed device clock is best — it carries the user's local time + tz name
+        var tz = dc.tz ? (' (' + dc.tz + ')') : '';
+        if (which === 'date') return 'Today is ' + (dc.date || dc.time) + tz + '.';
+        return 'It\u2019s ' + (dc.time || dc.date) + tz + '.';
+      }
+      // Fallback: derive the time from the newest Discord message id (a snowflake = authoritative UTC
+      // server clock), so time/date still work with the panel closed. Apply a configured tz offset if
+      // there is one; otherwise report UTC and point at the device clock for exact local time.
+      if (lastSeenAt > 0) {
+        var offMin = (typeof cfg.timezoneOffsetMins === 'number') ? cfg.timezoneOffsetMins : 0;
+        var d = new Date(lastSeenAt + offMin * 60000);
+        var label = offMin ? ('UTC' + (offMin >= 0 ? '+' : '-') + Math.abs(offMin / 60)) : 'UTC';
+        if (which === 'date') return 'Around ' + d.toISOString().slice(0, 10) + ' (' + label + ', from recent message timestamps).';
+        return 'Around ' + d.toISOString().slice(11, 16) + ' ' + label + (offMin ? '' : ' \u2014 turn on the device clock for your exact local time') + ' (from recent message timestamps).';
+      }
       if (!dc || (!dc.time && !dc.date)) return 'I don\u2019t have the current clock right now \u2014 turn on \u201cknow the current date & time\u201d in my settings (Behavior tab) and keep the control panel open.';
-      if (dc.at && (clock.now() - dc.at) > (cfg.deviceClockStaleMs || 180000)) return 'my clock reading is stale (the control panel may be closed) \u2014 reopen it and try again.';
-      var tz = dc.tz ? (' (' + dc.tz + ')') : '';
-      if (which === 'date') return 'Today is ' + (dc.date || dc.time) + tz + '.';
-      return 'It\u2019s ' + (dc.time || dc.date) + tz + '.';
+      return 'my clock reading is stale (the control panel may be closed) \u2014 reopen it and try again.';
     }
     function execCommand(modId, c) {
       var entry = c.entry || resolveVerb(c.cmd);
@@ -1788,20 +1927,53 @@
       }
       return Promise.resolve({ ack: 'unknown command "' + c.cmd + '" \u2014 try ' + cfg.commandPrefix + ' help' });
     }
-    // T5 user opt-out: anyone may ask Chloe to forget THEM (self-prune). Never lets a moderated
-    // user escape a soft-ban/timeout — the moderation row is kept, only ordinary memory is cleared.
+    // T5 user opt-out (GDPR ethereal): anyone may ask Chloe to forget THEM and stop tracking them
+    // in this bucket. This now does three things: (1) erases what she holds, (2) sets the ethereal
+    // flag so no new memory forms here until they undo it, (3) stamps a forget-floor so a later
+    // `remember me` can never re-learn the erased history. Never lets a moderated user escape a
+    // soft-ban/timeout — the moderation row is kept, only ordinary memory is cleared.
     function forgetMe(id, name) {
+      var pfx = cfg.commandPrefix || '!chloe';
+      var undo = ' (say \u201c' + pfx + ' remember me\u201d anytime to let me start fresh.)';
+      // Flag + floor FIRST, so even an ingest racing this poll forms nothing. dropImageMemory clears
+      // any image-request history this bucket held (the image surface is covered by ethereal too).
+      return setEthereal(id, name)
+        .then(function () { return setForgetFloor(id); })
+        .then(function () { return dropImageMemory(id); })
+        .then(function () { return Promise.resolve(store.get(partKey(id))); })
+        .then(function (p) {
+          var ackMsg;
+          function ackSend() { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, ackMsg)) : Promise.resolve(); }
+          if (!p) { ackMsg = 'okay ' + name + ', there was nothing to forget \u2014 and I\u2019ll keep no notes on you from here.' + undo; return ackSend(); }
+          if (p.state && p.state !== 'active') {
+            // Clear ALL ordinary memory (facts/insights included — erasure must be complete), but
+            // keep the partition + moderation state so a soft-ban/timeout can't be shed via forget-me.
+            p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active'; p.trust = 0; p.trustDayEarned = 0;
+            p.facts = []; p.insights = []; delete p.images;
+            ackMsg = 'okay ' + name + ', I\u2019ve cleared what I remember and I\u2019ll stop keeping notes (any moderation still stands).' + undo;
+            return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(function () { return dropGoalsFor(id); }).then(ackSend);
+          }
+          ackMsg = 'okay ' + name + ', I\u2019ve forgotten you and I\u2019ll stop keeping notes from here on.' + undo;
+          return purge(id, { targetName: name }).then(ackSend);
+        });
+    }
+    // The inverse: lift the ethereal flag so memory may form again from now on. The forget-floor is
+    // deliberately left in place, so she starts fresh rather than re-reading the erased past.
+    function rememberMe(id, name) {
+      function ackSend(m) { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, m)) : Promise.resolve(); }
+      return clearEthereal(id).then(function (was) {
+        if (!was) return ackSend('you\u2019re already on the record with me, ' + name + ' \u2014 nothing to undo.');
+        return ackSend('welcome back, ' + name + ' \u2014 I\u2019ll start getting to know you again from here (I won\u2019t dig up anything from before you asked me to forget).');
+      });
+    }
+    // Erase any image-request history held for a user in this bucket (called by forgetMe). Tolerant
+    // of the field not existing yet — image memory is added on the image surface; this keeps the
+    // GDPR erase complete regardless of build order.
+    function dropImageMemory(id) {
       return Promise.resolve(store.get(partKey(id))).then(function (p) {
-        var ackMsg;
-        function ackSend() { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, ackMsg)) : Promise.resolve(); }
-        if (!p) { ackMsg = 'okay ' + name + ', there was nothing to forget'; return ackSend(); }
-        if (p.state && p.state !== 'active') {
-          p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active'; p.trust = 0; p.trustDayEarned = 0;
-          ackMsg = 'okay ' + name + ', I\u2019ve cleared what I remember (any moderation still stands).';
-          return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(function () { return dropGoalsFor(id); }).then(ackSend);
-        }
-        ackMsg = 'okay ' + name + ', I\u2019ve forgotten you.';
-        return purge(id, { targetName: name }).then(ackSend);
+        if (!p || !p.images) return;
+        delete p.images;
+        return store.set(partKey(id), p);
       });
     }
     function greetTierFor(info, p, now) {
@@ -1849,7 +2021,10 @@
                 if (fa && !/^me$/i.test(fa) && cfg.factMemory) {   // "forget <a thing>" drops matching facts, keeps the person
                   return forgetFact(m.author.id, fa).then(function (n) { ackSrc.push(m.id); acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); });
                 }
-                return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person
+                return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person + goes ethereal
+              }
+              if (c.cmd === 'remember') {
+                return rememberMe(m.author.id, m.author.username);   // "remember me" lifts ethereal; memory may form again
               }
               if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
               if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
@@ -1908,6 +2083,39 @@
               return;
             }
             var addressed = isAddressed(m.content) || (engageMode === 'open');
+            if (imageEnabled() && addressed && mayPaint(m) && cfg.imageMemory) {
+              var partForEdit = parts[authorIds.indexOf(m.author.id)];
+              var lastImg = partForEdit && partForEdit.lastImage;
+              var editText = parseImageEdit(m.content, lastImg, now);
+              if (editText) {
+                if (paint.queue.length >= cfg.imageQueueMax) {
+                  log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping edit from ' + (m.author.username || m.author.id));
+                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) {} }
+                  return;
+                }
+                // rebuild the prompt: prefer the AI hook (handles arbitrary natural language), fall
+                // back to the deterministic rewrite. Either way it's a fresh generation (no img2img).
+                var mref = m, lref = lastImg, eref = editText;
+                var rebuild = (typeof cfg.editPrompt === 'function')
+                  ? Promise.resolve(cfg.editPrompt({ prev: lref.prompt, request: eref })).then(function (r) {
+                      var np = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
+                      if (!np || np.replace(/[^a-z0-9]/ig, '').length < 2) return buildEditedPrompt(lref.prompt, eref);
+                      return { prompt: np.slice(0, 400), resolution: pickResolution(np + ' ' + eref) };
+                    }, function () { return buildEditedPrompt(lref.prompt, eref); })
+                  : Promise.resolve(buildEditedPrompt(lref.prompt, eref));
+                return rebuild.then(function (built) {
+                  var qItem = { messageId: mref.id, authorId: mref.author.id, authorName: mref.author.username, prompt: built.prompt, resolution: built.resolution, dm: !!lref.dm, at: now, isEdit: true };
+                  if (lref.guidanceScale != null) qItem.guidanceScale = lref.guidanceScale;
+                  if (lref.removeBackground) qItem.removeBackground = true;
+                  paint.queue.push(qItem);
+                  if (paint.painting || paint.queue.length > 1) setQueueAck(qItem, queueEmojiFor(paint.queue.length));
+                  if (reply.queue[mref.author.id]) delete reply.queue[mref.author.id];
+                  if (greet.pending && greet.pending.authorId === mref.author.id) greet.pending = null;
+                  imageReqName = mref.author.username;
+                  log('[chloe.img] edit from ' + mref.author.username + ': \u201c' + eref.slice(0, 40) + '\u201d \u2192 \u201c' + built.prompt.slice(0, 50) + '\u201d');
+                });
+              }
+            }
             if (imageEnabled() && addressed && mayPaint(m)) {
               var imgReq = parseImageRequest(m.content);
               if (imgReq) {
@@ -2529,6 +2737,49 @@
     // Discord does NOT expose IP, 2FA, or phone to bots, so those markers are intentionally absent.
     var BLOCK_KEY = 'blocklist';
     function blockStore() { return cfg.globalStore || store; }
+    // ---- ethereal / forget-me (GDPR) -----------------------------------------------------
+    // The ethereal + forget-floor records live in the PER-CONTEXT bucket: a public channel keeps
+    // them in the shared public store (globalStore), a DM keeps them in its own local store. That
+    // is what makes the flag independent across public vs DM.
+    function etherealStore() { return cfg.isDM ? store : (cfg.globalStore || store); }
+    function isEthereal(id) {
+      var sid = String(id || ''); if (!sid) return Promise.resolve(false);
+      return Promise.resolve(etherealStore().get(ETHEREAL_KEY)).then(function (e) {
+        return !!(e && e.ids && e.ids[sid]);
+      });
+    }
+    function setEthereal(id, name) {
+      var sid = String(id || ''); if (!sid) return Promise.resolve();
+      return Promise.resolve(etherealStore().get(ETHEREAL_KEY)).then(function (e) {
+        e = (e && e.ids) ? e : { ids: {} };
+        e.ids[sid] = { at: clock.now(), name: name || '' };
+        return etherealStore().set(ETHEREAL_KEY, e);
+      });
+    }
+    function clearEthereal(id) {
+      var sid = String(id || ''); if (!sid) return Promise.resolve(false);
+      return Promise.resolve(etherealStore().get(ETHEREAL_KEY)).then(function (e) {
+        if (!e || !e.ids || !e.ids[sid]) return false;
+        delete e.ids[sid];
+        return Promise.resolve(etherealStore().set(ETHEREAL_KEY, e)).then(function () { return true; });
+      });
+    }
+    // Stamp a floor at the moment of forgetting; it OUTLIVES `remember me` on purpose so a later
+    // re-learn (backfill / cold start) can never reach back across it and resurrect erased history.
+    function setForgetFloor(id) {
+      var sid = String(id || ''); if (!sid) return Promise.resolve();
+      return Promise.resolve(etherealStore().get(FORGETFLOOR_KEY)).then(function (f) {
+        f = (f && typeof f === 'object') ? f : {};
+        f[sid] = clock.now();
+        return etherealStore().set(FORGETFLOOR_KEY, f);
+      });
+    }
+    function forgetFloorOf(id) {
+      var sid = String(id || ''); if (!sid) return Promise.resolve(0);
+      return Promise.resolve(etherealStore().get(FORGETFLOOR_KEY)).then(function (f) {
+        return (f && f[sid]) ? f[sid] : 0;
+      });
+    }
     function getBlocklist() { return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (b) { return b || { ids: {}, names: {} }; }); }
     function isBlockedSync(bl, id, name) {
       if (!bl) return false;
@@ -2573,7 +2824,20 @@
       // permanent tombstone gate: a blocked author is invisible to ingestion forever
       return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
         if (isBlockedSync(bl, msg.author.id, msg.author.username)) return null;
-        return ingestOneCore(msg, ring, indexSet, touched);
+        // ethereal (GDPR): a forgotten user forms NO memory in this bucket — no partition, no roster,
+        // no facts, no summary/episode contribution, no image tracking. Their live line still reaches
+        // the reply path (it stays in `incoming`), so the bot can answer them; it just keeps no notes.
+        return isEthereal(msg.author.id).then(function (eth) {
+          if (eth) return null;
+          // Forget-floor: even after `remember me`, never re-ingest a line from BEFORE the forget — on
+          // ANY path (a cold-start startup batch replays recent history through here, not just
+          // backfill). Live post-remember messages are always newer than the floor, so this never
+          // blocks them; it only stops erased history resurfacing.
+          return forgetFloorOf(msg.author.id).then(function (floor) {
+            if (floor && toEpoch(msg.timestamp) < floor) return null;
+            return ingestOneCore(msg, ring, indexSet, touched);
+          });
+        });
       });
     }
     function ingestOneCore(msg, ring, indexSet, touched) {
@@ -2659,14 +2923,16 @@
       textChainScheduled = true;
       var g = deferGen;
       var wait = Math.max(50, (cfg.globalCooldownMs || 0) - (clock.now() - lastActAt));
-      cfg.defer(function () { textChainScheduled = false; if (g === deferGen) processReply(); }, wait);
+      // deferGen catches a clean demote; iHoldRunLock catches a freeze/thaw failover (deferGen
+      // unchanged) where a successor queen now owns the channel — abandon rather than double-write.
+      cfg.defer(function () { textChainScheduled = false; if (g === deferGen) iHoldRunLock().then(function (h) { if (h) processReply(); else log('[chloe.lock] deferred reply abandoned \u2014 another engine holds the run-lock now'); }); }, wait);
     }
     function scheduleImageChain() {
       if (typeof cfg.defer !== 'function' || imageChainScheduled || !paint.queue.length) return;
       imageChainScheduled = true;
       var g = deferGen;
       var wait = Math.max(50, (cfg.imageCooldownMs || 0) - (clock.now() - lastPaintAt));
-      cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) kickImage(); }, wait);
+      cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) iHoldRunLock().then(function (h) { if (h) kickImage(); else log('[chloe.lock] deferred image abandoned \u2014 another engine holds the run-lock now'); }); }, wait);
     }
     // ---- commit-point revalidation (while-if-true) -------------------------------------------
     // Every multi-second generation captures its premises at START and commits at END — but the
@@ -2676,12 +2942,18 @@
     // engine never commits (its successor owns the work via the pending-reply record).
     function revalidateReply(p, gen) {
       if (gen !== deferGen) return Promise.resolve({ why: 'engine stopped/demoted mid-generation — the successor owns this reply now', keepPending: true });
-      var q2 = reply.queue[p.authorId];
-      if (q2 && q2.messageId !== p.messageId) return Promise.resolve({ why: p.authorName + ' re-addressed with a newer message mid-generation — answering THAT instead', chain: true });
-      if (engageMode === 'locked' && !isMod(p.authorId)) return Promise.resolve({ why: 'lockdown engaged mid-generation', lockAck: true });
-      return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp) {
-        if (pp && pp.state && pp.state !== 'active') return { why: 'author was moderated mid-generation' };
-        return null;
+      // Freeze/thaw failover (deferGen unchanged): if a successor queen now holds the run-lock, do
+      // NOT send — leave the pending-reply record so the successor's resume-once picks it up. This is
+      // what stops a thawing ex-queen from double-replying and clobbering the shared reply state.
+      return iHoldRunLock().then(function (holdLock) {
+        if (!holdLock) return { why: 'another engine owns the channel (failover mid-generation) — leaving the reply for the successor', keepPending: true };
+        var q2 = reply.queue[p.authorId];
+        if (q2 && q2.messageId !== p.messageId) return { why: p.authorName + ' re-addressed with a newer message mid-generation — answering THAT instead', chain: true };
+        if (engageMode === 'locked' && !isMod(p.authorId)) return { why: 'lockdown engaged mid-generation', lockAck: true };
+        return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp) {
+          if (pp && pp.state && pp.state !== 'active') return { why: 'author was moderated mid-generation' };
+          return null;
+        });
       });
     }
     // Why-not indicators clear themselves (a stale ⏳ hours later would confuse more than help).
@@ -2704,6 +2976,18 @@
     var PENDING_KEY = 'pending-reply:' + cfg.channelId;   // Gap A: the reply currently being generated
     var runId = cfg.runLockId || ('run-' + Math.random().toString(36).slice(2, 10));
     var runLockSeq = 0, runLockSkips = 0;
+    // Read-only "do I still legitimately hold the run-lock?" — used to guard the fire-and-forget
+    // deferred chains (image/reply) and the long image-delivery commit, which run BETWEEN polls and
+    // therefore outside acquireRunLock. Unlike acquireRunLock this never claims/renews, so a
+    // thawing ex-queen calling it can't steal the lock from the live successor; it just learns it no
+    // longer owns the channel and abandons the write. (Freeze leaves deferGen unchanged, so the
+    // deferGen guard alone can't catch a frozen-then-thawed tab — this lock read does.)
+    function iHoldRunLock() {
+      if (cfg.runLock === false) return Promise.resolve(true);
+      return Promise.resolve(store.get(RUNLOCK_KEY)).then(function (lk) {
+        return !!(lk && lk.id === runId && (clock.now() - (lk.at || 0)) < (cfg.runLockTtlMs || 45000));
+      }, function () { return false; });
+    }
     function acquireRunLock() {
       if (cfg.runLock === false) return Promise.resolve(true);
       var now = clock.now();
@@ -2815,6 +3099,7 @@
             // advance cursor to the newest id we saw (even bot's own, so we don't re-fetch it)
             var newCursor = ctx.cursor;
             msgs.forEach(function (m) { newCursor = maxSnowflake(newCursor, m.id); });
+            if (newCursor) { var st = snowflakeTime(newCursor); if (st) lastSeenAt = Math.max(lastSeenAt, st); }   // ground time on Discord's authoritative message clock
 
             // channel rhythm: track last activity + a coarse gap average
             return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh) {
@@ -3105,13 +3390,15 @@
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
             return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I couldn't make that image just now.")).then(function () { return null; }, function () { return null; });
           }
-          // revalidate before delivery: were they moderated (or the engine stopped) mid-paint?
+          // revalidate before delivery: were they moderated, the engine stopped, or did another
+          // engine take over the channel (freeze/thaw failover) mid-paint? Any of these -> abandon.
           return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp2) {
-            if (paintEpoch !== deferGen || (pp2 && pp2.state && pp2.state !== 'active')) {
+           return iHoldRunLock().then(function (holdLock) {
+            if (paintEpoch !== deferGen || !holdLock || (pp2 && pp2.state && pp2.state !== 'active')) {
               paint.painting = false; lastPaintAt = clock.now(); scheduleImageChain();
               clearAck(p.messageId, cfg.ackImageEmoji);
               if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
-              log('[chloe.abandon] image not delivered — ' + (paintEpoch !== deferGen ? 'engine stopped mid-paint' : p.authorName + ' was moderated mid-paint'));
+              log('[chloe.abandon] image not delivered — ' + (paintEpoch !== deferGen ? 'engine stopped mid-paint' : (!holdLock ? 'another engine owns the channel (failover mid-paint)' : p.authorName + ' was moderated mid-paint')));
               return null;
             }
           var target = Promise.resolve(cfg.channelId);
@@ -3126,8 +3413,14 @@
               lastPaintAt = clock.now(); paint.painting = false; scheduleImageChain();          // image clock only — do NOT touch lastActAt
               clearAck(p.messageId, cfg.ackImageEmoji);
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
-              return bumpInteraction(p.authorId).then(function () { return { image: true, to: p.authorId }; });
+              return recordImage(p.authorId, p).then(function () {
+                if (cfg.imageEnhanceOffer && !p.isEdit && !/\b(detailed|hd|4k|high quality)\b/i.test(p.prompt || '')) {
+                  try { cfg.send(cfg.channelId, 'want me to refine that, ' + p.authorName + '? just say how \u2014 e.g. \u201cmore detailed\u201d, \u201cmake it landscape\u201d, or \u201canother one\u201d.'); } catch (e) {}
+                }
+                return bumpInteraction(p.authorId);
+              }).then(function () { return { image: true, to: p.authorId }; });
             }, function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
+          });
           });
           });
         })
@@ -3470,7 +3763,7 @@
     registerProvider({ id: 'charmem', priority: BANDS.RECALL,
       enabled: function (c) { return !!c.character; },
       gather: function () {
-        return Promise.resolve(store.get(CHARMEM_KEY)).then(function (rec) {
+        return Promise.resolve(crossStore().get(CHARMEM_KEY)).then(function (rec) {
           if (!rec || !rec.facts || !rec.facts.length) return null;
           var pick = rec.facts.slice(-2);   // a couple of the most-recent background memories
           var text = 'Things you (' + (rec.name || 'you') + ') remember: ' + pick.join('; ') + '.';
@@ -3545,6 +3838,22 @@
         return Promise.resolve({ text: 'What you remember about ' + who + ': ' + s + '. Let this color your warmth naturally; only mention it if it genuinely fits, never recite it.', tokens: estimateTokens(s) });
       } });
 
+    // Image awareness: tell the brain what she recently drew for THIS person, so she can reference it
+    // naturally ("that fox I made you") instead of acting like she has no idea. Read-only; the prompts
+    // ride into context only when imageMemory is on and the addressed person has recent generations.
+    registerProvider({ id: 'imagesMade', priority: BANDS.PERSON,
+      enabled: function (c) { return !!c.imageMemory; },
+      gather: function (g) {
+        var a = g.addressed;
+        var imgs = (a && Array.isArray(a.images)) ? a.images : [];
+        if (!imgs.length) return null;
+        var who = (g.p && g.p.authorName) || (a && a.name) || 'them';
+        var recent = imgs.slice(-2).map(function (im) { return '\u201c' + String(im.prompt || '').slice(0, 80) + '\u201d'; });
+        var text = 'You recently made image' + (recent.length > 1 ? 's' : '') + ' for ' + who + ': ' + recent.join(', ')
+          + '. You may reference this naturally if it fits, and they can ask you to change it (e.g. \u201cmake it bigger\u201d, \u201canother one\u201d).';
+        return { text: text, tokens: estimateTokens(text) };
+      } });
+
     registerProvider({ id: 'procmode', priority: BANDS.DIRECTIVE,
       enabled: function (c) { return !!c.proceduralModes; },
       gather: function () {
@@ -3589,6 +3898,46 @@
         return Promise.resolve({ text: text, tokens: estimateTokens(text) });
       } });
 
+    // One-way public -> DM profile merge (read-only). For a DM engine, fold the speaker's public
+    // partition (held in globalStore = the public bucket) into the addressed object the context
+    // providers read: public facts/insights flow into the DM, and a public regular reads as familiar.
+    // Returns a fresh object so nothing is ever written back; for non-DM engines it is a pass-through.
+    function dmPublicMerge(localAddressed, authorId) {
+      if (!cfg.isDM || !cfg.globalStore || cfg.globalStore === store) return Promise.resolve(localAddressed);
+      // If the user has gone ethereal in THIS DM, don't pull their public profile in either — "forget
+      // me" here means the bot stops USING remembered context about them in this surface, not just
+      // storing it. (They have no local partition anyway; this stops the cross-bucket facts leaking in.)
+      return isEthereal(authorId).then(function (eth) {
+        if (eth) return localAddressed;
+        return Promise.resolve(cfg.globalStore.get(partKey(authorId))).then(function (pub) {
+        if (!pub) return localAddressed;   // unknown in public too — genuinely new, nothing to merge
+        var base = localAddressed ? JSON.parse(JSON.stringify(localAddressed))
+                                  : { id: authorId, name: pub.name, interactionCount: 0, trust: 0, facts: [], insights: [] };
+        // facts: union by normalized text, public first so they're present even on a first DM
+        var facts = Array.isArray(base.facts) ? base.facts.slice() : [];
+        var seen = {}; facts.forEach(function (f) { seen[normFact(f.text || f)] = true; });
+        (Array.isArray(pub.facts) ? pub.facts : []).forEach(function (f) {
+          var k = normFact(f && (f.text || f)); if (k && !seen[k]) { seen[k] = true; facts.push(f); }
+        });
+        base.facts = facts;
+        // insights: same union
+        var ins = Array.isArray(base.insights) ? base.insights.slice() : [];
+        var seenI = {}; ins.forEach(function (x) { seenI[normFact(x.text || x)] = true; });
+        (Array.isArray(pub.insights) ? pub.insights : []).forEach(function (x) {
+          var k = normFact(x && (x.text || x)); if (k && !seenI[k]) { seenI[k] = true; ins.push(x); }
+        });
+        base.insights = ins;
+        // warmth follows the stronger of the two histories (a public regular is a regular in DMs)
+        base.interactionCount = Math.max(base.interactionCount || 0, pub.interactionCount || 0);
+        if (cfg.relationshipTrust) base.trust = Math.max(base.trust || 0, pub.trust || 0);
+        // image awareness carries over read-only (she can reference a public drawing in a DM); but
+        // editing still targets the LOCAL bucket's lastImage, so a DM edit never regenerates a public one.
+        if (!base.images && Array.isArray(pub.images)) base.images = pub.images.slice(-2);
+        return base;
+      }, function () { return localAddressed; });
+      });
+    }
+
     function assembleContext(p) {
       return getRoster().then(function (roster) {
         var now = clock.now();
@@ -3599,7 +3948,12 @@
         });
         lines.sort(function (a, b) { return a.ts - b.ts; });
         if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);   // hard ceiling
-        var addressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
+        var localAddressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
+        // One-way public -> DM continuity: a DM engine reads the speaker's PUBLIC profile (facts,
+        // insights, familiarity) from globalStore and folds it in READ-ONLY, so the bot treats a
+        // regular as a regular in DMs. Nothing is written back here, and DM-learned memory lives only
+        // in the DM bucket — so private content never crosses back into a public channel.
+        return dmPublicMerge(localAddressed, p.authorId).then(function (addressed) {
         // The transcript gets whatever's left of the request budget (default 5000) after everything
         // else is accounted for: fixed prompt scaffolding + the variable parts we send (the addressed
         // message, her recent-reply anti-repeat list, persona note, standing intent).
@@ -3635,6 +3989,7 @@
             if (cfg.singleParagraph) base.singleParagraph = true;
             return base;
           });
+        });
         });
       });
     }
@@ -3921,8 +4276,9 @@
         return open[0].text || null;
       });
     }
-    // Name the current topic. REUSE the channel summary's first clause when it's fresh (no AI cost);
-    // otherwise, when summaryFn/topicFn is available and due, name it in <=6 words. Cheap + skippable.
+    // Name the current topic by REUSING the channel summary's first clause when it's fresh (no AI
+    // cost). When there's no fresh summary we leave the topic as-is and let it decay — naming it is
+    // never worth a dedicated AI call here.
     function workRefreshTopic(w, summaryText) {
       var now = clock.now();
       if (summaryText) {
@@ -4083,14 +4439,22 @@
     // where archiving is off or the partition was deleted.)
     function knownFromOtherSurfaces(id, name) {
       var sid = String(id || '');
-      return getArchiveIndex().then(function (idx) {
-        if (sid && idx.indexOf(sid) >= 0) return { known: true, where: 'archive' };
-        return getModLog().then(function (log) {
-          if (sid && (log || []).some(function (e) { return String(e && e.targetId) === sid; })) return { known: true, where: 'modlog' };
-          return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
-            bl = bl || { ids: {}, names: {} };
-            if (isBlockedSync(bl, sid, name)) return { known: true, where: 'blocklist' };
-            return { known: false, where: null };
+      // In a DM, a person known on the PUBLIC side is not a first-timer here — recognize them so the
+      // bot doesn't greet a regular as a stranger when they first slide into DMs (read-only check).
+      var dmPublic = (cfg.isDM && cfg.globalStore && cfg.globalStore !== store)
+        ? Promise.resolve(cfg.globalStore.get(partKey(sid))).then(function (pub) { return pub ? { known: true, where: 'public' } : null; }, function () { return null; })
+        : Promise.resolve(null);
+      return dmPublic.then(function (dm) {
+        if (dm) return dm;
+        return getArchiveIndex().then(function (idx) {
+          if (sid && idx.indexOf(sid) >= 0) return { known: true, where: 'archive' };
+          return getModLog().then(function (log) {
+            if (sid && (log || []).some(function (e) { return String(e && e.targetId) === sid; })) return { known: true, where: 'modlog' };
+            return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
+              bl = bl || { ids: {}, names: {} };
+              if (isBlockedSync(bl, sid, name)) return { known: true, where: 'blocklist' };
+              return { known: false, where: null };
+            });
           });
         });
       });
@@ -4159,14 +4523,20 @@
       return 'late evening';
     }
     function timeContext(lastActivity) {
-      var now = clock.now();
+      var tabNow = clock.now();
+      var now = tabNow;
+      // Anchor to Discord's authoritative server time if the local tab clock looks implausible — a
+      // sandboxed / misconfigured / long-suspended tab can report a wildly wrong wall clock, and a
+      // message snowflake is server-truth. Only a gross (>1 day) disagreement flips the source, so a
+      // normal tab always keeps its own wall clock (which is correct even when the channel is quiet).
+      if (lastSeenAt > 0 && Math.abs(tabNow - lastSeenAt) > 86400000) now = lastSeenAt;
       var local = new Date(now + (cfg.timezoneOffsetMins || 0) * 60000);
       var h = local.getUTCHours();   // getUTC* on the already-shifted instant = local wall clock
       var dow = local.getUTCDay();   // 0 = Sunday
       var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       var tc = { partOfDay: partOfDay(h), hour: h, dayOfWeek: days[dow], weekend: (dow === 0 || dow === 6), lateNight: (h < 5 || h >= 23) };
       if (lastActivity != null) {
-        var q = now - lastActivity;
+        var q = tabNow - lastActivity;   // duration uses the tab clock for BOTH ends — the delta is right even if the absolute clock is off
         tc.quietForMs = q;
         tc.quietFor = (q < 600000) ? null                         // <10m: not worth mentioning
           : (q < 3600000) ? 'a little while'
@@ -4560,7 +4930,7 @@
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
       'proceduralModes', 'ackReactions', 'singleParagraph', 'replyReference', 'backfill',
-      'image', 'imageQueueMax', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
+      'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
       'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
       'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botLoopGrace',
       'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
@@ -5052,7 +5422,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.77.3';
+  var VERSION = '0.83.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -5127,7 +5497,12 @@
   // { dmChannelId: { user, name, openedAt } }.
   function dmSessions() { return cfgGet('dmSessions', {}) || {}; }
   function dmChannelIds() { return Object.keys(dmSessions()); }
-  function isDMChannel(chId) { return !!dmSessions()[chId]; }
+  // Operator-DECLARED DM channels (the "private DMs" box). Discord's REST API gives us no per-message
+  // signal of whether a channel is a DM, and with no Gateway we can't discover a cold inbound DM — so
+  // the reliable answer is to let the operator list DM channel ids explicitly. A declared DM is polled
+  // like any channel AND flagged isDM, which is what lets the public->DM memory merge actually run.
+  function declaredDmChannels() { return (cfgGet('dmChannels', []) || []).map(function (c) { return String(c || '').trim(); }).filter(Boolean); }
+  function isDMChannel(chId) { return declaredDmChannels().indexOf(chId) >= 0 || !!dmSessions()[chId]; }
   function recordDMSession(dmChannelId, userId, name) {
     if (!dmChannelId || !userId) return;
     var s = dmSessions();
@@ -5135,7 +5510,8 @@
   }
   function channelList() {
     var seen = {}, out = [];
-    [primaryChannel()].concat(cfgGet('channels', []) || []).concat(cfgGet('dmReplies', false) ? dmChannelIds() : []).forEach(function (c) {
+    // public primary + public extras + declared DMs (always polled — they're explicit) + session DMs (if enabled)
+    [primaryChannel()].concat(cfgGet('channels', []) || []).concat(declaredDmChannels()).concat(cfgGet('dmReplies', false) ? dmChannelIds() : []).forEach(function (c) {
       c = String(c || '').trim();
       if (c && !seen[c]) { seen[c] = 1; out.push(c); }
     });
@@ -5534,6 +5910,7 @@
       transport: transport, store: makeStore(prefixFor(channelId)), globalStore: makeStore(''),
       config: {
         channelId: channelId,
+        isDM: isDMChannel(channelId),
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
         botAliases: cfgGet('botAliases', []),
@@ -5544,6 +5921,12 @@
         image: !!cfgGet('image', false),
         imageQueueMax: cfgGet('imageQueueMax', 8),
         imageCooldownMs: cfgGet('imageCooldownMs', 2000),
+        imageMemory: !!cfgGet('imageMemory', false),
+        imageEnhanceOffer: !!cfgGet('imageEnhanceOffer', false),
+        // Optional AI prompt-rewrite for natural-language image edits ("make it bigger", "same but
+        // at night"). The page runs ai-text once to fold the change into the previous prompt; the
+        // engine falls back to a deterministic rewrite if this declines or isn't available.
+        editPrompt: function (ctx) { return brainCall('editimage', ctx); },
         autoMod: !!cfgGet('autoMod', false),
         autoModRules: cfgGet('autoModRules', []),
         strikeLadder: cfgGet('strikeLadder', [
@@ -5663,6 +6046,10 @@
             trace('poll', 'in ' + (summary.ingested || 0) + (summary.replied ? ' reply' : '') + (summary.imageJob ? ' image' : '') + (summary.greeted ? ' greet' : '') + (summary.volunteered ? ' vol' : '') + (summary.commands ? ' cmd' : '') + ' [' + (summary.engageMode || 'normal') + ']');
           }
           if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal'))) cfgSet('engageMode:' + channelId, summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
+          // A lock-skip poll means another engine instance owns this channel right now (queen handover
+          // / split-brain). Maintenance writes the DB (backfill checkpoint + partitions, departure
+          // sweeps, anchor notes), so the skipping instance must NOT run it — only the lock-holder.
+          if (summary && summary.lockSkip) return Promise.resolve();
           return presenceMaintenance(channelId);
         }
       },
@@ -5717,7 +6104,6 @@
   }
   function ensureEngines() { return channelList().map(function (c) { return engines[c] || buildEngine(c); }).filter(Boolean); }
   function engineFor(chId) { var c = chKeyOf({ channelId: chId }); if (!c) return null; return engines[c] || buildEngine(c); }
-  function ensureEngine() { return engineFor(''); }
   function eachEngine(fn) { Object.keys(engines).forEach(function (c) { try { fn(engines[c], c); } catch (e) {} }); }
 
   var guildIdCache = {};
@@ -5787,12 +6173,16 @@
       addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
       greet: !!cfgGet('greet', false), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
       dmReplies: !!cfgGet('dmReplies', false),
+      publicChannels: [primaryChannel()].concat(cfgGet('channels', []) || []).filter(Boolean),
+      dmChannels: declaredDmChannels(),
       ackReactions: cfgGet('ackReactions', true),
       singleParagraph: !!cfgGet('singleParagraph', false),
       lullFiller: !!cfgGet('lullFiller', false),
       checkins: !!cfgGet('checkins', false),
       factMemory: !!cfgGet('factMemory', false),
       timeAware: !!cfgGet('timeAware', false),
+      deviceTime: !!cfgGet('deviceTime', false),
+      operatorNote: (function () { var m = semInjectMap(); return (m['opnote'] && m['opnote'].text) ? String(m['opnote'].text) : ''; })(),
       timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
       moodAware: !!cfgGet('moodAware', false),
       channelSummary: !!cfgGet('channelSummary', false),
@@ -5817,6 +6207,8 @@
       brain: brainMeter.snapshot(),
       image: !!cfgGet('image', false),
       imageQueueMax: cfgGet('imageQueueMax', 8),
+      imageMemory: !!cfgGet('imageMemory', false),
+      imageEnhanceOffer: !!cfgGet('imageEnhanceOffer', false),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
       engageMode: cfgGet('engageMode:' + primaryChannel(), cfgGet('engageMode', 'normal')),
       channels: channelList(),
@@ -5862,6 +6254,10 @@
         { var bf = !!(args && args.on); cfgSet('backfill', bf); patchEngines({ backfill: bf }); return Promise.resolve({ ok: true, value: { backfill: bf } }); }
       case 'config.setImage':
         { var im = !!(args && args.on); cfgSet('image', im); patchEngines({ image: im }); return Promise.resolve({ ok: true, value: { image: im } }); }
+      case 'config.setImageMemory':
+        { var imm = !!(args && args.on); cfgSet('imageMemory', imm); patchEngines({ imageMemory: imm }); return Promise.resolve({ ok: true, value: { imageMemory: imm } }); }
+      case 'config.setImageEnhanceOffer':
+        { var ieo = !!(args && args.on); cfgSet('imageEnhanceOffer', ieo); patchEngines({ imageEnhanceOffer: ieo }); return Promise.resolve({ ok: true, value: { imageEnhanceOffer: ieo } }); }
       case 'config.setPrefixes': {
         var list = (args && args.prefixes);
         if (!Array.isArray(list)) return Promise.resolve({ ok: false, reason: 'prefixes must be an array' });
@@ -5950,12 +6346,27 @@
         var rawA = (args && args.channels);
         if (!Array.isArray(rawA)) return Promise.resolve({ ok: false, reason: 'channels must be an array of channel ids' });
         var cleanA = [], seenA = {};
-        rawA.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && !seenA[c]) { seenA[c] = 1; cleanA.push(c); } });
+        var dmsetA = {}; declaredDmChannels().forEach(function (d) { dmsetA[d] = 1; });
+        rawA.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && !seenA[c] && !dmsetA[c]) { seenA[c] = 1; cleanA.push(c); } });   // never let a declared DM sit in the public list
         var primary = cleanA[0] || '';
         cfgSet('channelId', primary);
         cfgSet('channels', cleanA.slice(1));
         applyConfigChange();
         return Promise.resolve({ ok: true, value: { channels: channelList(), primary: primary } });
+      }
+      case 'config.setDmChannels': {
+        // The "private DMs" box: channel ids to poll AND treat as DMs (isDM -> the public->DM merge runs).
+        var rawD = (args && args.channels);
+        if (!Array.isArray(rawD)) return Promise.resolve({ ok: false, reason: 'dmChannels must be an array of channel ids' });
+        var cleanD = [], seenD = {};
+        rawD.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && c !== primaryChannel() && !seenD[c]) { seenD[c] = 1; cleanD.push(c); } });
+        cfgSet('dmChannels', cleanD);
+        // keep the two boxes mutually exclusive: drop any newly-declared DM from the public extras
+        var dmsetD = {}; cleanD.forEach(function (d) { dmsetD[d] = 1; });
+        var pub = (cfgGet('channels', []) || []).filter(function (c) { return !dmsetD[String(c).trim()]; });
+        cfgSet('channels', pub);
+        applyConfigChange();
+        return Promise.resolve({ ok: true, value: { dmChannels: cleanD, channels: channelList() } });
       }
       case 'config.setEngageMode': {
         var mode = (args && args.mode);
@@ -6381,15 +6792,15 @@
       // Then wipe all cfg keys except the token (keeps the bot connected)
       var keep = ['token'];
       var allCfg = [
-        'botUserId','botName','botAliases','channelId','channels','addressMode','engageMode',
-        'volunteer','greet','backfill','image','imageQueueMax','ackReactions','singleParagraph',
+        'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
+        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph',
         'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
         'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
         'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
         'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
         'reactionSummon','autoMod','autoModRules','commandPrefixes','beats','procRules',
         'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
-        'character','personaAnchor','noticeText','dmReplies','dmSessions','poolSize',
+        'character','personaAnchor','noticeText','noticeMsgId','noticePinned','dmReplies','dmSessions','poolSize',
         'sendBudgetMs','sendMinGapMs','requestTokenBudget','typingRefreshMs','pollBusyCeilMs',
         'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
         'reactionTracking','reactionAutoHighlight','gateEmoji','gatePings','gateEveryone',
@@ -6416,8 +6827,8 @@
     var snap = { _version: VERSION, _exported: new Date().toISOString(), _note: 'Chloe-bot state backup. Token is NOT included. Import via the panel System tab.' };
     // cfg keys (everything except the token)
     var cfgKeys = [
-      'botUserId','botName','botAliases','channelId','channels','addressMode','engageMode',
-      'volunteer','greet','backfill','image','imageQueueMax','ackReactions','singleParagraph',
+      'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
+      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph',
       'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
       'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
