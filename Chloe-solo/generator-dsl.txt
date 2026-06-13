@@ -1,0 +1,49 @@
+title = Chloe Solo
+description = A standalone, in-browser AI companion with the full Chloe cognitive engine — memory, reflection, episodic + semantic recall, and feedback learning. No Discord, no server, no account.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chloe Solo — Perchance generator top-panel
+//
+// The whole app is the self-contained HTML file `solo-app.html` (assembled by assemble.py).
+// On Perchance it speaks through the two free plugins below. Standalone (opened as a plain
+// .html file) it runs in demo mode so the loop and the mind drawer are visible without a model.
+//
+// SETUP (three steps):
+//   1. Import the two plugins below (already declared).
+//   2. Paste the entire contents of solo-app.html into the generator's HTML panel (the output).
+//   3. Keep the paintImage relay <script> (further down) in the HTML panel so image generation
+//      works — text-to-image only resolves when awaited from the top-panel sandbox, so the app's
+//      paint() calls a relay (window.paintImage / window.__chloePaint) instead of calling the
+//      plugin from inside the chat UI. Text replies need no relay (ai-text resolves directly).
+// ─────────────────────────────────────────────────────────────────────────────
+
+aiTextPlugin = {import:ai-text-plugin}
+textToImagePlugin = {import:text-to-image-plugin}
+
+// The HTML output is solo-app.html. (Pasted into the generator's HTML editor.)
+output
+  paste solo-app.html here
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image relay — paste this <script> ONCE near the top of solo-app.html (before the app glue),
+// or keep it in the top-panel. It fulfils the contract Chloe's paint() expects: a window.paintImage
+// trigger that runs text-to-image from the top-panel sandbox and posts the result back by reqId.
+// Mirrors the proven Pocket-Companion / Chloe-bot top-panel image pattern.
+//
+// <script>
+// (function () {
+//   if (!window.__chloePaint) window.__chloePaint = new Map();
+//   window.paintImage = function (req) {
+//     var p = (typeof textToImagePlugin !== 'undefined') ? textToImagePlugin
+//           : (window.textToImagePlugin || (window.root && window.root.textToImagePlugin));
+//     if (!p) { window.__chloePaint.set(req.reqId, { ok:false, reason:'text-to-image plugin not imported' }); return; }
+//     var opts = { prompt: req.prompt, resolution: req.resolution || '768x768' };
+//     if (req.guidanceScale != null) opts.guidanceScale = req.guidanceScale;
+//     if (req.removeBackground) opts.removeBackground = true;
+//     Promise.resolve(p(opts)).then(function (out) {
+//       var url = (out && out.outputUrl) || (out && out.url) || (typeof out === 'string' ? out : '');
+//       window.__chloePaint.set(req.reqId, url ? { ok:true, dataUrl:url } : { ok:false, reason:'no image returned' });
+//     }, function (e) { window.__chloePaint.set(req.reqId, { ok:false, reason:String((e && e.message) || e) }); });
+//   };
+// })();
+// </script>

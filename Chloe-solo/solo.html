@@ -1,0 +1,656 @@
+<!-- Chloe Solo — a standalone, in-browser AI companion. The whole cognitive engine from Chloe-bot,
+     with no Discord and no Bridge. Designed for desktop, landscape. The chat is the simple face;
+     the whole mind hides behind the drawer on the right. -->
+<style>
+  :root{
+    --ground:#F6F2EA; --card:#FFFFFF; --ink:#2A2824; --ink-soft:#5C564E; --muted:#94897A;
+    --line:#E7E0D2; --line-soft:#F0EADD;
+    --accent:#5B57A6; --accent-ink:#45418A; --accent-soft:#ECEBF7; --accent-line:#D6D4EE;
+    --good:#3F7A57; --bad:#B0563F; --warn:#9A7B2E;
+    --mind-bg:#1B1D26; --mind-ink:#C7CCDA; --mind-dim:#7E8597; --mind-line:#2B2E3B; --mind-card:#222531;
+    --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,'Times New Roman',serif;
+    --sans:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,'SF Mono','JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;cursor:pointer}
+  button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* ---- shell: chat stage + mind drawer, side by side (landscape) ---- */
+  .app{display:flex;height:100vh;overflow:hidden}
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+
+  .topbar{display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--line)}
+  .id{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .id .name{font-family:var(--serif);font-size:23px;font-weight:600;letter-spacing:.2px;color:var(--ink)}
+  .id .role{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pulse{width:8px;height:8px;border-radius:50%;background:#CFC8B8;flex:none;transition:background .3s}
+  .pulse.on{background:var(--accent);box-shadow:0 0 0 0 var(--accent-line);animation:breathe 1.4s ease-in-out infinite}
+  @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(91,87,166,.45)}50%{box-shadow:0 0 0 6px rgba(91,87,166,0)}}
+  .spacer{flex:1}
+  .iconbtn{border:1px solid var(--line);background:var(--card);color:var(--ink-soft);border-radius:9px;padding:7px 12px;font-size:13px;display:inline-flex;align-items:center;gap:7px;transition:border-color .15s,color .15s}
+  .iconbtn:hover{border-color:var(--accent-line);color:var(--accent-ink)}
+
+  .thread{flex:1;overflow-y:auto;padding:30px 26px 18px}
+  .col{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+  .msg{display:flex;flex-direction:column;max-width:88%}
+  .msg .who{font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .msg.her{align-self:flex-start}
+  .msg.her .body{font-family:var(--serif);font-size:18px;line-height:1.62;color:var(--ink);white-space:pre-wrap}
+  .msg.her .who{color:var(--accent)}
+  .msg.you{align-self:flex-end;align-items:flex-end}
+  .msg.you .body{background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--accent-ink);padding:10px 14px;border-radius:14px 14px 4px 14px;white-space:pre-wrap}
+  .msg img.avatar{max-width:320px;border-radius:12px;border:1px solid var(--line);margin-top:6px}
+  .typing{align-self:flex-start;display:none;gap:5px;padding:4px 2px}
+  .typing.on{display:flex}
+  .typing i{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.4;animation:tdot 1.1s infinite}
+  .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+  @keyframes tdot{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:.9;transform:translateY(-3px)}}
+  .empty{max-width:560px;margin:8vh auto 0;text-align:center;color:var(--muted)}
+  .empty h2{font-family:var(--serif);font-weight:600;font-size:26px;color:var(--ink-soft);margin:0 0 8px}
+
+  .composer{border-top:1px solid var(--line);padding:16px 26px 22px}
+  .composer .wrap{max-width:720px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+  .composer textarea{flex:1;resize:none;border:1px solid var(--line);background:var(--card);border-radius:13px;padding:12px 14px;font-family:inherit;font-size:15px;line-height:1.45;color:var(--ink);max-height:160px}
+  .composer textarea::placeholder{color:#B8B0A0}
+  .send{border:none;background:var(--accent);color:#fff;border-radius:12px;padding:0 18px;height:46px;font-size:14px;font-weight:600;flex:none;transition:background .15s}
+  .send:hover{background:var(--accent-ink)} .send:disabled{background:#C6C3DE;cursor:default}
+
+  /* ---- the mind drawer: her cognition, streamed, paced (the signature) ---- */
+  .mind{width:0;flex:none;background:var(--mind-bg);color:var(--mind-ink);display:flex;flex-direction:column;overflow:hidden;transition:width .28s cubic-bezier(.4,0,.2,1)}
+  .mind.open{width:440px}
+  .mind-head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--mind-line)}
+  .mind-head .t{font-family:var(--serif);font-size:17px;color:#E7E9F0}
+  .mind-head .sub{font-size:11px;color:var(--mind-dim);letter-spacing:.04em}
+  .mind-x{margin-left:auto;border:1px solid var(--mind-line);background:transparent;color:var(--mind-dim);border-radius:7px;width:28px;height:28px;font-size:15px}
+  .mind-x:hover{color:#E7E9F0;border-color:#3a3f50}
+  .speed{padding:13px 18px;border-bottom:1px solid var(--mind-line);background:#191b23}
+  .speed .row{display:flex;align-items:center;gap:11px}
+  .speed label{font-size:11px;color:var(--mind-dim);letter-spacing:.07em;text-transform:uppercase;flex:none}
+  .speed input[type=range]{flex:1;accent-color:var(--accent);height:4px}
+  .speed .val{font-family:var(--mono);font-size:11px;color:var(--mind-ink);width:74px;text-align:right;flex:none}
+  .speed .hint{font-size:11px;color:var(--mind-dim);margin-top:6px}
+  .stream{flex:1;overflow-y:auto;padding:10px 14px 18px;font-family:var(--mono);font-size:12px;line-height:1.5}
+  .thought{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);animation:rise .26s ease}
+  @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .thought .tag{flex:none;font-size:10px;letter-spacing:.04em;padding:1px 6px;border-radius:5px;height:fit-content;margin-top:1px;background:var(--mind-card);color:var(--mind-dim)}
+  .thought .tag.cog{background:#2a2752;color:#a8a4ee}.thought .tag.mem{background:#173331;color:#7ad6cc}
+  .thought .tag.io{background:#332a17;color:#e0b878}.thought .tag.flow{background:#2a2433;color:#c9a8e0}.thought .tag.page{background:#222;color:#888}
+  .thought .txt{color:var(--mind-ink);word-break:break-word;flex:1}
+  .stream .idle{color:var(--mind-dim);font-style:italic;padding:14px 2px}
+  .queued{font-size:11px;color:var(--mind-dim);padding:6px 2px 0;font-family:var(--mono)}
+  .mind-tab{position:fixed;top:50%;right:0;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--mind-bg);color:var(--mind-ink);border:none;border-radius:9px 0 0 9px;padding:16px 7px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;box-shadow:-2px 0 10px rgba(0,0,0,.12)}
+  .mind-tab .dot{display:block;width:7px;height:7px;border-radius:50%;background:#4a4f63;margin:0 auto 9px}
+  .mind-tab.thinking .dot{background:var(--accent);animation:breathe 1.4s ease-in-out infinite}
+  .mind.open ~ .mind-tab{display:none}
+
+  /* ---- settings popup ---- */
+  .modal-bg{position:fixed;inset:0;background:rgba(30,27,22,.42);display:none;align-items:center;justify-content:center;z-index:40;padding:24px}
+  .modal-bg.open{display:flex}
+  .modal{background:var(--ground);border-radius:16px;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(40,35,28,.3);overflow:hidden}
+  .modal-head{display:flex;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
+  .modal-head h2{font-family:var(--serif);font-weight:600;font-size:20px;margin:0}
+  .modal-head .x{margin-left:auto;border:none;background:transparent;color:var(--muted);font-size:22px;line-height:1;padding:4px 8px}
+  .tabs{display:flex;gap:4px;padding:12px 22px 0;border-bottom:1px solid var(--line)}
+  .tab{border:none;background:transparent;color:var(--muted);font-size:14px;padding:8px 14px;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab.on{color:var(--accent-ink);border-bottom-color:var(--accent);font-weight:600}
+  .panel{display:none;overflow-y:auto;padding:22px}.panel.on{display:block}
+  .field{margin-bottom:18px}
+  .field>label{display:block;font-size:13px;font-weight:600;color:var(--ink-soft);margin-bottom:6px}
+  .field .desc{font-size:12px;color:var(--muted);margin:-2px 0 8px}
+  .field input[type=text],.field textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;background:var(--card);color:var(--ink)}
+  .toggle{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line-soft)}
+  .toggle input{margin-top:3px;accent-color:var(--accent);width:16px;height:16px;flex:none}
+  .toggle .tl{font-size:14px;color:var(--ink)} .toggle .td{font-size:12px;color:var(--muted)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .card h3{margin:0 0 4px;font-size:14px;color:var(--ink)} .card .note{font-size:12px;color:var(--muted)}
+  .chardrop{border:1.5px dashed var(--line);border-radius:11px;padding:20px;text-align:center;color:var(--muted);font-size:13px;transition:border-color .15s,background .15s;cursor:pointer}
+  .chardrop:hover,.chardrop.drag{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+  .chardrop code{background:var(--line-soft);padding:1px 5px;border-radius:4px;font-size:12px}
+  .row{display:flex;gap:8px;align-items:center;margin-top:10px}.row .grow{flex:1}
+  .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:8px 14px;font-size:13px}
+  .btn:hover{border-color:var(--accent-line);color:var(--accent-ink)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.primary:hover{background:var(--accent-ink);color:#fff}
+  .btn.danger{color:var(--bad);border-color:#E6CFC7}.btn.danger:hover{background:#FBF0EC}
+  .charrow{display:flex;padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin-top:8px;cursor:pointer;transition:border-color .12s,background .12s}
+  .charrow:hover{border-color:var(--accent-line)} .charrow.sel{border-color:var(--accent);background:var(--accent-soft)}
+  .charrow .uname{font-weight:600;font-size:14px}.charrow .umeta{font-size:12px;color:var(--muted)}
+  #charInstruction{min-height:120px;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  #charMemList{font-size:12px;color:var(--ink-soft);max-height:150px;overflow:auto;margin-top:6px}
+  #charMemList div{padding:2px 0}
+  .topAvatar{width:34px;height:34px;border-radius:9px;object-fit:cover;border:1px solid var(--line);flex:none}
+  .memrow{display:flex;gap:8px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+  .memrow .mt{flex:1;font-size:13px;color:var(--ink)} .memrow .ms{font-size:11px;color:var(--muted)}
+  .memrow .pin{font-size:10px;color:var(--accent-ink);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:5px;padding:0 5px;margin-left:6px}
+  .memrow .forget{border:none;background:transparent;color:var(--muted);font-size:16px;line-height:1;padding:0 4px;flex:none}
+  .memrow .forget:hover{color:var(--bad)}
+  .note{font-size:12px;color:var(--muted)} .mini{font-size:12px}
+  .status{font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)}
+  @media (max-width:880px){.mind.open{width:100vw;position:fixed;inset:0;z-index:50}}
+</style>
+
+<div class="app">
+  <div class="stage">
+    <div class="topbar">
+      <div class="id">
+        <img id="herAvatar" class="topAvatar" alt="" style="display:none">
+        <span class="pulse" id="pulse"></span>
+        <span class="name" id="herName">Chloe</span>
+        <span class="role" id="herRole">a companion who remembers</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="iconbtn" id="openSettings">⚙ Settings</button>
+      <button class="iconbtn" id="openMind">◧ Her mind</button>
+    </div>
+
+    <div class="thread" id="thread">
+      <div class="col" id="threadCol">
+        <div class="empty" id="emptyState">
+          <h2>Say hello.</h2>
+          <div>She remembers what you tell her, forms her own sense of you over time, and thinks before she speaks — open <b>Her mind</b> on the right to watch her do it.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="wrap">
+        <textarea id="input" rows="1" placeholder="Write to her…"></textarea>
+        <button class="send" id="sendBtn" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <aside class="mind" id="mind">
+    <div class="mind-head">
+      <div>
+        <div class="t">Her mind</div>
+        <div class="sub">cognition, as it happens</div>
+      </div>
+      <button class="mind-x" id="closeMind" title="Close">×</button>
+    </div>
+    <div class="speed">
+      <div class="row">
+        <label>Pace</label>
+        <input type="range" id="speed" min="0" max="100" value="45">
+        <span class="val" id="speedVal">readable</span>
+      </div>
+      <div class="hint">Slide left to watch one thought at a time; right to let it run at full speed.</div>
+    </div>
+    <div class="stream" id="stream"><div class="idle">Her thoughts will appear here as she works.</div></div>
+  </aside>
+</div>
+<button class="mind-tab" id="mindTab"><span class="dot"></span>Her mind</button>
+
+<!-- settings popup: everything the user may want to adjust, plus the AICC character importer -->
+<div class="modal-bg" id="settingsBg">
+  <div class="modal" role="dialog" aria-label="Settings">
+    <div class="modal-head">
+      <h2>Settings</h2>
+      <button class="x" id="closeSettings">×</button>
+    </div>
+    <div class="tabs">
+      <button class="tab on" data-tab="character">Character</button>
+      <button class="tab" data-tab="you">You</button>
+      <button class="tab" data-tab="behavior">Behavior</button>
+      <button class="tab" data-tab="memory">Memory &amp; data</button>
+      <button class="tab" data-tab="about">About</button>
+    </div>
+
+    <!-- CHARACTER: AICC importer (1:1 with AI Character Chat) + write-your-own -->
+    <div class="panel on" data-panel="character">
+      <div class="note" style="margin-bottom:14px">She is currently: <b id="charCurrent">default Chloe</b></div>
+
+      <div class="card">
+        <h3>Her portrait</h3>
+        <div class="note">Generate a portrait from who she is now (uses the image plugin on Perchance). It becomes her avatar in the header.</div>
+        <div class="row"><button class="btn" id="portraitBtn">Generate portrait</button><span class="status" id="portraitNote"></span></div>
+      </div>
+
+      <div class="card">
+        <h3>Import an AI Character Chat character</h3>
+        <div class="note">Everything AICC exports works here: its native <code>.json.gz</code> character export, a <code>.cbor.gz</code> / <code>.cbor</code> / <code>.json</code> file, a share link, a <code>user.uploads.dev</code> link, a file ID, or raw character JSON. Personality, writing style, reminder, and the character's saved memories all come across.</div>
+        <div class="chardrop" id="charDrop" style="margin-top:12px">
+          <b>Drop a character file here</b> — or <u id="charPickBtn">choose a file</u>
+          <input type="file" id="charFile" accept=".gz,.cbor,.json,application/gzip,application/cbor,application/json" hidden>
+          <div class="note" style="margin-top:6px">.cbor.gz · .gz · .cbor · .json</div>
+        </div>
+        <div class="row">
+          <input type="text" class="grow" id="charUrlInput" placeholder="…or paste a share link, a user.uploads.dev link, a file ID, or raw character JSON">
+          <button class="btn" id="charUrlBtn">Load</button>
+          <button class="btn" id="charPasteBtn">Paste</button>
+        </div>
+        <div class="status" id="charStatus"></div>
+      </div>
+
+      <div class="card" id="charListCard" style="display:none">
+        <h3>Characters found</h3>
+        <div class="note">Pick one to preview.</div>
+        <div id="charList"></div>
+      </div>
+
+      <div class="card" id="charPreviewCard" style="display:none">
+        <h3 id="charPreviewName">Character</h3>
+        <textarea id="charInstruction" readonly></textarea>
+        <div id="charMemHead" class="note" style="margin-top:10px;display:none"><b>Saved memories</b> that will come across:</div>
+        <div id="charMemList" style="display:none"></div>
+        <div class="toggle" style="border:none;margin-top:8px"><input type="checkbox" id="charReplaceChk" checked><div><div class="tl">Become this character</div><div class="td">replace her current personality</div></div></div>
+        <div class="toggle" style="border:none"><input type="checkbox" id="charSeedChk"><div><div class="tl">Bring their memories</div><div class="td">seed the saved memories from the export</div></div></div>
+        <div class="row"><button class="btn primary" id="charInstallBtn">Apply</button><span class="status" id="charInstallNote"></span></div>
+      </div>
+
+      <div class="card">
+        <h3>Or write your own</h3>
+        <div class="note">Describe who she is — personality, voice, background, how she should behave.</div>
+        <div class="row"><input type="text" class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, Aria, Doctor Vane…)"></div>
+        <textarea id="charAuthorInstr" rows="5" placeholder="You are … — describe their personality, voice, and how they speak." style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px"></textarea>
+        <div class="row"><button class="btn primary" id="charAuthorBtn">Make this her</button><span class="status" id="charAuthorNote"></span></div>
+      </div>
+
+      <div class="row"><button class="btn danger" id="charClearBtn">Reset to default Chloe</button></div>
+    </div>
+
+    <!-- YOU: your identity in the chat (AICC user-persona parity) -->
+    <div class="panel" data-panel="you">
+      <div class="field">
+        <label>Your name</label>
+        <div class="desc">What she calls you. She uses it naturally and remembers it.</div>
+        <input type="text" id="userNameInput" placeholder="You">
+      </div>
+      <div class="card">
+        <h3>Tell her about you</h3>
+        <div class="note">Anything she should keep in mind about you — pinned, so it sticks. Add them one at a time.</div>
+        <div class="row"><input type="text" class="grow" id="aboutYouInput" placeholder="e.g. I'm a night-owl developer who likes dry humour"><button class="btn primary" id="aboutYouBtn">Remember this</button></div>
+        <div class="status" id="aboutYouNote"></div>
+      </div>
+    </div>
+
+    <!-- BEHAVIOR: the feature toggles, straight from Chloe-bot's cognitive engine -->
+    <div class="panel" data-panel="behavior">
+      <div class="field">
+        <label>Her name</label>
+        <input type="text" id="botNameInput" placeholder="Chloe">
+      </div>
+      <div class="note" style="margin:4px 0 8px">These are the parts of her mind you can turn on and off. They all run locally in your browser.</div>
+      <div class="toggle"><input type="checkbox" id="t_conversationMemory" checked><div><div class="tl">Conversation memory</div><div class="td">keep the back-and-forth (including her own lines) in context</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_episodicMemory" checked><div><div class="tl">Episodic memory</div><div class="td">remember notable moments and recall them later</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_selfKnowledge" checked><div><div class="tl">Self-knowledge</div><div class="td">she knows her own name, version, and how long she's been running</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_contradictionAware"><div><div class="tl">Notice contradictions</div><div class="td">if something you say flips an earlier fact, she keeps both and can gently ask</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_userModeling"><div><div class="tl">Match your register</div><div class="td">mirror how long and how playfully you tend to write</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_feedbackLearning"><div><div class="tl">Learn what lands</div><div class="td">lean toward the reply length and tone that work for you</div></div></div>
+      <div class="toggle"><input type="checkbox" id="t_semanticRecall"><div><div class="tl">Recall by meaning</div><div class="td">find memories by meaning, not keywords (loads a small model once)</div></div></div>
+    </div>
+
+    <!-- MEMORY & DATA -->
+    <div class="panel" data-panel="memory">
+      <div class="card">
+        <h3>What she's stored</h3>
+        <div class="note" id="memStats">—</div>
+      </div>
+      <div class="card">
+        <h3>What she remembers about you</h3>
+        <div class="note">Everything she's learned or you've told her. Remove anything you'd rather she forget.</div>
+        <div id="factList" style="margin-top:8px"><div class="note">Nothing yet — she'll start remembering as you talk.</div></div>
+      </div>
+      <div class="card">
+        <h3>Export</h3>
+        <div class="note">Download everything she remembers as a single JSON file — back it up or move it to another browser.</div>
+        <div class="row"><button class="btn" id="exportBtn">Export memory</button><input type="file" id="importFile" accept=".json" hidden><button class="btn" id="importBtn">Import memory</button></div>
+        <div class="status" id="dataNote"></div>
+      </div>
+      <div class="card">
+        <h3>Start fresh</h3>
+        <div class="note">Erase the whole conversation and everything she's learned. This can't be undone.</div>
+        <div class="row"><button class="btn danger" id="wipeBtn">Erase everything</button></div>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="about">
+      <div class="card">
+        <h3 id="aboutTitle">Chloe Solo</h3>
+        <div class="note">A standalone, in-browser AI companion built on the Chloe cognitive engine — facts, insights, episodic and semantic memory, reflection, and feedback learning, all running locally with no server and no account. On a Perchance page she speaks through the free ai-text and image plugins; opened on its own she runs in demo mode so you can see the machine work.</div>
+      </div>
+      <div class="note">Open <b>Her mind</b> at any time to watch her think, and slow the pace down to read along.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/*__ENGINE__*/
+/*__BRAIN__*/
+
+/* ============================ Chloe Solo glue ============================ */
+(function () {
+  "use strict";
+  var SOLO_VERSION = '0.1.0';
+  var NS = 'chloeSolo:';          // localStorage namespace for the engine store
+  var BOT_ID = 'chloe-bot', USER_ID = 'you', CH = 'solo';
+  var SNOW_EPOCH = 1420070400000, snowSeq = 0;
+
+  /* ---- tiny DOM + shim layer (the brain/char blocks call these) ---- */
+  function byId(id){ return document.getElementById(id); }
+  function setText(id, t){ var el = byId(id); if (el) el.textContent = t; }
+  function selChannel(){ return CH; }
+  function debugAppend(line){ pushThought(String(line)); }   // page traces -> the mind drawer
+  try { window.debugAppend = debugAppend; } catch(e){}        // so the top-level brain dlog routes here too
+  function log(msg){ pushThought('[chloe.note] ' + msg); }    // char/persona UI notes -> the mind drawer
+  function refresh(){ updateCharLabel(); persistState(); }
+
+  /* ---- settings state, persisted ---- */
+  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null,
+    conversationMemory:true, episodicMemory:true, selfKnowledge:true,
+    contradictionAware:false, userModeling:false, feedbackLearning:false, semanticRecall:false };
+  var state = loadState();
+  function loadState(){ try { var s = JSON.parse(localStorage.getItem(NS+'__state__')); return Object.assign({}, DEF_STATE, s||{}); } catch(e){ return Object.assign({}, DEF_STATE); } }
+  function persistState(){ try { localStorage.setItem(NS+'__state__', JSON.stringify(state)); } catch(e){} }
+
+  /* ---- localStorage-backed store: the engine's 5-method port (AICC-compatible shape) ---- */
+  function makeStore(){
+    function k(key){ return NS + key; }
+    return {
+      get: function(key){ try { var v = localStorage.getItem(k(key)); return Promise.resolve(v==null?null:JSON.parse(v)); } catch(e){ return Promise.resolve(null);} },
+      set: function(key,val){ try { localStorage.setItem(k(key), JSON.stringify(val)); } catch(e){} return Promise.resolve(true); },
+      del: function(key){ try { localStorage.removeItem(k(key)); } catch(e){} return Promise.resolve(true); },
+      listIndex: function(){ try { var v = localStorage.getItem(NS+'__index__'); return Promise.resolve(v?JSON.parse(v):[]); } catch(e){ return Promise.resolve([]); } },
+      setIndex: function(ids){ try { localStorage.setItem(NS+'__index__', JSON.stringify(ids)); } catch(e){} return Promise.resolve(true); }
+    };
+  }
+  var store = makeStore();
+  // Pre-create the user partition so memories + "about you" work from the very first moment (the
+  // engine's ingest uses `if (!p)`, so it augments this rather than overwriting it).
+  function ensureUserPartition(){
+    return store.get('u:'+USER_ID).then(function(p){
+      if (p){ if (state.userName && p.name !== state.userName){ p.name = state.userName; return store.set('u:'+USER_ID, p); } return; }
+      var now = Date.now();
+      return store.set('u:'+USER_ID, { id: USER_ID, name: state.userName||'You', firstSeen: now, lastSeen: now, interactionCount: 0, state:'active', lifecycle:'quiet', recent: [], facts: [] });
+    });
+  }
+  function renderFactList(){
+    var box = byId('factList'); if (!box || !engine || !engine.getFacts) return;
+    Promise.resolve(engine.getFacts(USER_ID)).then(function(facts){
+      while (box.firstChild) box.removeChild(box.firstChild);
+      if (!facts || !facts.length){ var e=document.createElement('div'); e.className='note'; e.textContent='Nothing yet \u2014 she\u2019ll start remembering as you talk.'; box.appendChild(e); return; }
+      facts.slice().reverse().forEach(function(f){
+        var row=document.createElement('div'); row.className='memrow';
+        var t=document.createElement('div'); t.className='mt'; t.textContent=f.text;
+        if (f.source==='operator'){ var pin=document.createElement('span'); pin.className='pin'; pin.textContent='pinned'; t.appendChild(pin); }
+        var x=document.createElement('button'); x.className='forget'; x.title='Forget this'; x.textContent='\u00d7';
+        x.addEventListener('click', function(){ Promise.resolve(engine.forgetFact(USER_ID, f.text)).then(renderFactList); });
+        row.appendChild(t); row.appendChild(x); box.appendChild(row);
+      });
+    });
+  }
+
+  /* ---- LocalTransport: the chat is the message stream ---- */
+  function snow(ms){ return String((BigInt(ms - SNOW_EPOCH) << 22n) + BigInt((snowSeq++) % 4096)); }
+  function snowCmp(a,b){ var A=BigInt(a),B=BigInt(b); return A<B?-1:(A>B?1:0); }
+  var queue = loadQueue();
+  function loadQueue(){ try { var v = JSON.parse(localStorage.getItem(NS+'__queue__')); return Array.isArray(v)?v:[]; } catch(e){ return []; } }
+  function persistQueue(){ try { localStorage.setItem(NS+'__queue__', JSON.stringify(queue.slice(-400))); } catch(e){} }
+  var transport = {
+    getMessagesAfter: function(chId, afterId, limit){
+      var out = queue.filter(function(m){ return !afterId || snowCmp(m.id, afterId) > 0; });
+      return Promise.resolve(out.slice(0, limit || 50));
+    },
+    getMessagesBefore: function(){ return Promise.resolve([]); }
+  };
+  function enqueue(authorId, name, bot, text){
+    var ms = Date.now(); var m = { id: snow(ms), channelId: CH, author: { id: authorId, username: name, bot: !!bot }, content: text, timestamp: new Date(ms).toISOString() };
+    queue.push(m); persistQueue(); return m;
+  }
+
+  /* ---- brain hooks: real aiTextPlugin on Perchance; a candid mock when opened standalone ---- */
+  function installMockIfNeeded(){
+    var has = false;
+    try { has = !!(window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin)); } catch(e){}
+    if (has) { setText('herRole', 'a companion who remembers'); return; }
+    setText('herRole', 'demo mode — no language model connected');
+    var lines = [
+      "I'm here, though I'm running in demo mode — there's no language model wired in yet. Drop this onto a Perchance page with the ai-text plugin and I'll answer for real.",
+      "Noted. (Demo mode: I can hold the conversation and remember it, but my words are placeholders until a model is connected.)",
+      "I'm following along. On Perchance, with the free ai-text plugin, this is where my real reply would be.",
+      "Got it. Watch the mind panel — even in demo mode the thinking is real; only the words are stand-ins."
+    ];
+    var n = 0;
+    window.aiTextPlugin = function(opts){
+      var instr = String(opts && opts.instruction || '');
+      if (/"action"\s*:/.test(instr)) return Promise.resolve('"action":"reply","confidence":0.9,"emoji":""');
+      if (/JSON array|array of strings/i.test(instr)) return Promise.resolve('[]');
+      if (/ONLY a JSON|respond with .*json/i.test(instr)) return Promise.resolve('{}');
+      var m = instr.match(/Recent conversation:\n([\s\S]*?)\n\n/);
+      var lastUser = ''; if (m){ var ls = m[1].trim().split('\n'); lastUser = (ls[ls.length-1]||'').replace(/^[^:]+:\s*/, ''); }
+      var reply = lines[(n++) % lines.length];
+      if (lastUser) reply = '“' + lastUser.slice(0,80) + '” — ' + reply;
+      return new Promise(function(res){ setTimeout(function(){ res(reply); }, 350); });
+    };
+  }
+
+  /* ---- send + typing: render her into the thread ---- */
+  function soloSend(chId, body){
+    setThinking(false);
+    var text = String(body||'').trim();
+    if (text){ enqueue(BOT_ID, state.botName||'Chloe', true, text); renderMessage('her', state.botName||'Chloe', text); }
+    return Promise.resolve(true);
+  }
+  function soloTyping(){ if (engineThinking) byId('typingRow').classList.add('on'); return Promise.resolve(true); }
+
+  /* ---- the engine, built from current state; rebuilt on config change ---- */
+  var engine = null, engineThinking = false;
+  function brainHooks(){ return {
+    respond: respond, judge: judge, paint: paint,
+    factsFn: facts, reflectFn: reflect, consolidateFn: consolidate,
+    channelSummaryFn: channelSummary, episodesFn: episodes
+  }; }
+  function buildConfig(){
+    return Object.assign({
+      channelId: CH, botUserId: BOT_ID, botName: state.botName || 'Chloe', isDM: true, commandPrefix: '!chloe',
+      botVersion: SOLO_VERSION,
+      pollFloorMs: 700, pollCeilMs: 6000, debounceMs: 700, debounceFloorMs: 400, globalCooldownMs: 0,
+      conversationMemory: state.conversationMemory, episodicMemory: state.episodicMemory, selfKnowledge: state.selfKnowledge,
+      contradictionAware: state.contradictionAware, userModeling: state.userModeling,
+      feedbackLearning: state.feedbackLearning, semanticRecall: state.semanticRecall,
+      character: state.character || null,
+      send: soloSend, typing: soloTyping, defer: function(fn,ms){ return setTimeout(fn, ms||0); }
+    }, brainHooks());
+  }
+  function buildEngine(){
+    if (engine && engine.stop) { try { engine.stop(); } catch(e){} }
+    engine = ChloeT0.createEngine({ transport: transport, store: store, clock: { now: Date.now }, log: onEngineLog, config: buildConfig() });
+    engine.start();
+  }
+  function applyConfig(patch){ Object.assign(state, patch); persistState(); buildEngine(); }
+
+  /* ---- call() shim: the AICC importer talks to the engine through this ---- */
+  function call(method, args){
+    args = args || {};
+    if (method === 'config.setCharacter'){
+      if (args.name == null){ state.character = null; }
+      else { state.character = { name: String(args.name).slice(0,80), instruction: String(args.instruction||'').slice(0,8000), avatar: String(args.avatar||'').slice(0,2000) }; }
+      persistState(); buildEngine(); updateCharLabel();
+      return Promise.resolve({ ok: true, value: { character: state.character ? { name: state.character.name } : null } });
+    }
+    if (method === 'character.seedMemories'){
+      var mems = Array.isArray(args.memories) ? args.memories : [];
+      if (!engine || !mems.length) return Promise.resolve({ ok: true, value: { seeded: 0 } });
+      return Promise.resolve(engine.seedCharacterMemories(String(args.name||'this character'), mems)).then(function(nn){ return { ok:true, value:{ seeded: nn } }; });
+    }
+    return Promise.resolve({ ok: false, reason: 'unknown method ' + method });
+  }
+  function updateCharLabel(){ setText('charCurrent', state.character ? state.character.name : 'default Chloe'); setText('herName', state.botName || 'Chloe'); setText('aboutTitle', (state.botName||'Chloe') + ' Solo');
+    var img = byId('herAvatar'); var av = state.herAvatar || (state.character && state.character.avatar);
+    if (img){ if (av){ img.src = av; img.style.display = ''; } else { img.style.display = 'none'; } }
+  }
+
+  /* ---- the mind drawer: a throttled thought stream (the signature feature) ---- */
+  var thoughtBuf = [], drainTimer = null, streamEl, queuedEl, lastIdle = true;
+  function onEngineLog(line){ pushThought(String(line)); if (/\b(reply|respond)/i.test(line)) {} }
+  function pushThought(line){
+    thoughtBuf.push(line);
+    if (thoughtBuf.length > 600) thoughtBuf.splice(0, thoughtBuf.length - 600);
+    updateQueued();
+    scheduleDrain();
+  }
+  function speedDelay(){ var v = Number(byId('speed').value); return Math.round(Math.pow((100 - v)/100, 1.6) * 2000); }
+  function scheduleDrain(){ if (drainTimer || !thoughtBuf.length) return; var d = speedDelay(); if (d <= 0){ flushAll(); return; } drainTimer = setTimeout(function(){ drainTimer = null; drainOne(); }, d); }
+  function flushAll(){ while (thoughtBuf.length) renderThought(thoughtBuf.shift()); updateQueued(); }
+  function drainOne(){ if (thoughtBuf.length) renderThought(thoughtBuf.shift()); updateQueued(); if (thoughtBuf.length) scheduleDrain(); }
+  function updateQueued(){ if (!queuedEl) return; var n = thoughtBuf.length; queuedEl.textContent = n > 1 ? (n + ' thoughts queued…') : ''; }
+  var CATMAP = { ctx:'cog', T0:'flow', T1:'flow', T2:'flow', T3:'flow', tok:'cog', lock:'flow', poll:'io', fact:'mem', episode:'mem', mem:'mem', persona:'cog', character:'cog', remind:'io', reflect:'mem', consolidate:'mem', feedback:'cog', semantic:'mem', intent:'cog', note:'page' };
+  function renderThought(line){
+    if (lastIdle){ streamEl.innerHTML = ''; lastIdle = false; }
+    var tag = 'page', txt = line, m = String(line).match(/^\[chloe\.?([a-zA-Z0-9]*)\]\s*([\s\S]*)$/);
+    if (m){ tag = m[1] || 'flow'; txt = m[2]; }
+    var cls = CATMAP[tag] || 'flow';
+    var row = document.createElement('div'); row.className = 'thought';
+    var t = document.createElement('span'); t.className = 'tag ' + cls; t.textContent = tag || '·';
+    var x = document.createElement('span'); x.className = 'txt'; x.textContent = txt;
+    row.appendChild(t); row.appendChild(x); streamEl.appendChild(row);
+    while (streamEl.children.length > 400) streamEl.removeChild(streamEl.firstChild);
+    streamEl.scrollTop = streamEl.scrollHeight;
+  }
+
+  /* ---- chat rendering ---- */
+  var threadCol, emptyState;
+  function setThinking(on){ engineThinking = on; byId('pulse').classList.toggle('on', on); byId('mindTab').classList.toggle('thinking', on); if (!on) byId('typingRow').classList.remove('on'); }
+  function renderMessage(role, who, text, opts){
+    if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState = null; }
+    var wrap = document.createElement('div'); wrap.className = 'msg ' + (role === 'her' ? 'her' : 'you');
+    var w = document.createElement('div'); w.className = 'who'; w.textContent = who; wrap.appendChild(w);
+    var b = document.createElement('div'); b.className = 'body'; b.textContent = text; wrap.appendChild(b);
+    if (opts && opts.image){ var im = document.createElement('img'); im.className = 'avatar'; im.src = opts.image; wrap.appendChild(im); }
+    var typing = byId('typingRow'); threadCol.insertBefore(wrap, typing);
+    byId('thread').scrollTop = byId('thread').scrollHeight;
+  }
+  function sendUserMessage(){
+    var inp = byId('input'); var text = inp.value.trim(); if (!text) return;
+    inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true;
+    renderMessage('you', state.userName||'You', text);
+    enqueue(USER_ID, state.userName||'You', false, text);
+    setThinking(true);
+    // nudge: a quick poll cycle handles pickup; keep typing indicator responsive
+    setTimeout(function(){ if (engineThinking) byId('typingRow').classList.add('on'); }, 500);
+  }
+
+  /* ---- settings popup ---- */
+  function openSettings(){ byId('settingsBg').classList.add('open'); refreshMemStats(); renderFactList(); }
+  function closeSettings(){ byId('settingsBg').classList.remove('open'); }
+  function refreshMemStats(){
+    var keys = 0, bytes = 0; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0){ keys++; bytes += (localStorage.getItem(key)||'').length; } } } catch(e){}
+    var msgs = queue.length;
+    setText('memStats', msgs + ' message' + (msgs===1?'':'s') + ' · ' + keys + ' stored keys · ~' + Math.round(bytes/1024) + ' KB in this browser');
+  }
+  function wireSettings(){
+    byId('openSettings').addEventListener('click', openSettings);
+    byId('closeSettings').addEventListener('click', closeSettings);
+    byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(tb){
+      tb.addEventListener('click', function(){
+        document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('on'); });
+        document.querySelectorAll('.panel').forEach(function(x){ x.classList.remove('on'); });
+        tb.classList.add('on'); document.querySelector('.panel[data-panel="'+tb.getAttribute('data-tab')+'"]').classList.add('on');
+      });
+    });
+    // behavior toggles -> live config
+    var TOGS = ['conversationMemory','episodicMemory','selfKnowledge','contradictionAware','userModeling','feedbackLearning','semanticRecall'];
+    TOGS.forEach(function(key){ var el = byId('t_'+key); if (!el) return; el.checked = !!state[key]; el.addEventListener('change', function(){ var patch = {}; patch[key] = el.checked; applyConfig(patch); }); });
+    var nameEl = byId('botNameInput'); nameEl.value = state.botName || 'Chloe';
+    nameEl.addEventListener('change', function(){ applyConfig({ botName: (nameEl.value||'Chloe').trim() || 'Chloe' }); updateCharLabel(); });
+    // You tab: your name + pinned things she should know about you
+    var unEl = byId('userNameInput'); unEl.value = state.userName || 'You';
+    unEl.addEventListener('change', function(){ state.userName = (unEl.value||'You').trim() || 'You'; persistState(); ensureUserPartition(); });
+    byId('aboutYouBtn').addEventListener('click', function(){
+      var v = (byId('aboutYouInput').value||'').trim(); if (!v) return;
+      if (!engine || !engine.addFacts){ setText('aboutYouNote','one moment\u2026'); return; }
+      ensureUserPartition().then(function(){ return engine.addFacts(USER_ID, [{ text: v, importance: 8 }], 'operator'); }).then(function(n){
+        byId('aboutYouInput').value=''; setText('aboutYouNote', n ? 'she\u2019ll keep that in mind.' : 'she already knew that.'); renderFactList();
+      });
+    });
+    byId('aboutYouInput').addEventListener('keydown', function(e){ if (e.key==='Enter'){ e.preventDefault(); byId('aboutYouBtn').click(); } });
+    // Her portrait (image plugin)
+    byId('portraitBtn').addEventListener('click', function(){
+      setText('portraitNote', 'painting\u2026');
+      var who = state.character ? state.character.name : (state.botName||'Chloe');
+      var desc = (state.character && state.character.instruction) ? String(state.character.instruction).replace(/\s+/g,' ').slice(0,200) : 'a warm, thoughtful presence';
+      Promise.resolve(paint({ prompt: 'portrait of ' + who + ', ' + desc + ', soft natural light, head and shoulders', resolution: '512x512' })).then(function(r){
+        if (r && r.ok && r.value){ state.herAvatar = r.value; persistState(); updateCharLabel(); setText('portraitNote','done.'); renderMessage('her', state.botName||'Chloe', '', { image: r.value }); }
+        else setText('portraitNote', (r && r.reason) ? r.reason : 'no image \u2014 connect the image plugin on Perchance.');
+      });
+    });
+    // data tab
+    byId('wipeBtn').addEventListener('click', function(){
+      if (!confirm('Erase the whole conversation and everything she has learned? This cannot be undone.')) return;
+      var del = []; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0) del.push(key); } } catch(e){}
+      del.forEach(function(key){ try { localStorage.removeItem(key); } catch(e){} });
+      queue = []; thoughtBuf = []; state = Object.assign({}, DEF_STATE); persistState();
+      threadCol.innerHTML=''; threadCol.appendChild(emptyTemplate()); emptyState = byId('emptyState');
+      var tr = document.createElement('div'); tr.className='typing'; tr.id='typingRow'; tr.innerHTML='<i></i><i></i><i></i>'; threadCol.appendChild(tr);
+      streamEl.innerHTML = '<div class="idle">Her thoughts will appear here as she works.</div>'; lastIdle = true;
+      ensureUserPartition().then(buildEngine); updateCharLabel(); refreshMemStats(); renderFactList();
+    });
+    byId('exportBtn').addEventListener('click', function(){
+      var dump = {}; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0) dump[key] = localStorage.getItem(key); } } catch(e){}
+      var blob = new Blob([JSON.stringify({ format:'chloe-solo', version:SOLO_VERSION, data:dump }, null, 0)], { type:'application/json' });
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'chloe-solo-memory.json'; a.click();
+      setText('dataNote', 'exported.');
+    });
+    byId('importBtn').addEventListener('click', function(){ byId('importFile').click(); });
+    byId('importFile').addEventListener('change', function(){ var f = this.files && this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function(){ try { var obj = JSON.parse(r.result); var d = obj && obj.data; if (!d) throw 0; Object.keys(d).forEach(function(key){ try { localStorage.setItem(key, d[key]); } catch(e){} }); state = loadState(); queue = loadQueue(); location.reload(); } catch(e){ setText('dataNote','that did not look like a Chloe Solo export.'); } }; r.readAsText(f); });
+  }
+  function emptyTemplate(){ var d = document.createElement('div'); d.className='empty'; d.id='emptyState'; d.innerHTML='<h2>Say hello.</h2><div>She remembers what you tell her and thinks before she speaks — open <b>Her mind</b> to watch.</div>'; return d; }
+
+  /* ---- mind drawer open/close + speed ---- */
+  function wireMind(){
+    streamEl = byId('stream'); queuedEl = document.createElement('div'); queuedEl.className='queued'; byId('mind').insertBefore(queuedEl, streamEl.nextSibling);
+    function openMind(){ byId('mind').classList.add('open'); }
+    function closeMindFn(){ byId('mind').classList.remove('open'); }
+    byId('openMind').addEventListener('click', openMind);
+    byId('mindTab').addEventListener('click', openMind);
+    byId('closeMind').addEventListener('click', closeMindFn);
+    var sp = byId('speed');
+    function lbl(){ var v=Number(sp.value); byId('speedVal').textContent = v>=95?'full speed':(v>=60?'brisk':(v>=35?'readable':(v>=12?'slow':'one at a time'))); }
+    sp.addEventListener('input', function(){ lbl(); if (drainTimer){ clearTimeout(drainTimer); drainTimer=null; } scheduleDrain(); }); lbl();
+  }
+
+  /* ---- composer wiring ---- */
+  function wireComposer(){
+    var inp = byId('input'), btn = byId('sendBtn');
+    function grow(){ inp.style.height='auto'; inp.style.height = Math.min(160, inp.scrollHeight) + 'px'; btn.disabled = !inp.value.trim(); }
+    inp.addEventListener('input', grow);
+    inp.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendUserMessage(); } });
+    btn.addEventListener('click', sendUserMessage);
+  }
+
+  /* ---- boot ---- */
+  function boot(){
+    threadCol = byId('threadCol'); emptyState = byId('emptyState'); streamEl = byId('stream');
+    // typing indicator row lives at the end of the column
+    var tr = document.createElement('div'); tr.className='typing'; tr.id='typingRow'; tr.innerHTML='<i></i><i></i><i></i>'; threadCol.appendChild(tr);
+    installMockIfNeeded();
+    updateCharLabel();
+    wireComposer(); wireMind(); wireSettings();
+    // restore the visible conversation
+    if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content); }); }
+    ensureUserPartition().then(buildEngine);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+
+  // expose a couple of shims the inlined char block reaches for (defined above as hoisted fns;
+  // these assignments make them visible if the char block runs in a nested scope)
+  window.__solo = { call: call, byId: byId, setText: setText, log: log, refresh: refresh, selChannel: selChannel };
+})();
+</script>
+<script>
+/* The AICC character importer + persona authoring, lifted from Chloe-bot (1:1 with AI Character Chat).
+   It uses the shims published on window.__solo by the glue above. */
+(function () {
+  var S = window.__solo || {};
+  function byId(id){ return S.byId ? S.byId(id) : document.getElementById(id); }
+  function setText(id,t){ return S.setText ? S.setText(id,t) : (byId(id)&&(byId(id).textContent=t)); }
+  function call(m,a){ return S.call ? S.call(m,a) : Promise.resolve({ok:false}); }
+  function log(m){ return S.log ? S.log(m) : void 0; }
+  function refresh(){ return S.refresh ? S.refresh() : void 0; }
+  function selChannel(){ return S.selChannel ? S.selChannel() : 'solo'; }
+/*__CHARIMPORT__*/
+})();
+</script>
