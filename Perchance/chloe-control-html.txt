@@ -349,6 +349,7 @@
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="convMemChk" checked> remember the full back-and-forth (her own messages + resolve who/what others @-mention)</label>
+        <label class="chip"><input type="checkbox" id="feedbackChk"> learn what lands &mdash; adapt reply style from reactions, follow-ups &amp; <code>!chloe good/bad</code></label>
         <label class="chip"><input type="checkbox" id="contradictionChk"> notice when someone contradicts an earlier fact (may gently check)</label>
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
         <label class="chip"><input type="checkbox" id="deviceTimeChk"> know the current date &amp; time (your device clock, no location)</label>
@@ -1400,6 +1401,7 @@
     ['deferredIntentsChk', 'config.setDeferredIntents', 'deferredIntents'],
     ['contradictionChk', 'config.setContradictionAware', 'contradictionAware'],
     ['convMemChk', 'config.setConversationMemory', 'conversationMemory'],
+    ['feedbackChk', 'config.setFeedbackLearning', 'feedbackLearning'],
     ['attentionChk', 'config.setAttentionManager', 'attentionManager'],
     ['autoModChk', 'config.setAutoMod', 'autoMod'],
     ['backfillChk', 'config.setBackfill', 'backfill'],

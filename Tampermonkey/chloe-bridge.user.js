@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.87.0
+// @version      0.88.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -192,6 +192,18 @@
                                   // (activity-aware: ALSO sweeps the poll right after one that ingested
                                   // messages — reactions cluster seconds after fresh messages, so summons
                                   // and trust land in ~1 poll in active rooms; quiet rooms stay cheap)
+      // ---- feedback / preference learning (DESIGN-feedback): adapt toward the reply STYLE that's
+      // landing in each channel. A bandit-lite EWMA over style "arms" (length + tone), fed by free
+      // poll-side signals (reactions on her messages, continuation, explicit !chloe good/bad), surfaced
+      // as a gentle soft-context nudge toward the winning arm. NOT training; opt-in. ----
+      feedbackLearning: false,
+      feedbackAlpha: 0.3,            // EWMA weight on each new signal (recent feedback matters more)
+      feedbackMinSamples: 4,         // a style arm needs this many signals before it may nudge
+      feedbackMargin: 0.2,           // the winning arm must beat the runner-up by this much to nudge
+      feedbackContinuationReward: 0.3,        // soft positive when the person keeps talking after her reply
+      feedbackContinuationWindowMs: 600000,   // 10m: continuation only counts inside this window
+      feedbackNegativeEmoji: ['\ud83d\udc4e'],// 👎 (negatives; positives reuse trustPositiveEmoji)
+      feedbackPendingMax: 12,        // cap on outstanding replies awaiting a continuation signal
       // engagement mode: 'normal' (reply when addressed + volunteer gate), 'locked' (raid panic:
       // ignore everyone but mods; no greeting/volunteering; auto-mod still runs), 'open' (reply to
       // everyone in the channel — the "stream" mode; addressing no longer required).
@@ -489,6 +501,7 @@
     var REACTTALLY_KEY = 'reacttally:' + cfg.channelId;   // running per-emoji tally of significant reactions
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
+    var FEEDBACK_KEY = 'feedback:' + cfg.channelId;     // DESIGN-feedback: per-channel EWMA over reply-style arms {len,tone}
     var OWNLINE_KEY = 'ownlines:' + cfg.channelId;   // her OWN recent messages (text + ts), captured at ingest from
     // the messages Discord echoes back, so the transcript she reads is two-sided (DESIGN-conversation-memory).
     // Bounded by ownLinesMax. Per-channel; in a DM it lives in the isolated DM bucket.
@@ -823,6 +836,47 @@
     }
     var trustReactSeen = {};   // msgId+emoji -> count already credited (bounded)
     var trustReactKeys = [];
+    // ---- feedback / preference learning state (DESIGN-feedback) ----
+    var fbReactSeen = {}, fbReactKeys = [];   // msgId+emoji already scored for style feedback (bounded, idempotent across sweeps)
+    var fbPending = [];        // her recent replies awaiting a continuation signal: {style, who, at, done}
+    var lastReplyStyle = null; // style of her most recent reply here (for !chloe good/bad)
+    // The two style "arms": length bucket and tone bucket of a reply. Cheap, computed from the text.
+    function styleOf(text) {
+      var t = String(text || ''); var n = t.length;
+      var len = n < 120 ? 'short' : (n > 400 ? 'long' : 'med');
+      var playful = /[\u2190-\u21ff\u2600-\u27bf\u2b00-\u2bff]/.test(t) || /\ud83c[\udc00-\udfff]|\ud83d[\udc00-\udfff]|\ud83e[\udc00-\udfff]/.test(t) || /(^|\s)(lol|haha|hehe|omg|yay|haha)\b|!|:\)|:d\b|\bxd\b/i.test(t);
+      return { len: len, tone: playful ? 'playful' : 'measured' };
+    }
+    // EWMA update: each arm holds a running reward r in [-1,1] and a sample count n. reward is the signal.
+    function recordFeedback(style, reward) {
+      if (!cfg.feedbackLearning || !style) return Promise.resolve(null);
+      return Promise.resolve(store.get(FEEDBACK_KEY)).then(function (fb) {
+        fb = (fb && fb.len && fb.tone) ? fb : { len: {}, tone: {}, at: 0 };
+        var a = cfg.feedbackAlpha || 0.3;
+        function upd(dim, bucket) { var cur = dim[bucket] || { r: 0, n: 0 }; cur.r = cur.r + a * (reward - cur.r); cur.n = (cur.n || 0) + 1; dim[bucket] = cur; }
+        upd(fb.len, style.len); upd(fb.tone, style.tone); fb.at = clock.now();
+        return store.set(FEEDBACK_KEY, fb);
+      });
+    }
+    // A person kept talking after her reply -> soft positive to that reply's style (engagement reward).
+    // Never penalizes silence (someone going offline isn't negative feedback).
+    function creditContinuation(humans) {
+      if (!cfg.feedbackLearning || !fbPending.length || !humans || !humans.length) return Promise.resolve(null);
+      var win = cfg.feedbackContinuationWindowMs || 600000, rew = cfg.feedbackContinuationReward || 0.3;
+      var chain = Promise.resolve();
+      humans.forEach(function (m) {
+        var uid = m && m.author && m.author.id; if (!uid) return;
+        var ts = snowflakeTime(m.id) || clock.now();
+        for (var i = 0; i < fbPending.length; i++) {
+          var pe = fbPending[i];
+          if (!pe.done && pe.who === uid && ts > pe.at && (ts - pe.at) <= win) { pe.done = true; (function (st) { chain = chain.then(function () { return recordFeedback(st, rew); }); })(pe.style); break; }
+        }
+      });
+      // prune credited / aged-out entries
+      var cutoff = clock.now() - win;
+      fbPending = fbPending.filter(function (pe) { return !pe.done && pe.at >= cutoff; });
+      return chain;
+    }
     function creditPositiveReactions(msg) {
       if (!cfg.relationshipTrust || typeof cfg.reactionUsers !== 'function') return Promise.resolve(0);
       if (!msg || !msg.author || msg.author.id !== cfg.botUserId || !msg.reactions || !msg.reactions.length) return Promise.resolve(0);
@@ -859,7 +913,23 @@
       var hers = msg.author && msg.author.id === cfg.botUserId;
       var hasPositive = hers && (msg.reactions || []).some(function (r) { return r && r.emoji && pos.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; });
       var affectChain = hasPositive ? affectNudge({ confidence: (cfg.affectGain || 0.08), warmth: (cfg.affectGain || 0.08) }) : Promise.resolve(null);
-      return affectChain.then(function () { return creditPositiveReactions(msg); }).then(function () { return procCheckReactions(msg); }).then(function () { return summonCheckReactions(msg); }).then(function () { return scoreMessageReactions(msg); });
+      // DESIGN-feedback: a reaction on HER message is a free quality signal for the reply's STYLE.
+      // Positives reuse the trust set; negatives are a small explicit set. Counted once per emoji/msg.
+      var fbChain = Promise.resolve(null);
+      if (cfg.feedbackLearning && hers) {
+        var neg = cfg.feedbackNegativeEmoji || [], posHit = 0, negHit = 0;
+        (msg.reactions || []).forEach(function (r) {
+          var nm = r && r.emoji && (r.emoji.name || ''); if (!nm) return;
+          var key = msg.id + '|' + nm, prior = fbReactSeen[key] || 0, cnt = r.count || 0;
+          if (cnt <= prior) return;
+          if (pos.indexOf(nm) >= 0) { posHit++; } else if (neg.indexOf(nm) >= 0) { negHit++; } else return;
+          fbReactSeen[key] = cnt; fbReactKeys.push(key);
+          if (fbReactKeys.length > 500) { var ok2 = fbReactKeys.shift(); delete fbReactSeen[ok2]; }
+        });
+        var valence = posHit > negHit ? 1 : (negHit > posHit ? -1 : 0);
+        if (valence !== 0) fbChain = recordFeedback(styleOf(msg.content), valence);
+      }
+      return affectChain.then(function () { return fbChain; }).then(function () { return creditPositiveReactions(msg); }).then(function () { return procCheckReactions(msg); }).then(function () { return summonCheckReactions(msg); }).then(function () { return scoreMessageReactions(msg); });
     }
     function scoreMessageReactions(msg) {
       var top = null;
@@ -1816,6 +1886,16 @@
             var mc = cfg.serverMemberCount ? (' \u2014 significance threshold here is ' + reactionThreshold(cfg.serverMemberCount) + '+ on a ' + cfg.serverMemberCount + '-member server') : '';
             return { ack: 'reactions this room values: ' + top.map(function (r) { return r.label + ' \u00d7' + r.count; }).join(', ') + mc };
           });
+        } },
+      { verb: 'good',    modOnly: true,  help: 'good \u2014 tell her that last reply landed (feedback learning)', handler: function (modId, c) {
+          if (!cfg.feedbackLearning) return Promise.resolve({ ack: 'feedback learning is off \u2014 turn it on in the Behavior tab' });
+          if (!lastReplyStyle) return Promise.resolve({ ack: 'I haven\u2019t replied here recently, so there\u2019s nothing to rate' });
+          return recordFeedback(lastReplyStyle, 1).then(function () { return { ack: 'noted \u2014 glad that one landed', react: '\ud83d\udc4d' }; });
+        } },
+      { verb: 'bad',     modOnly: true,  help: 'bad \u2014 tell her that last reply missed (feedback learning)', handler: function (modId, c) {
+          if (!cfg.feedbackLearning) return Promise.resolve({ ack: 'feedback learning is off \u2014 turn it on in the Behavior tab' });
+          if (!lastReplyStyle) return Promise.resolve({ ack: 'I haven\u2019t replied here recently, so there\u2019s nothing to rate' });
+          return recordFeedback(lastReplyStyle, -1).then(function () { return { ack: 'got it \u2014 I\u2019ll keep that in mind', react: '\ud83d\udc4d' }; });
         } },
       { verb: 'aboutme',  modOnly: false, help: 'aboutme (what she remembers about you)', handler: function (modId, c) {
           return Promise.resolve(store.get(partKey(modId))).then(function (p) {
@@ -3207,6 +3287,7 @@
               ];
               if (newCursor && newCursor !== ctx.cursor) writes.push(store.set(CURSOR_KEY, newCursor));
               if (humanTexts.length) writes.push(updateMood(humanTexts, rh.avgGapMs));
+              if (cfg.feedbackLearning) writes.push(creditContinuation(humans));   // DESIGN-feedback: people who kept talking after her reply
               // conversation memory: record HER OWN messages (the ones Discord echoes back, which we drop
               // from `incoming`) into a per-channel ring, with their real snowflake timestamps, so the
               // transcript she reads later is two-sided. Each own message is fetched exactly once (the
@@ -3431,6 +3512,11 @@
             reply.replying = false;
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
+            if (cfg.feedbackLearning) {   // DESIGN-feedback: remember this reply's style, awaiting a continuation/reaction signal
+              lastReplyStyle = styleOf(text);
+              fbPending.push({ style: lastReplyStyle, who: p.authorId, at: clock.now(), done: false });
+              if (fbPending.length > (cfg.feedbackPendingMax || 12)) fbPending = fbPending.slice(-(cfg.feedbackPendingMax || 12));
+            }
             log('[chloe.T1] replied to ' + p.authorName);
             scheduleTextChain();   // completion-driven: the next queued reply fires at generation speed, not poll speed
             return Promise.resolve(store.del(PENDING_KEY)).then(function () { return intent ? setIntent(intent) : null; }).then(function () {
@@ -3759,6 +3845,35 @@
     // page template renders today (Phase 3 becomes a pure consumer switch), reports the LEGACY token
     // figure (template wrapping has always been accounted in promptOverheadTokens), and writes its
     // legacy ctx field to gctx.legacyOut — the documented Phase-2 dual-emission shim.
+
+    // DESIGN-feedback: nudge toward the reply style that's been landing in THIS channel. Reads the
+    // per-channel EWMA arms and, only when one clearly leads (enough samples + a positive margin),
+    // surfaces a gentle, AI-discretionary note. Pure soft context — never a rule, never forced.
+    function fbBestBucket(dim, labels) {
+      if (!dim) return null;
+      var arr = Object.keys(dim).map(function (k) { return { k: k, r: (dim[k] && dim[k].r) || 0, n: (dim[k] && dim[k].n) || 0 }; })
+                      .filter(function (x) { return x.n >= (cfg.feedbackMinSamples || 4); });
+      if (!arr.length) return null;
+      arr.sort(function (a, b) { return b.r - a.r; });
+      if (arr[0].r <= 0) return null;   // nothing is positively landing yet
+      if (arr.length >= 2 && (arr[0].r - arr[1].r) < (cfg.feedbackMargin || 0.2)) return null;   // no clear winner
+      return labels[arr[0].k] || null;
+    }
+    registerProvider({ id: 'feedback', priority: BANDS.AMBIENCE,
+      enabled: function (c) { return !!c.feedbackLearning; },
+      gather: function () {
+        return Promise.resolve(store.get(FEEDBACK_KEY)).then(function (fb) {
+          if (!fb) return null;
+          var notes = [];
+          var l = fbBestBucket(fb.len, { short: 'shorter', med: 'medium-length', long: 'longer, more detailed' });
+          var t = fbBestBucket(fb.tone, { playful: 'more playful', measured: 'more measured' });
+          if (l) notes.push(l); if (t) notes.push(t);
+          if (!notes.length) return null;
+          var text = 'In this channel lately, your ' + notes.join(' and ') + ' replies have landed best \u2014 lean that way when it feels natural, not every time.';
+          return { text: text, tokens: estimateTokens(text) };
+        });
+      } });
+
     registerProvider({ id: 'time', priority: BANDS.AMBIENCE,
       enabled: function (c) { return !!c.timeAware; },
       gather: function (g) {
@@ -5107,6 +5222,7 @@
       'idleDeliberation', 'ownAffect', 'moodAware', 'channelSummary', 'factMemory', 'volunteer',
       'contradictionAware',
       'conversationMemory',
+      'feedbackLearning',
       'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
@@ -5143,6 +5259,9 @@
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       detectContradiction: detectContradiction,
+      styleOf: styleOf, recordFeedback: recordFeedback,
+      creditContinuation: creditContinuation,
+      recordReplyStyle: function (style, who) { lastReplyStyle = style; fbPending.push({ style: style, who: who, at: clock.now(), done: false }); },
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
       getUserLang: getUserLang, setUserLang: setUserLang, updateConfig: updateConfig,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
@@ -5605,7 +5724,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.87.0';
+  var VERSION = '0.88.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6147,6 +6266,7 @@
         factMemory: cfgGet('factMemory', false),
         contradictionAware: cfgGet('contradictionAware', false),
         conversationMemory: cfgGet('conversationMemory', true),
+        feedbackLearning: cfgGet('feedbackLearning', false),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
         moodAware: cfgGet('moodAware', false),
@@ -6368,6 +6488,7 @@
       factMemory: !!cfgGet('factMemory', false),
       contradictionAware: !!cfgGet('contradictionAware', false),
       conversationMemory: cfgGet('conversationMemory', true) !== false,
+      feedbackLearning: !!cfgGet('feedbackLearning', false),
       timeAware: !!cfgGet('timeAware', false),
       deviceTime: !!cfgGet('deviceTime', false),
       operatorNote: (function () { var m = semInjectMap(); return (m['opnote'] && m['opnote'].text) ? String(m['opnote'].text) : ''; })(),
@@ -6607,6 +6728,8 @@
         { var lf = !!(args && args.on); cfgSet('lullFiller', lf); patchEngines({ lullFiller: lf }); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
       case 'config.setCheckins':
         { var ck = !!(args && args.on); cfgSet('checkins', ck); patchEngines({ checkins: ck }); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
+      case 'config.setFeedbackLearning':
+        { var fbl = !!(args && args.on); cfgSet('feedbackLearning', fbl); patchEngines({ feedbackLearning: fbl }); return Promise.resolve({ ok: true, value: { feedbackLearning: fbl } }); }
       case 'config.setConversationMemory':
         { var cmn = !!(args && args.on); cfgSet('conversationMemory', cmn); patchEngines({ conversationMemory: cmn }); return Promise.resolve({ ok: true, value: { conversationMemory: cmn } }); }
       case 'config.setContradictionAware':
@@ -6972,7 +7095,7 @@
           // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
            'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
-           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'arch:index:' + ch,
+           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'feedback:' + ch, 'arch:index:' + ch,
            'modlog', 'backfill:' + ch, 'blocklist'].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
@@ -7064,7 +7187,7 @@
       ['cursor:'+ch,'speaker:ring:'+ch,'rhythm:'+ch,'mood:'+ch,'intent:'+ch,'reminders:'+ch,
        'afk:'+ch,'highlights:'+ch,'reacttally:'+ch,'lull:'+ch,'checkins:'+ch,
        'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,
-       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch
+       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch,'feedback:'+ch
       ].forEach(function (k) { var v = GM_getValue(NS + pfx + k, null); if (v != null) chData[k] = v; });
       channels[ch] = chData;
     });
