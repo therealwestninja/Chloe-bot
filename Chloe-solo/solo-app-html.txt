@@ -191,6 +191,12 @@
   .roster-del{border:none;background:transparent;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 7px;border-radius:6px}
   .roster-del:hover{color:#fff;background:var(--bad,#d9534f)}
   .roster-alias{width:100%;font-size:12.5px;padding:5px 9px}
+  .msg.her.hascolor{border-left:3px solid var(--speaker,var(--accent-ink));padding-left:13px}
+  .who .spk-av{width:15px;height:15px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;border:1px solid var(--line)}
+  .rosterpick{display:flex;flex-wrap:wrap;gap:7px}
+  .mempick{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:5px 14px;font-size:13px;cursor:pointer}
+  .mempick:hover{border-color:var(--speaker,var(--accent-ink))}
+  .mempick.on{border-color:var(--speaker,var(--accent-ink));color:var(--speaker,var(--accent-ink));font-weight:600;box-shadow:inset 0 0 0 1px var(--speaker,var(--accent-ink))}
   .card h3{margin:0 0 4px;font-size:14px;color:var(--ink)} .card .note{font-size:12px;color:var(--muted)}
   .chardrop{border:1.5px dashed var(--line);border-radius:11px;padding:20px;text-align:center;color:var(--muted);font-size:13px;transition:border-color .15s,background .15s;cursor:pointer}
   .chardrop:hover,.chardrop.drag{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
@@ -423,6 +429,11 @@
 
     <!-- MEMORY & DATA -->
     <div class="panel" data-panel="memory">
+      <div class="card" id="memViewCard" style="display:none">
+        <h3>Whose memory</h3>
+        <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions. Pick whose to inspect; the cards below follow your choice.</div>
+        <div id="memPicker" class="rosterpick" style="margin-top:10px"></div>
+      </div>
       <div class="card">
         <h3>What she's stored</h3>
         <div class="note" id="memStats">—</div>
@@ -8479,16 +8490,17 @@ return window.weld.comments;
   }
   // Pre-create the user partition so memories + "about you" work from the very first moment (the
   // engine's ingest uses `if (!p)`, so it augments this rather than overwriting it).
-  function ensureUserPartition(){
-    return store.get('u:'+USER_ID).then(function(p){
-      if (p){ if (state.userName && p.name !== state.userName){ p.name = state.userName; return store.set('u:'+USER_ID, p); } return; }
+  function ensureUserPartitionIn(st){
+    return st.get('u:'+USER_ID).then(function(p){
+      if (p){ if (state.userName && p.name !== state.userName){ p.name = state.userName; return st.set('u:'+USER_ID, p); } return; }
       var now = Date.now();
-      return store.set('u:'+USER_ID, { id: USER_ID, name: state.userName||'You', firstSeen: now, lastSeen: now, interactionCount: 0, state:'active', lifecycle:'quiet', recent: [], facts: [] });
+      return st.set('u:'+USER_ID, { id: USER_ID, name: state.userName||'You', firstSeen: now, lastSeen: now, interactionCount: 0, state:'active', lifecycle:'quiet', recent: [], facts: [] });
     });
   }
+  function ensureUserPartition(){ return ensureUserPartitionIn(store); }
   function renderFactList(){
-    var box = byId('factList'); if (!box || !engine || !engine.getFacts) return;
-    Promise.resolve(engine.getFacts(USER_ID)).then(function(facts){
+    var box = byId('factList'); var eng = viewEngine(); if (!box || !eng || !eng.getFacts) return;
+    Promise.resolve(eng.getFacts(USER_ID)).then(function(facts){
       while (box.firstChild) box.removeChild(box.firstChild);
       if (!facts || !facts.length){ var e=document.createElement('div'); e.className='note'; e.textContent='Nothing yet \u2014 she\u2019ll start remembering as you talk.'; box.appendChild(e); return; }
       facts.slice().reverse().forEach(function(f){
@@ -8496,14 +8508,14 @@ return window.weld.comments;
         var t=document.createElement('div'); t.className='mt'; t.textContent=f.text;
         if (f.source==='operator'){ var pin=document.createElement('span'); pin.className='pin'; pin.textContent='pinned'; t.appendChild(pin); }
         var x=document.createElement('button'); x.className='forget'; x.title='Forget this'; x.textContent='\u00d7';
-        x.addEventListener('click', function(){ Promise.resolve(engine.forgetFact(USER_ID, f.text)).then(renderFactList); });
+        x.addEventListener('click', function(){ Promise.resolve(eng.forgetFact(USER_ID, f.text)).then(renderFactList); });
         row.appendChild(t); row.appendChild(x); box.appendChild(row);
       });
     });
   }
   // #6: surface the structures her thinking builds — not just raw facts
   function renderInnerState(){
-    var box = byId('innerState'); if (!box || !engine) return;
+    var box = byId('innerState'); var eng = viewEngine(), st = viewStore(); if (!box || !eng) return;
     function txt(v){ return String(v == null ? '' : v); }
     function section(label, items, empty){
       var sec = document.createElement('div'); sec.style.cssText = 'margin:10px 0 2px';
@@ -8515,15 +8527,15 @@ return window.weld.comments;
     }
     var get = function(fn, arg){ try { return fn ? Promise.resolve(fn(arg)) : Promise.resolve(null); } catch(e){ return Promise.resolve(null); } };
     Promise.all([
-      get(store.get, 'mood:' + CH),
-      get(engine.getPersonaNote),
-      get(engine.getMemory, USER_ID),
-      get(engine.goalsForOwner, USER_ID),
-      get(engine.getSelfIntents)
+      get(st.get, 'mood:' + CH),
+      get(eng.getPersonaNote),
+      get(eng.getMemory, USER_ID),
+      get(eng.goalsForOwner, USER_ID),
+      get(eng.getSelfIntents)
     ]).then(function(r){
       var mood = r[0], persona = r[1], mem = r[2], goals = r[3], intents = r[4];
       while (box.firstChild) box.removeChild(box.firstChild);
-      var moodStr = (mood && engine.moodDescriptor) ? engine.moodDescriptor(mood) : '';
+      var moodStr = (mood && eng.moodDescriptor) ? eng.moodDescriptor(mood) : '';
       box.appendChild(section('Mood', moodStr ? ['She feels ' + moodStr + ' right now.'] : [], 'Still settling — her mood forms as you talk.'));
       box.appendChild(section('How she sees herself', persona ? [txt(persona)] : [], 'She hasn\u2019t formed a self-note yet.'));
       var insights = (mem && mem.insights || []).map(function(x){ return txt(x.text); });
@@ -8744,7 +8756,7 @@ return window.weld.comments;
     var text = scrubTokens(body);   // strip any leftover <@id>/<#id> tokens (reminders carry one; no Discord surface here)
     if (text){
       enqueue(BOT_ID, herName(), true, text);
-      if (!(liveActive && finalizeLiveReply(text))) renderMessage('her', herName(), text);
+      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text); if (isGroup()) styleSpeaker(w, BOT_ID, state.herAvatar); }
     }
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
@@ -8973,14 +8985,32 @@ return window.weld.comments;
       return !!turnPlan.allowed[charId];
     };
   }
+  // a stable, readable color per character (so a 3-way scene is followable at a glance)
+  var CAST_PALETTE = ['#2E7DD1', '#2E9E7B', '#C0562B', '#8A5BD0', '#B8902A', '#C2417A', '#3C8C8C', '#6B7A2E', '#5B62E0', '#A23E8C'];
+  function castColor(seed){ var h = 0; seed = String(seed || ''); for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0; return CAST_PALETTE[h % CAST_PALETTE.length]; }
+  function styleSpeaker(wrap, cid, avatar){
+    if (!wrap) return;
+    var color = (!cid || cid === BOT_ID) ? null : castColor(cid);   // primary keeps the default accent
+    wrap.classList.add('hascolor');
+    wrap.style.setProperty('--speaker', color || 'var(--accent-ink)');
+    var who = wrap.querySelector('.who'); if (who) who.style.color = color || '';
+    if (avatar && who && !who.querySelector('.spk-av')){ var img = document.createElement('img'); img.className = 'spk-av'; img.src = avatar; img.alt = ''; who.insertBefore(img, who.firstChild); }
+  }
   function makeSendFor(c){
     return function(chId, body){
       setThinking(false);
       var text = scrubTokens(body);
-      if (text){ enqueue(c.id, c.name, true, text); var w = renderMessage('her', c.name, text); if (w) w.setAttribute('data-cid', c.id); }
+      if (text){ enqueue(c.id, c.name, true, text); var w = renderMessage('her', c.name, text); if (w){ w.setAttribute('data-cid', c.id); styleSpeaker(w, c.id, c.avatar); } }
       return Promise.resolve(true);
     };
   }
+  // which character's memory the Memory & data tab is inspecting (session-only; resets to the primary).
+  // The whole point of the cast is separate memory per character — this is how you actually see it.
+  var memViewId = BOT_ID;
+  function viewEngine(){ var e = extraEngines[memViewId]; return (memViewId && memViewId !== BOT_ID && e) ? e.engine : engine; }
+  function viewStore(){ var e = extraEngines[memViewId]; return (memViewId && memViewId !== BOT_ID && e) ? e.store : store; }
+  function viewChar(){ return (memViewId === BOT_ID) ? (state.character || null) : ((state.cast || []).filter(function(x){ return x.id === memViewId; })[0] || null); }
+  function viewName(){ var c = viewChar(); return (memViewId === BOT_ID) ? herName() : (c ? c.name : herName()); }
   function buildEngine(){
     if (engine && engine.stop) { try { engine.stop(); } catch(e){} }
     Object.keys(extraEngines).forEach(function(id){ var e = extraEngines[id]; if (e && e.engine && e.engine.stop) { try { e.engine.stop(); } catch(x){} } });
@@ -8993,6 +9023,7 @@ return window.weld.comments;
         var st = makeStore(NS + 'c:' + c.id + ':');
         var ex = ChloeT0.createEngine({ transport: transport, store: st, clock: { now: Date.now }, log: function(){}, config: buildConfig(c, st) });
         registerLorebook(ex);
+        ensureUserPartitionIn(st);   // so this character can remember you from the first message
         ex.start();
         extraEngines[c.id] = { engine: ex, store: st, char: c };
       } catch(e){ pushThought('[scene] could not start ' + (c && c.name) + ': ' + (e && e.message)); }
@@ -9012,7 +9043,7 @@ return window.weld.comments;
     function row(name, opts){
       var r = document.createElement('div'); r.className = 'roster-row';
       var top = document.createElement('div'); top.className = 'roster-top';
-      var n = document.createElement('span'); n.className = 'roster-name'; n.textContent = name; top.appendChild(n);
+      var n = document.createElement('span'); n.className = 'roster-name'; n.textContent = name; if (opts && opts.extra) n.style.color = castColor(opts.extra.id); top.appendChild(n);
       if (opts && opts.primary){ var tag = document.createElement('span'); tag.className = 'roster-tag'; tag.textContent = 'primary'; top.appendChild(tag); }
       if (opts && opts.extra){
         var lab = document.createElement('label'); lab.className = 'roster-act';
@@ -9037,6 +9068,21 @@ return window.weld.comments;
     var ms = byId('castMaxSpeakers'), mf = byId('castMaxFollowups');
     if (ms){ ms.value = state.castMaxSpeakers || 2; if (!ms.__w){ ms.__w = 1; ms.addEventListener('change', function(){ state.castMaxSpeakers = Math.max(1, Math.min(6, parseInt(ms.value, 10) || 2)); persistState(); }); } }
     if (mf){ mf.value = (state.castMaxFollowups == null ? 2 : state.castMaxFollowups); if (!mf.__w){ mf.__w = 1; mf.addEventListener('change', function(){ state.castMaxFollowups = Math.max(0, Math.min(6, parseInt(mf.value, 10) || 0)); persistState(); }); } }
+  }
+  function refreshMemViews(){ renderFactList(); renderInnerState(); renderContextBudget(); }
+  function renderMemPicker(){
+    var card = byId('memViewCard'), box = byId('memPicker');
+    if (!isGroup()){ memViewId = BOT_ID; if (card) card.style.display = 'none'; return; }
+    if (memViewId !== BOT_ID && !extraEngines[memViewId]) memViewId = BOT_ID;   // viewed character left the scene
+    if (card) card.style.display = '';
+    if (!box) return; box.innerHTML = '';
+    var roster = [{ id: BOT_ID, name: herName() }].concat(activeExtras().map(function(c){ return { id: c.id, name: c.name }; }));
+    roster.forEach(function(m){
+      var b = document.createElement('button'); b.className = 'mempick' + (m.id === memViewId ? ' on' : ''); b.textContent = m.name;
+      if (m.id !== BOT_ID) b.style.setProperty('--speaker', castColor(m.id));
+      b.addEventListener('click', function(){ memViewId = m.id; renderMemPicker(); refreshMemViews(); });
+      box.appendChild(b);
+    });
   }
   // context provider so matched entries ride the same budgeted injection path as everything else.
   function registerLorebook(eng){
@@ -9558,26 +9604,27 @@ return window.weld.comments;
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); }
   // Context inspector (mined from uminara's Gen-Context breakdown): show what's in her head per reply,
   // priced with the SAME tokenizer she uses (engine.estimateTokens), plus the authoritative totals.
   function renderContextBudget(){
-    var box = byId('ctxBudget'); if (!box) return;
-    if (!engine){ box.innerHTML = '<div class="note">\u2014</div>'; return; }
+    var box = byId('ctxBudget'); var eng = viewEngine(); if (!box) return;
+    if (!eng){ box.innerHTML = '<div class="note">\u2014</div>'; return; }
     box.innerHTML = '<div class="note">measuring\u2026</div>';
-    var tok = function(s){ try { return engine.estimateTokens ? engine.estimateTokens(String(s || '')) : Math.ceil(String(s || '').length / 4); } catch(e){ return Math.ceil(String(s || '').length / 4); } };
-    var personaStr = (state.character && state.character.instruction) ? state.character.instruction : '';
+    var tok = function(s){ try { return eng.estimateTokens ? eng.estimateTokens(String(s || '')) : Math.ceil(String(s || '').length / 4); } catch(e){ return Math.ceil(String(s || '').length / 4); } };
+    var vc = viewChar();
+    var personaStr = (vc && vc.instruction) ? vc.instruction : '';
     var injStr = (state.injections || []).map(function(x){ return x.text; }).join('\n');
     function P(fn){ return Promise.resolve().then(fn).catch(function(){ return null; }); }
     Promise.all([
-      P(function(){ return engine.getMemory ? engine.getMemory(USER_ID) : null; }),
-      P(function(){ return engine.getPersonaNote ? engine.getPersonaNote() : null; }),
-      P(function(){ return engine.assembleContext ? engine.assembleContext({ authorId: USER_ID, authorName: userNameStr(), content: '' }) : null; })
+      P(function(){ return eng.getMemory ? eng.getMemory(USER_ID) : null; }),
+      P(function(){ return eng.getPersonaNote ? eng.getPersonaNote() : null; }),
+      P(function(){ return eng.assembleContext ? eng.assembleContext({ authorId: USER_ID, authorName: userNameStr(), content: '' }) : null; })
     ]).then(function(r){
       var mem = r[0], persona = r[1], ctx = r[2];
       var factsStr = mem ? (((mem.insights || []).map(function(x){ return x.text; }).join('; ')) + ' ' + ((mem.facts || []).map(function(f){ return f.text; }).join('; '))) : '';
       var personaNoteStr = persona ? (typeof persona === 'string' ? persona : (persona.text || '')) : '';
-      var budget = (engine.config && engine.config.requestTokenBudget) || 5000;
+      var budget = (eng.config && eng.config.requestTokenBudget) || 5000;
       var histTok = (ctx && ctx.contextTokens != null) ? ctx.contextTokens : 0;
       var rows = [
         ['Character & persona', tok(personaStr) + tok(personaNoteStr), '#5B62E0'],
