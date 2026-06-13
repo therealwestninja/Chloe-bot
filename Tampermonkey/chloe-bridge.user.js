@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.88.0
+// @version      0.89.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -265,6 +265,17 @@
       episodeEveryPolls: 24,               // extraction cadence (it's an AI call); (every-1) form, never poll 1
       episodeRecallCount: 2,               // max episodes recalled into one reply
       episodeRecencyHalfLifeMs: 604800000, // recall decay half-life (7d): old episodes fade, never vanish
+      // ---- semantic recall + FSRS-lite (DESIGN-semantic): rank recalled episodes by MEANING (local
+      // embeddings via transformers.js, the same engine AICC uses) instead of keyword overlap, and let
+      // memories she REVISITS stay sharp via an FSRS forgetting curve whose stability grows on each
+      // recall. Opt-in; needs episodicMemory. Falls back to keyword overlap when no embedder. ----
+      semanticRecall: false,
+      embedModel: 'Xenova/bge-small-en-v1.5',  // ~33MB quantized, 384-dim; the page loads it lazily
+      embedFn: null,            // optional (texts[]) -> Promise<number[][]|null>; supplied by the page broker
+      semanticMinSim: 0.4,      // cosine floor for an episode to count as semantically relevant
+      fsrsInitialStability: 4,  // days: a fresh episode's stability (elapsed time to ~90% retrievability)
+      fsrsRecallGrowth: 1.9,    // stability multiplier each time an episode is recalled (the spacing effect)
+      fsrsMaxStability: 365,    // cap on stability (days)
       // Event-graph (DESIGN-eventgraph.md): link episodes by shared people/topics/time at EXTRACTION
       // (no LLM), so recall can walk ONE hop ("…and connected to that…"). Default ON.
       episodeGraph: true,
@@ -2598,6 +2609,34 @@
       var wd = Math.pow(0.5, gap / (cfg.episodeLinkHalfLifeMs || 21600000)) * (cfg.episodeLinkWd || 0.2);
       return wp + wt + wd;
     }
+    // ---- semantic recall + FSRS-lite helpers (DESIGN-semantic) -----------------------------------
+    function cosine(a, b) {
+      if (!a || !b || a.length !== b.length) return 0;
+      var dot = 0, na = 0, nb = 0;
+      for (var i = 0; i < a.length; i++) { var x = a[i], y = b[i]; dot += x * y; na += x * x; nb += y * y; }
+      if (na <= 0 || nb <= 0) return 0;
+      return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    }
+    // FSRS power forgetting curve (FSRS-4.5/5): R(t) = (1 + FACTOR·t/S)^DECAY, with the constants chosen
+    // so R(S) = 0.9 — i.e. stability S is the elapsed time at which retrievability has fallen to 90%.
+    var FSRS_DECAY = -0.5, FSRS_FACTOR = 0.2345679012345679;   // = 0.9^(1/DECAY) - 1
+    function fsrsRetrievability(stabDays, ageMs) {
+      var t = Math.max(0, ageMs || 0) / 86400000;
+      var S = Math.max(0.1, stabDays || (cfg.fsrsInitialStability || 4));
+      return Math.pow(1 + FSRS_FACTOR * t / S, FSRS_DECAY);
+    }
+    // On recall, stability grows (the spacing effect) so a revisited memory decays slower next time.
+    function fsrsStrengthen(stabDays) {
+      var base = stabDays || (cfg.fsrsInitialStability || 4);
+      return Math.min(cfg.fsrsMaxStability || 365, base * (cfg.fsrsRecallGrowth || 1.9));
+    }
+    // Embed a batch of texts via the page broker; resolves to null if unavailable (keyword fallback).
+    function embedTexts(texts) {
+      if (!cfg.semanticRecall || typeof cfg.embedFn !== 'function' || !texts || !texts.length) return Promise.resolve(null);
+      return Promise.resolve(cfg.embedFn(texts)).then(function (vecs) {
+        return (Array.isArray(vecs) && vecs.length === texts.length) ? vecs : null;
+      }, function () { return null; });   // a failed embed is a no-op -> keyword path
+    }
     var episodeSeq = 0;
     function mintEpisodeId() { episodeSeq++; return 'e' + clock.now().toString(36) + episodeSeq.toString(36); }
     // Link a freshly-added episode to its single strongest existing neighbor (mutual: upgrade the
@@ -2627,19 +2666,27 @@
             var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
             if (!proposed.length) return null;
             var added = 0;
+            var fresh = [];
             proposed.forEach(function (raw) {
               if (!raw || typeof raw !== 'object' || typeof raw.t !== 'string' || !raw.t.trim()) return;
               var ep = { id: mintEpisodeId(), text: raw.t.trim().slice(0, 120), at: clock.now(),
                           participants: Array.isArray(raw.who) ? raw.who.map(function (w) { return String(w).slice(0, 40); }).slice(0, 6) : [],
                           topics: Array.isArray(raw.topics) ? raw.topics.map(function (t) { return String(t).toLowerCase().slice(0, 24); }).slice(0, 6) : [],
                           importance: Math.max(1, Math.min(10, Math.round(Number(raw.i)) || 5)), relatesTo: null };
+              if (cfg.semanticRecall) { ep.stab = cfg.fsrsInitialStability || 4; ep.lastRecallAt = ep.at; }   // FSRS-lite seed
               ring.push(ep);
               linkEpisode(ring, ep);   // cheap edge to its strongest existing neighbor (no LLM)
+              fresh.push(ep);
               added++;
             });
             if (!added) return null;
             if (ring.length > cfg.episodesPerChannel) ring = ring.slice(-cfg.episodesPerChannel);
-            return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] recorded ' + added + ' episode(s)'); return added; });
+            // semantic recall: embed the new episodes once, at creation (cached on the record). If the
+            // embedder isn't available this is a no-op and recall falls back to keyword overlap.
+            return embedTexts(fresh.map(function (e) { return e.text + ' ' + (e.topics || []).join(' '); })).then(function (vecs) {
+              if (vecs) fresh.forEach(function (e, i) { if (Array.isArray(vecs[i])) e.vec = vecs[i]; });
+              return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] recorded ' + added + ' episode(s)' + (vecs ? ' (embedded)' : '')); return added; });
+            });
           });
         });
       });
@@ -3997,40 +4044,69 @@
       gather: function (g) {
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           if (!Array.isArray(ring) || !ring.length) return null;
-          // Query tokens: the addressed message + the last few transcript lines.
+          // Query tokens (always built — they're the fallback and they're free).
           // Matching per DESIGN §7a: lowercase, punctuation-stripped, tokens ≥3 chars, exact overlap.
           function toks(s) {
             return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
           }
-          var qset = {};
-          toks(g.p && g.p.content).forEach(function (w) { qset[w] = true; });
-          (g.lines || []).slice(-3).forEach(function (l) { toks(l.text).forEach(function (w) { qset[w] = true; }); });
+          var qWords = [];
+          toks(g.p && g.p.content).forEach(function (w) { qWords.push(w); });
+          (g.lines || []).slice(-3).forEach(function (l) { toks(l.text).forEach(function (w) { qWords.push(w); }); });
+          var qset = {}; qWords.forEach(function (w) { qset[w] = true; });
+          var qsize = Object.keys(qset).length;
           var now = clock.now(), half = cfg.episodeRecencyHalfLifeMs || 604800000;
-          var scored = [];
-          ring.forEach(function (e) {
-            var eset = {}; (e.topics || []).forEach(function (t) { toks(t).forEach(function (w) { eset[w] = true; }); });
-            toks(e.text).forEach(function (w) { eset[w] = true; });
-            var overlap = 0; Object.keys(eset).forEach(function (w) { if (qset[w]) overlap++; });
-            if (!overlap) return;
-            var decay = Math.pow(0.5, Math.max(0, now - (e.at || 0)) / half);
-            scored.push({ e: e, score: overlap * (e.importance || 5) * decay });
+          // Semantic mode: embed the query, score episodes by cosine to the query vector, and decay by
+          // an FSRS retrievability curve (per-episode stability). Both degrade gracefully: no embedder ->
+          // keyword overlap; semanticRecall off -> the original overlap × importance × half-life decay.
+          var semantic = !!cfg.semanticRecall;
+          var qTextForEmbed = String((g.p && g.p.content) || '') + ' ' + (g.lines || []).slice(-3).map(function (l) { return l.text; }).join(' ');
+          return (semantic ? embedTexts([qTextForEmbed.slice(0, 400)]) : Promise.resolve(null)).then(function (qv) {
+            var queryVec = (qv && qv[0]) ? qv[0] : null;
+            var scored = [];
+            ring.forEach(function (e) {
+              var rel, decay;
+              if (semantic && queryVec && Array.isArray(e.vec)) {
+                rel = Math.max(0, cosine(queryVec, e.vec));             // MEANING overlap
+                if (rel < (cfg.semanticMinSim || 0.4)) return;
+              } else {
+                var eset = {}; (e.topics || []).forEach(function (t) { toks(t).forEach(function (w) { eset[w] = true; }); });
+                toks(e.text).forEach(function (w) { eset[w] = true; });
+                var overlap = 0; Object.keys(eset).forEach(function (w) { if (qset[w]) overlap++; });
+                if (!overlap) return;
+                rel = semantic ? (overlap / Math.max(1, qsize)) : overlap;   // normalize in semantic mode so it mixes with FSRS R
+              }
+              if (semantic && e.stab != null) decay = fsrsRetrievability(e.stab, now - (e.lastRecallAt || e.at || 0));
+              else decay = Math.pow(0.5, Math.max(0, now - (e.at || 0)) / half);
+              scored.push({ e: e, score: rel * (e.importance || 5) * decay });
+            });
+            if (!scored.length) return null;   // nothing relevant -> zero cost this turn
+            scored.sort(function (a, b) { return b.score - a.score; });
+            var top = scored.slice(0, cfg.episodeRecallCount || 2);
+            var pickedIds = {}; top.forEach(function (x) { if (x.e.id) pickedIds[x.e.id] = true; });
+            var pick = top.map(function (x) { return x.e.text; });
+            // one-hop event-graph expansion: pull in the top episode's strongest neighbor (ONE hop,
+            // never transitive) if it's linked, present, and not already surfaced. Tiny fixed cost.
+            var hop = null;
+            if (cfg.episodeGraph && top.length && top[0].e.relatesTo && top[0].e.relatesTo.id) {
+              var nb = ring.filter(function (e2) { return e2.id === top[0].e.relatesTo.id; })[0];   // dangling id -> no hop
+              if (nb && !pickedIds[nb.id]) hop = nb.text;
+            }
+            // FSRS-lite strengthening: recalling a memory makes it stickier — grow stability and reset its
+            // clock on the episodes we actually surface, so the ones she revisits stay sharp and the rest
+            // fade. Persist the bump (only in semantic mode, where stability exists).
+            var strengthen = Promise.resolve();
+            if (semantic) {
+              var bumped = false;
+              top.forEach(function (x) { if (x.e.stab != null) { x.e.stab = fsrsStrengthen(x.e.stab); x.e.lastRecallAt = now; bumped = true; } });
+              if (bumped) strengthen = Promise.resolve(store.set(EPI_KEY, ring)).catch(function () { return null; });
+            }
+            return strengthen.then(function () {
+              var text;
+              if (hop) text = 'You remember from this channel: ' + pick.join('; ') + '; and connected to that, ' + hop + '. Bring it up only if it genuinely fits.';
+              else text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
+              return { text: text, tokens: estimateTokens(text) };
+            });
           });
-          if (!scored.length) return null;   // nothing relevant -> zero cost this turn
-          scored.sort(function (a, b) { return b.score - a.score; });
-          var top = scored.slice(0, cfg.episodeRecallCount || 2);
-          var pickedIds = {}; top.forEach(function (x) { if (x.e.id) pickedIds[x.e.id] = true; });
-          var pick = top.map(function (x) { return x.e.text; });
-          // one-hop event-graph expansion: pull in the top episode's strongest neighbor (ONE hop,
-          // never transitive) if it's linked, present, and not already surfaced. Tiny fixed cost.
-          var hop = null;
-          if (cfg.episodeGraph && top.length && top[0].e.relatesTo && top[0].e.relatesTo.id) {
-            var nb = ring.filter(function (e2) { return e2.id === top[0].e.relatesTo.id; })[0];   // dangling id -> no hop
-            if (nb && !pickedIds[nb.id]) hop = nb.text;
-          }
-          var text;
-          if (hop) text = 'You remember from this channel: ' + pick.join('; ') + '; and connected to that, ' + hop + '. Bring it up only if it genuinely fits.';
-          else text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
-          return { text: text, tokens: estimateTokens(text) };
         });
       } });
 
@@ -5223,6 +5299,7 @@
       'contradictionAware',
       'conversationMemory',
       'feedbackLearning',
+      'semanticRecall',
       'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
@@ -5262,6 +5339,7 @@
       styleOf: styleOf, recordFeedback: recordFeedback,
       creditContinuation: creditContinuation,
       recordReplyStyle: function (style, who) { lastReplyStyle = style; fbPending.push({ style: style, who: who, at: clock.now(), done: false }); },
+      cosine: cosine, fsrsRetrievability: fsrsRetrievability, fsrsStrengthen: fsrsStrengthen,
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
       getUserLang: getUserLang, setUserLang: setUserLang, updateConfig: updateConfig,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
@@ -5724,7 +5802,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.88.0';
+  var VERSION = '0.89.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6116,6 +6194,42 @@
     if (!cfgGet('exactTokens', true)) return null;   // off -> engine falls through to chars/4
     return tokLoader.countSync(str);
   }
+  // Local embeddings (DESIGN-semantic) for semantic recall — the SAME transformers.js path the exact
+  // tokenizer uses (imported into the page realm), so no extra plumbing. Loads a small bge model lazily
+  // on first use; inference is async and batched. Every failure resolves to null so the engine falls
+  // back to keyword overlap and never stalls. This is the one heavy download, gated behind semanticRecall.
+  var embedLoader = (function () {
+    var pipe = null, state = 'idle', promise = null;
+    function load(model) {
+      if (promise) return promise;
+      state = 'loading';
+      promise = Promise.resolve().then(function () {
+        var imp = (LINKWIN && LINKWIN.eval) ? LINKWIN.eval('(u)=>import(u)') : function (u) { return import(u); };
+        return imp(TOKENIZER_CDN);   // same pinned @huggingface/transformers build as the tokenizer
+      }).then(function (mod) {
+        return mod.pipeline('feature-extraction', model || 'Xenova/bge-small-en-v1.5');
+      }).then(function (p) { pipe = p; state = 'ready'; log('[chloe.embed] local embedder ready'); return p; })
+        .catch(function (err) { state = 'fallback'; log('[chloe.embed] embedder load failed (' + ((err && err.message) || err) + ') \u2014 keyword recall'); return null; });
+      return promise;
+    }
+    return {
+      preload: function (model) { try { return load(model); } catch (e) { state = 'fallback'; return Promise.resolve(null); } },
+      embed: function (texts) {
+        return load(cfgGet('embedModel', 'Xenova/bge-small-en-v1.5')).then(function (p) {
+          if (!p) return null;
+          return Promise.resolve(p(texts, { pooling: 'mean', normalize: true })).then(function (out) {
+            try { return out.tolist(); } catch (e) { return null; }
+          }, function () { return null; });
+        }).catch(function () { return null; });
+      },
+      state: function () { return state; }
+    };
+  })();
+  function embedHook(texts) {
+    if (!cfgGet('semanticRecall', false)) return Promise.resolve(null);
+    if (!texts || !texts.length) return Promise.resolve(null);
+    return embedLoader.embed(texts);
+  }
   // #15: a sandboxed frame can report origin 'null'; posting back to targetOrigin 'null' is dropped,
   // so fall back to '*' in that one case (responses are nonce-matched, so this stays safe).
   function replyTarget(o) { return (o && o !== 'null') ? o : '*'; }
@@ -6285,6 +6399,9 @@
         translate: cfgGet('translate', false),
         deviceClock: GM_getValue(NS + 'deviceClock', null),
         countTokens: countTokensHook,   // exact tokenizer when warm; returns null -> engine's chars/4 fallback
+        embedFn: embedHook,             // local embeddings when semanticRecall is on + warm; null -> keyword recall
+        semanticRecall: cfgGet('semanticRecall', false),
+        embedModel: cfgGet('embedModel', 'Xenova/bge-small-en-v1.5'),
         idleDeliberation: cfgGet('idleDeliberation', false),
         deferredIntents: cfgGet('deferredIntents', false),
         attentionManager: cfgGet('attentionManager', false),
@@ -6504,6 +6621,8 @@
       cleanOutput: cfgGet('cleanOutput', true) !== false,
       translate: cfgGet('translate', false) !== false,
       tokenizer: tokLoader.state(),
+      semanticRecall: !!cfgGet('semanticRecall', false),
+      embedder: embedLoader.state(),
       idleDeliberation: cfgGet('idleDeliberation', false) !== false,
       deferredIntents: !!cfgGet('deferredIntents', false),
       attentionManager: cfgGet('attentionManager', false) !== false,
@@ -6773,6 +6892,8 @@
           patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
         { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
+      case 'config.setSemanticRecall':
+        { var srn = !!(args && args.on); cfgSet('semanticRecall', srn); if (srn) embedLoader.preload(cfgGet('embedModel','Xenova/bge-small-en-v1.5')); patchEngines({ semanticRecall: srn }); return Promise.resolve({ ok: true, value: { semanticRecall: srn, embedder: embedLoader.state() } }); }
       case 'config.setExactTokens':
         { var etn = !!(args && args.on); cfgSet('exactTokens', etn); if (etn) tokLoader.preload(); patchEngines({ exactTokens: etn }); return Promise.resolve({ ok: true, value: { exactTokens: etn, tokenizer: tokLoader.state() } }); }
       case 'work.get':
