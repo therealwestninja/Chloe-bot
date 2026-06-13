@@ -280,6 +280,17 @@
       <div id="charStatus" class="note" style="margin-top:8px"></div>
     </div>
 
+    <div class="card">
+      <h2>Or write your own</h2>
+      <div class="note" style="margin-bottom:8px">Define a character right here &mdash; no file or JSON needed. Give a name and describe who they are, how they talk, and what they care about. This replaces the current personality.</div>
+      <div class="row"><input class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, RudBo, Aria&hellip;)"></div>
+      <textarea id="charAuthorInstr" rows="6" spellcheck="false" placeholder="You are &hellip; &mdash; describe their personality, voice, background, and how they should behave." style="margin-top:8px"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="charAuthorBtn">Become this character</button>
+        <span class="note" id="charAuthorNote"></span>
+      </div>
+    </div>
+
     <div class="card" id="charListCard" style="display:none">
       <h2>Pick a character</h2>
       <div id="charList" class="userlist"></div>
@@ -337,6 +348,8 @@
         <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
+        <label class="chip"><input type="checkbox" id="convMemChk" checked> remember the full back-and-forth (her own messages + resolve who/what others @-mention)</label>
+        <label class="chip"><input type="checkbox" id="contradictionChk"> notice when someone contradicts an earlier fact (may gently check)</label>
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
         <label class="chip"><input type="checkbox" id="deviceTimeChk"> know the current date &amp; time (your device clock, no location)</label>
         <label class="chip"><input type="checkbox" id="selfKnowChk"> know her own basics (her name, how people reach her, that she’s a bot)</label>
@@ -348,6 +361,7 @@
         <label class="chip"><input type="checkbox" id="paceChk"> match the room&rsquo;s pace (adaptive timing)</label>
         <label class="chip"><input type="checkbox" id="workChk"> hold a sense of the moment (working memory)</label>
         <label class="chip"><input type="checkbox" id="delibChk"> think things over when idle (deliberation)</label>
+        <label class="chip"><input type="checkbox" id="deferredIntentsChk"> follow her own train of thought (revisit topics later)</label>
         <label class="chip"><input type="checkbox" id="attentionChk"> prioritize her background thinking by relevance (attention manager)</label>
         <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
         <label class="chip"><input type="checkbox" id="epiGraphChk"> connect related memories (event graph)</label>
@@ -722,6 +736,7 @@
       return;
     }
     if (d.kind === 'event') {
+      if (d.name === 'log' && d.value != null) { log(String(d.value)); return; }
       if (d.name === 'poll' && d.value) {
         var v = d.value;
         if (v.ingested > 0 || (v.newUsers && v.newUsers.length)) {
@@ -764,7 +779,11 @@
     }
   });
   // page-side diagnostics -> browser console, with a clear prefix so it's distinct from the userscript's logs
-  function dlog() { try { console.log.apply(console, ['[chloe-page]'].concat([].slice.call(arguments))); } catch (e) {} }
+  function dlog() {
+    var a = [].slice.call(arguments);
+    try { console.log.apply(console, ['[chloe-page]'].concat(a)); } catch (e) {}
+    try { if (typeof debugAppend === 'function') debugAppend('[chloe-page] ' + a.map(function (x) { return typeof x === 'string' ? x : (function () { try { return JSON.stringify(x); } catch (e2) { return String(x); } })(); }).join(' ')); } catch (e) {}
+  }
   function callBrief(a) {
     if (!a) return '';
     if (a.person && a.person.name) return 'who=' + a.person.name + (a.kind ? (' kind=' + a.kind) : '');
@@ -1378,6 +1397,9 @@
   // here. Toggles with extra behavior (side-effects, default-on, extra args) stay hand-wired below.
   var TOGGLES = [
     ['affectChk', 'config.setOwnAffect', 'ownAffect'],
+    ['deferredIntentsChk', 'config.setDeferredIntents', 'deferredIntents'],
+    ['contradictionChk', 'config.setContradictionAware', 'contradictionAware'],
+    ['convMemChk', 'config.setConversationMemory', 'conversationMemory'],
     ['attentionChk', 'config.setAttentionManager', 'attentionManager'],
     ['autoModChk', 'config.setAutoMod', 'autoMod'],
     ['backfillChk', 'config.setBackfill', 'backfill'],
@@ -1412,12 +1434,28 @@
     b.addEventListener('click', onClick);
     return b;
   }
-  function log(line) {
-    var box = byId('log');
-    var t = new Date().toLocaleTimeString();
-    box.textContent = box.textContent + (box.textContent ? '\n' : '') + t + '  ' + line;
+  // Debug (raw log) gets EVERYTHING — the engine's full [chloe.*] stream, the page-side [chloe-page]
+  // generation traces, and panel events — capped so it can't grow without bound. The Activity feed gets
+  // only her meaningful work: mechanical/internal lines (context packing, tokenizer, run-locks, poll
+  // mechanics, loop backoff, archive, command dispatch, persona/clock grounding, idle "dream" passes)
+  // and the verbose page traces stay in Debug ONLY — so Activity is no longer a mirror of Debug.
+  var DEBUG_MAX = 600, debugLines = [];
+  function debugAppend(line, t) {
+    debugLines.push((t || new Date().toLocaleTimeString()) + '  ' + line);
+    if (debugLines.length > DEBUG_MAX) debugLines = debugLines.slice(-DEBUG_MAX);
+    var box = byId('log'); if (!box) return;
+    box.textContent = debugLines.join('\n');
     box.scrollTop = box.scrollHeight;
-    feedEvent(line, t);
+  }
+  function isDebugOnly(line) {
+    var s = String(line);
+    if (/^\s*\[chloe-page\]/.test(s) || /^\s*poll:/i.test(s)) return true;
+    return /\[chloe\.ctx|\[chloe\.tok|\[chloe\.lock|\[chloe\.poll|\[chloe\.loop|\[chloe\.archive|\[chloe\.cmd|\[chloe\.persona|\[chloe\.character|\[chloe\.sleep/.test(s);
+  }
+  function log(line) {
+    var t = new Date().toLocaleTimeString();
+    debugAppend(line, t);
+    if (!isDebugOnly(line)) feedEvent(line, t);
   }
   // Classify a log line into a timeline event by its bracketed tag. Pure presentation — the engine
   // already emits every meaningful action through log(); this just types + colors it.
@@ -2074,7 +2112,7 @@
       else log('auto-mod rules failed: ' + res.reason);
     });
   });
-  byId('clearLogBtn').addEventListener('click', function () { byId('log').textContent = ''; });
+  byId('clearLogBtn').addEventListener('click', function () { debugLines = []; byId('log').textContent = ''; });
   byId('resetBtn').addEventListener('click', function () {
     if (!window.confirm('Reset T0 state (cursor, roster, ring)? The token is kept.')) return;
     call('reset').then(function () { log('T0 state reset'); refresh(); });
@@ -2162,6 +2200,19 @@
   function charExtractStores(obj) {
     var out = { characters: [], threads: [], messages: [] };
     if (!obj || typeof obj !== 'object') return out;
+    // Dexie DB export — AI Character Chat's NATIVE "export characters" format (a .json.gz whose
+    // formatName is "dexie"). The tables live under data.data[] as { tableName, rows }; pull the
+    // character/thread/message rows straight out. This is the common AICC export and must come first.
+    var dx = obj.data && obj.data.data;
+    if (obj.formatName === 'dexie' || Array.isArray(dx)) {
+      if (Array.isArray(dx)) dx.forEach(function (blk) {
+        if (!blk || !Array.isArray(blk.rows)) return;
+        if (blk.tableName === 'characters') out.characters = blk.rows;
+        else if (blk.tableName === 'threads') out.threads = blk.rows;
+        else if (blk.tableName === 'messages') out.messages = blk.rows;
+      });
+      if (out.characters.length || out.threads.length || out.messages.length) return out;
+    }
     if (obj.stores && typeof obj.stores === 'object') {
       ['characters', 'threads', 'messages'].forEach(function (k) { if (Array.isArray(obj.stores[k])) out[k] = obj.stores[k]; });
       return out;
@@ -2175,8 +2226,15 @@
     if (c.roleInstruction === undefined && c.systemMessage != null) c.roleInstruction = c.systemMessage;
     if (c.roleInstruction === undefined) c.roleInstruction = '';
     if (!c.name) c.name = 'Unnamed';
+    var instr = String(c.roleInstruction || '');
+    // AICC parity: fold in its other persona fields when they're literal text. Skip "@preset"
+    // references (e.g. "@roleplay1") — those are AICC-internal aliases that carry no meaning here.
+    var gwi = String(c.generalWritingInstructions || '').trim();
+    if (gwi && gwi.charAt(0) !== '@') instr += '\n\nWriting style: ' + gwi;
+    var rem = String(c.reminderMessage || '').trim();
+    if (rem) instr += '\n\nKeep in mind: ' + rem;
     var avatar = (c.avatar && c.avatar.url) ? c.avatar.url : (c.avatarUrl || '');
-    return { name: String(c.name), instruction: String(c.roleInstruction || ''), avatar: avatar, id: (c.id != null ? c.id : null), uuid: c.uuid || null };
+    return { name: String(c.name), instruction: instr, avatar: avatar, id: (c.id != null ? c.id : null), uuid: c.uuid || null };
   }
   // respool's replay-from-file: timeless memories already stored on a thread's messages.
   function charMemoriesForCharacter(stores, character) {
@@ -2346,6 +2404,17 @@
       } else { charSetStatus('This browser won\u2019t allow clipboard reads here \u2014 paste into the box manually, then click Load.', 'er'); byId('charUrlInput').focus(); }
     });
     var ib = byId('charInstallBtn'); if (ib) ib.addEventListener('click', charInstall);
+    var ab = byId('charAuthorBtn'); if (ab) ab.addEventListener('click', function () {
+      var nm = (byId('charAuthorName').value || '').trim();
+      var instr = (byId('charAuthorInstr').value || '').trim();
+      if (!nm) { setText('charAuthorNote', 'give your character a name first'); return; }
+      if (!instr) { setText('charAuthorNote', 'write a sentence or two about who they are'); return; }
+      setText('charAuthorNote', '\u2026');
+      call('config.setCharacter', { name: nm, instruction: instr, avatar: '' }).then(function (res) {
+        if (res && res.ok) { setText('charAuthorNote', 'done \u2014 she is now ' + nm); log('character authored: ' + nm + ' (personality replaced)'); refresh(); }
+        else setText('charAuthorNote', 'could not apply: ' + ((res && res.reason) || 'unknown'));
+      });
+    });
     var cb = byId('charClearBtn'); if (cb) cb.addEventListener('click', function () {
       call('config.setCharacter', { name: null }).then(function () { setText('charCurrent', 'default Chloe'); log('character cleared \u2014 back to default Chloe'); refresh(); });
     });

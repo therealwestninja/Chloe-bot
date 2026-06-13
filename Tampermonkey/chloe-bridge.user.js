@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.83.0
+// @version      0.87.0
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -105,6 +105,8 @@
       globalCooldownMs: 2500, // min gap between ANY two of her sends (lets different people be answered promptly)
       debounceMs: 2500,       // wait for a lull before replying (don't reply mid-burst)
       contextLines: 12,       // recent channel lines handed to the brain (hard upper bound)
+      conversationMemory: true,   // give her a TWO-SIDED, legible transcript: include her OWN recent messages (so she sees the back-and-forth she's part of) and resolve <@id>/<#id>/<@&id> refs to readable @names / #channels in what she reads, instead of dropping her turns and stripping every mention. Correctness; off == legacy one-sided view.
+      ownLinesMax: 12,        // cap on her own recent messages kept per channel for the transcript
       requestTokenBudget: 5000,// TOTAL tokens per request to the backend — must cover EVERYTHING:
                               // persona + instructions + intention + anti-repeat list + addressed
                               // message + the transcript. The transcript gets whatever's left after
@@ -289,6 +291,9 @@
       // across worker tabs when a pool exists), and recomposes an insight/goal. NEVER sends. Curiosity-
       // gated (self-limiting: a resolved deliberation lowers curiosity). Opt-in (spends real calls).
       idleDeliberation: false,
+      deferredIntents: false,    // self-scheduled future cognition (DESIGN-self-intents): a concluded deliberation can schedule a later REVISIT of its subject — an internal action, never a message. Needs idleDeliberation.
+      selfIntentMax: 8,          // cap on queued self-intents per channel
+      selfIntentRevisitMs: 21600000,   // 6h: how far out a revisit is scheduled when she finds a topic worth coming back to
       attentionManager: false,   // utility-scored AI-pass selection (DESIGN-attention.md); off = today's fixed ladder
       selfKnowledge: false,      // ground her in her own basics (name, prefix, summon) from config (DESIGN-selfknow.md)
       deliberateCuriosityFloor: 0.62,   // only think when curiosity is meaningfully above neutral
@@ -391,6 +396,10 @@
       factImportanceDefault: 5,      // neutral importance for facts with none (old data / bare strings)
       factRecencyWeight: 2,          // how much recency tilts the importance-ranked fact selection
       factEveryPolls: 12,            // run the silent extraction pass at most every Nth poll
+      contradictionAware: false,     // flag when a NEW fact contradicts a HELD one (DESIGN-contradiction): keep both, record it, and (gently, AI-discretionary) let her clarify. Needs factMemory.
+      contradictionImportanceFloor: 5,   // only flag conflicts where the new fact is at least this important (don't fuss over trivia)
+      contradictionFreshMs: 7200000,     // 2h: how long after a conflict appears she'll consider gently raising it
+      contradictionTtlMs: 259200000,     // 3d: an unresolved recorded conflict is cleared after this (tidied on the idle sweep)
       beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
       judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
@@ -480,6 +489,13 @@
     var REACTTALLY_KEY = 'reacttally:' + cfg.channelId;   // running per-emoji tally of significant reactions
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
+    var OWNLINE_KEY = 'ownlines:' + cfg.channelId;   // her OWN recent messages (text + ts), captured at ingest from
+    // the messages Discord echoes back, so the transcript she reads is two-sided (DESIGN-conversation-memory).
+    // Bounded by ownLinesMax. Per-channel; in a DM it lives in the isolated DM bucket.
+    var SELFINTENT_KEY = 'selfintents:' + cfg.channelId;   // deferred self-intents: a persistent queue of future
+    // INTERNAL actions she scheduled for herself (currently: 'revisit' a deliberation subject). Poll-driven
+    // like reminders, but a fired intent never sends — it drives her own later cognition. Per-channel; in a
+    // DM it lives in the (isolated) DM bucket. Bounded by selfIntentMax.
     var LULL_KEY = 'lull:' + cfg.channelId;   // last time she filled a silence (lull filler throttle)
     var CHECKIN_KEY = 'checkins:' + cfg.channelId;   // { __last: ts, byUser: { id: {at,count,seenAt} } } — check-in throttle + attempt cap
     var ARCH_INDEX_KEY = 'arch:index:' + cfg.channelId;   // index of archived ("historical friend") user ids
@@ -628,6 +644,42 @@
         return Promise.resolve(store.set(REMIND_KEY, list)).then(function () { return { ok: true, value: rem }; });
       });
     }
+    // ---- deferred self-intents (DESIGN-self-intents) -------------------------------------------
+    // The same dueAt-queue shape as reminders, but a fired intent is an INTERNAL action, never a send.
+    // Entry: { id, kind, dueAt, subject, mode, createdAt }. Today the only kind is 'revisit' (come back
+    // and re-think a deliberation subject later); the dispatch is built so new kinds are a new branch.
+    function getSelfIntents() { return Promise.resolve(store.get(SELFINTENT_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
+    function scheduleSelfIntent(kind, delayMs, fields) {
+      if (!cfg.deferredIntents) return Promise.resolve(null);
+      return getSelfIntents().then(function (list) {
+        // de-dupe: don't stack multiple pending intents of the same kind+subject
+        var subj = fields && fields.subject;
+        if (list.some(function (it) { return it.kind === kind && it.subject === subj; })) return null;
+        if (list.length >= (cfg.selfIntentMax || 8)) return null;   // bounded; silently drop rather than grow
+        var it = { id: 's' + clock.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36), kind: kind, dueAt: clock.now() + Math.max(0, delayMs | 0), createdAt: clock.now() };
+        if (fields) for (var k in fields) if (fields.hasOwnProperty(k)) it[k] = fields[k];
+        list.push(it);
+        return Promise.resolve(store.set(SELFINTENT_KEY, list)).then(function () { log('[chloe.intent] scheduled "' + kind + '"' + (subj ? ' re: ' + String(subj).slice(0, 40) : '') + ' in ' + Math.round((delayMs || 0) / 60000) + 'm'); return it; });
+      });
+    }
+    // Peek the earliest DUE intent of a kind (does not remove it).
+    function dueSelfIntent(kind) {
+      if (!cfg.deferredIntents) return Promise.resolve(null);
+      return getSelfIntents().then(function (list) {
+        var now = clock.now();
+        var due = list.filter(function (it) { return it.kind === kind && it.dueAt <= now; });
+        due.sort(function (a, b) { return a.dueAt - b.dueAt; });
+        return due[0] || null;
+      });
+    }
+    function consumeSelfIntent(id) {
+      return getSelfIntents().then(function (list) {
+        var keep = list.filter(function (it) { return it.id !== id; });
+        if (keep.length === list.length) return false;
+        return Promise.resolve(store.set(SELFINTENT_KEY, keep)).then(function () { return true; });
+      });
+    }
+
     function listReminders(authorId) {
       return getReminders().then(function (list) { return authorId ? list.filter(function (r) { return r.authorId === authorId; }) : list; });
     }
@@ -979,6 +1031,19 @@
         .replace(/<@&\d+>/g, ' ')        // role mentions (the bot is often pinged by role)
         .replace(/<#\d+>/g, ' ')         // channel mentions
         .replace(/<a?:\w+:\d+>/g, ' ')   // custom/animated emoji
+        .replace(/\s+/g, ' ').trim();
+    }
+    // For the TRANSCRIPT she reads (not her output): turn opaque Discord refs into readable names so she
+    // keeps the social cues instead of seeing blanks. <@id>/<@!id> -> @name (from the roster map, her own
+    // name for herself, else @someone); <@&id> -> @role; <#id> -> #channel; emoji -> :name:. nameById is
+    // an { id: name } map the caller builds from the roster (+ the bot). Output still uses scrubDiscordTokens.
+    function resolveRefs(c, nameById) {
+      nameById = nameById || {};
+      return String(c || '')
+        .replace(/<@!?(\d+)>/g, function (_, id) { return '@' + (nameById[id] || (id === cfg.botUserId ? (personaName || cfg.botName || 'chloe') : 'someone')); })
+        .replace(/<@&\d+>/g, '@role')
+        .replace(/<#\d+>/g, '#channel')
+        .replace(/<a?:(\w+):\d+>/g, ':$1:')
         .replace(/\s+/g, ' ').trim();
     }
     function stripAddressing(c) {
@@ -1753,9 +1818,12 @@
           });
         } },
       { verb: 'aboutme',  modOnly: false, help: 'aboutme (what she remembers about you)', handler: function (modId, c) {
-          return getFacts(modId).then(function (facts) {
+          return Promise.resolve(store.get(partKey(modId))).then(function (p) {
+            var facts = (p && Array.isArray(p.facts)) ? p.facts : [];
             if (!facts.length) return { ack: "I haven\u2019t picked up anything I\u2019m holding onto about you \u2014 we just haven\u2019t talked enough yet, or fact memory is off." };
-            return { ack: 'here\u2019s what I remember about you:\n' + facts.map(function (f) { return '\u2022 ' + f.text; }).join('\n') + '\n(say "' + cfg.commandPrefix + ' forget <words>" to drop any of it)' };
+            var note = '';
+            if (p && p.conflict && p.conflict.a && p.conflict.b) note = '\n(heads up \u2014 two of these don\u2019t quite line up: \u201c' + p.conflict.a + '\u201d vs \u201c' + p.conflict.b + '\u201d)';
+            return { ack: 'here\u2019s what I remember about you:\n' + facts.map(function (f) { return '\u2022 ' + f.text; }).join('\n') + note + '\n(say "' + cfg.commandPrefix + ' forget <words>" to drop any of it)' };
           });
         } },
       { verb: 'mode',      modOnly: false, help: 'mode  /  mode clear (mods)', handler: function (modId, c) {
@@ -2550,6 +2618,15 @@
               });
               if (out.length > (cfg.factsPerUser || 6)) { droppedTotal += out.length - cfg.factsPerUser; out = out.slice(-(cfg.factsPerUser || 6)); }
               var changed = out.length !== facts.length;
+              // contradiction tidy: drop a recorded conflict once it's stale, or once it's resolved
+              // (a side no longer present among the kept facts — e.g. the person restated and it merged).
+              if (p.conflict) {
+                var ttl = cfg.contradictionTtlMs || 259200000;
+                var liveText = {}; out.forEach(function (f) { liveText[normFact(f.text)] = 1; });
+                var stale = (clock.now() - (p.conflict.at || 0)) > ttl;
+                var resolved = !liveText[normFact(p.conflict.a)] || !liveText[normFact(p.conflict.b)];
+                if (stale || resolved) { delete p.conflict; changed = true; }
+              }
               if (changed) p.facts = out;
               return changed ? store.set(partKey(p.id), p) : null;
             });
@@ -3130,6 +3207,21 @@
               ];
               if (newCursor && newCursor !== ctx.cursor) writes.push(store.set(CURSOR_KEY, newCursor));
               if (humanTexts.length) writes.push(updateMood(humanTexts, rh.avgGapMs));
+              // conversation memory: record HER OWN messages (the ones Discord echoes back, which we drop
+              // from `incoming`) into a per-channel ring, with their real snowflake timestamps, so the
+              // transcript she reads later is two-sided. Each own message is fetched exactly once (the
+              // cursor advances past it), so appending can't double-count.
+              if (cfg.conversationMemory && cfg.botUserId) {
+                var ownNew = msgs.filter(function (m) { return m.author && m.author.id === cfg.botUserId && String(m.content || '').trim(); });
+                if (ownNew.length) {
+                  writes.push(Promise.resolve(store.get(OWNLINE_KEY)).then(function (own) {
+                    own = Array.isArray(own) ? own : [];
+                    ownNew.forEach(function (m) { own.push({ text: String(m.content).slice(0, 400), ts: snowflakeTime(m.id) || clock.now() }); });
+                    if (own.length > (cfg.ownLinesMax || 12)) own = own.slice(-(cfg.ownLinesMax || 12));
+                    return store.set(OWNLINE_KEY, own);
+                  }));
+                }
+              }
 
               return Promise.all(writes).then(function () {
                 var summary = {
@@ -3827,6 +3919,21 @@
         });
       } });
 
+    // Contradiction clarify (DESIGN-contradiction): if she's holding a FRESH unresolved conflict about
+    // the person she's addressing, surface it as soft guidance — she MAY gently check which is current,
+    // but it's the model's call (descriptive, not a forced question). Goes quiet after the fresh window
+    // so it can't nag every reply; the conflict stays recorded (for aboutme) until it resolves or ages out.
+    registerProvider({ id: 'contradiction', priority: BANDS.PERSON,
+      enabled: function (c) { return !!c.contradictionAware; },
+      gather: function (g) {
+        var a = g.addressed, cf = a && a.conflict;
+        if (!cf || !cf.a || !cf.b) return Promise.resolve(null);
+        if ((clock.now() - (cf.at || 0)) > (cfg.contradictionFreshMs || 7200000)) return Promise.resolve(null);
+        var who = (g.p && g.p.authorName) || (a && a.name) || 'they';
+        var text = 'You\u2019ve got two things on record about ' + who + ' that don\u2019t line up: earlier \u201c' + cf.a + '\u201d, and more recently \u201c' + cf.b + '\u201d. If it comes up naturally you might gently check which is current \u2014 lightly, once, no interrogation \u2014 otherwise just let it be.';
+        return Promise.resolve({ text: text, tokens: estimateTokens(text) });
+      } });
+
     registerProvider({ id: 'person', priority: BANDS.PERSON,
       enabled: function () { return true; },
       gather: function (g) {
@@ -3942,12 +4049,29 @@
       return getRoster().then(function (roster) {
         var now = clock.now();
         roster = roster.filter(function (u) { return !isSuppressed(u, now); });  // T3: suppressed users are invisible to her
+        // conversation memory: a name map so opaque <@id>/<#id> refs in what she reads resolve to
+        // readable @names / #channels instead of being stripped to blanks.
+        var nameById = {};
+        if (cfg.conversationMemory) {
+          roster.forEach(function (u) { if (u && u.id) nameById[u.id] = u.name || 'someone'; });
+          if (cfg.botUserId) nameById[cfg.botUserId] = (personaName || cfg.botName || 'chloe');
+        }
+        var lineText = cfg.conversationMemory ? function (t) { return resolveRefs(t, nameById); } : scrubDiscordTokens;
         var lines = [];
         roster.forEach(function (u) {
-          (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: scrubDiscordTokens(ln.content), ts: ln.ts }); });
+          (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: lineText(ln.content), ts: ln.ts }); });
         });
-        lines.sort(function (a, b) { return a.ts - b.ts; });
-        if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);   // hard ceiling
+        return (cfg.conversationMemory ? Promise.resolve(store.get(OWNLINE_KEY)) : Promise.resolve(null)).then(function (own) {
+          // fold HER OWN recent messages in by timestamp, so the transcript reads as the real back-and-forth
+          (Array.isArray(own) ? own : []).forEach(function (o) { if (o && o.text) lines.push({ who: (personaName || cfg.botName || 'Chloe'), id: cfg.botUserId, text: lineText(o.text), ts: o.ts || 0, own: true }); });
+          lines.sort(function (a, b) { return a.ts - b.ts; });
+          if (lines.length > cfg.contextLines) lines = lines.slice(-cfg.contextLines);   // hard ceiling
+          return assembleContextRest(p, roster, lines);
+        });
+      });
+    }
+    function assembleContextRest(p, roster, lines) {
+      return Promise.resolve().then(function () {
         var localAddressed = roster.filter(function (u) { return u.id === p.authorId; })[0];
         // One-way public -> DM continuity: a DM engine reads the speaker's PUBLIC profile (facts,
         // insights, familiarity) from globalStore and folds it in READ-ONLY, so the bot treats a
@@ -4142,22 +4266,30 @@
         return channelIsIdle().then(function (idle) {
           if (!idle) return false;                                  // idle gate
           return affectLoad().then(function (a) {
-            return (a && (a.curiosity || 0) >= (cfg.deliberateCuriosityFloor || 0.62));   // curiosity gate
+            return (a && (a.curiosity || 0) >= (cfg.deliberateCuriosityFloor || 0.62)) ||   // curiosity gate
+              dueSelfIntent('revisit').then(function (it) { return !!it; });   // ...OR a revisit she scheduled for herself is due (she follows through even if curiosity has settled)
           });
         });
       });
     }
     // Pick a seed from the workspace by mode (falls back to partitions when working memory is off).
     function deliberateSeed() {
-      var wmOn = !!cfg.workingMemory;
-      return (wmOn ? workLoad() : Promise.resolve(null)).then(function (w) {
-        if (w && w.goal) return { mode: 'prepare', subject: w.goal, prompt: 'the goal: ' + w.goal };
-        if (w && w.topic) return { mode: 'curiosity', subject: w.topic, prompt: 'what\u2019s interesting or unresolved about: ' + w.topic };
-        // fallback / deepen: a recent active person with facts but room to synthesize
-        return getRoster().then(function (roster) {
-          var who = (roster || []).filter(function (p) { return p && p.state === 'active' && Array.isArray(p.facts) && p.facts.length >= 3; })[0];
-          if (who) return { mode: 'deepen', subject: who.name, who: who.id, prompt: 'what the things you know about ' + who.name + ' add up to', facts: who.facts.map(function (f) { return f.text; }) };
-          return null;
+      // A self-scheduled revisit takes precedence: she comes back to a subject she earlier found worth
+      // re-thinking. Consume it (one-shot) and re-approach it fresh, flagged so it won't re-schedule itself.
+      return dueSelfIntent('revisit').then(function (it) {
+        if (it) return consumeSelfIntent(it.id).then(function () {
+          return { mode: 'curiosity', subject: it.subject, prompt: 'coming back to this \u2014 what\u2019s still open or worth resolving about: ' + it.subject, fromRevisit: true };
+        });
+        var wmOn = !!cfg.workingMemory;
+        return (wmOn ? workLoad() : Promise.resolve(null)).then(function (w) {
+          if (w && w.goal) return { mode: 'prepare', subject: w.goal, prompt: 'the goal: ' + w.goal };
+          if (w && w.topic) return { mode: 'curiosity', subject: w.topic, prompt: 'what\u2019s interesting or unresolved about: ' + w.topic };
+          // fallback / deepen: a recent active person with facts but room to synthesize
+          return getRoster().then(function (roster) {
+            var who = (roster || []).filter(function (p) { return p && p.state === 'active' && Array.isArray(p.facts) && p.facts.length >= 3; })[0];
+            if (who) return { mode: 'deepen', subject: who.name, who: who.id, prompt: 'what the things you know about ' + who.name + ' add up to', facts: who.facts.map(function (f) { return f.text; }) };
+            return null;
+          });
         });
       });
     }
@@ -4189,8 +4321,14 @@
                   if (!stillIdle) { log('[chloe.think] room woke \u2014 discarding the thought'); return bumpDelib(null); }
                   return deliberateWriteBack(seed, type, text).then(function (stored) {
                     log('[chloe.think] concluded: ' + String(text).slice(0, 80));
+                    // self-scheduled future cognition: if this was a SPONTANEOUS conclusion worth keeping
+                    // (not itself a revisit), schedule a single later revisit of the subject — she'll come
+                    // back to it on her own. Revisit-triggered deliberations don't re-schedule (no loop).
+                    var sched = (stored && !seed.fromRevisit && cfg.deferredIntents && seed.subject)
+                      ? scheduleSelfIntent('revisit', cfg.selfIntentRevisitMs || 21600000, { subject: seed.subject })
+                      : Promise.resolve(null);
                     // curiosity drop (self-limiting) + min-gap stamp
-                    return affectNudge({ curiosity: -(cfg.deliberateCuriosityDrop || 0.18) }).then(function () { return bumpDelib(stored ? { type: type, text: text } : null); });
+                    return sched.then(function () { return affectNudge({ curiosity: -(cfg.deliberateCuriosityDrop || 0.18) }); }).then(function () { return bumpDelib(stored ? { type: type, text: text } : null); });
                   });
                 });
               });
@@ -4601,6 +4739,39 @@
     // fact is { text, at, source }. Storage is conservative: capped, deduped, and the extraction
     // prompt (page side) refuses sensitive categories. Users can see and forget what's stored.
     function normFact(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, '').replace(/\s+/g, ' ').trim(); }
+    // Conservative contradiction detector (DESIGN-contradiction). HIGH PRECISION, low recall by design:
+    // a false positive (nagging about a non-conflict) is worse than a miss. Fires only on a clear
+    // POLARITY FLIP (one side negative/antonym, the other not) over SHARED content words — e.g. "likes
+    // minecraft" vs "dislikes minecraft", "is a teacher" vs "is not a teacher". Returns the conflicting
+    // held fact text, or null. Antonyms beyond like/dislike/love/hate are intentionally NOT chased.
+    var CONTRA_NEG = { not: 1, never: 1, no: 1, longer: 1, dislike: 1, dislikes: 1, disliked: 1, hate: 1, hates: 1, hated: 1, stopped: 1, quit: 1, former: 1, formerly: 1, ex: 1, isnt: 1, arent: 1, aren: 1, doesnt: 1, dont: 1, didnt: 1, cant: 1, wont: 1, wasnt: 1, anymore: 1 };
+    var CONTRA_STOP = { a: 1, an: 1, the: 1, is: 1, are: 1, was: 1, were: 1, be: 1, been: 1, to: 1, of: 1, in: 1, on: 1, at: 1, and: 1, or: 1, but: 1, with: 1, for: 1, that: 1, this: 1, it: 1, they: 1, he: 1, she: 1, has: 1, have: 1, had: 1, do: 1, does: 1, did: 1, will: 1, would: 1, their: 1, them: 1, his: 1, her: 1, you: 1, your: 1, i: 1, my: 1, me: 1, we: 1, us: 1, as: 1, so: 1, up: 1, out: 1, now: 1, very: 1, really: 1 };
+    function contraParse(norm) {
+      var neg = false, content = [];
+      norm.split(' ').forEach(function (w) {
+        if (!w) return;
+        if (CONTRA_NEG[w]) { neg = true; return; }     // a polarity word: flips sign, not content
+        if (CONTRA_STOP[w] || w.length < 3) return;     // stopword / too short to anchor a topic
+        content.push(w);
+      });
+      return { neg: neg, content: content };
+    }
+    function detectContradiction(newText, heldFacts) {
+      var n = contraParse(normFact(newText));
+      if (!n.content.length) return null;
+      for (var i = 0; i < heldFacts.length; i++) {
+        var h = heldFacts[i]; if (!h || !h.text) continue;
+        var hp = contraParse(normFact(h.text));
+        if (!hp.content.length) continue;
+        if (n.neg === hp.neg) continue;   // same polarity -> not a flip
+        var setN = {}; n.content.forEach(function (w) { setN[w] = 1; });
+        var shared = hp.content.filter(function (w) { return setN[w]; }).length;
+        // require the smaller fact's topic to be (mostly) shared, so the two are about the same thing
+        var minLen = Math.min(n.content.length, hp.content.length);
+        if (shared >= 1 && shared >= Math.ceil(minLen / 2)) return h.text;
+      }
+      return null;
+    }
     function getFacts(id) {
       return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && Array.isArray(p.facts)) ? p.facts : []; });
     }
@@ -4620,6 +4791,13 @@
           else { text = String(raw || '').trim().slice(0, cfg.factTextMax); imp = cfg.factImportanceDefault || 5; }
           var key = normFact(text);
           if (!key || seen[key]) return;          // empty or duplicate
+          // contradiction flag (DESIGN-contradiction): if this new fact clearly flips polarity on a
+          // held one, KEEP BOTH (don't let consolidation silently drop the older side) and record the
+          // conflict so she can gently clarify. Only for facts that matter (importance floor).
+          if (cfg.contradictionAware && imp >= (cfg.contradictionImportanceFloor || 5)) {
+            var clash = detectContradiction(text, facts);
+            if (clash) { p.conflict = { a: clash, b: text, at: clock.now() }; log('[chloe.fact] noted a conflict for ' + (p.name || p.id) + ': "' + String(clash).slice(0, 40) + '" vs "' + String(text).slice(0, 40) + '"'); }
+          }
           seen[key] = true; facts.push({ id: mintFactId(), text: text, at: clock.now(), source: source || 'observed', importance: imp }); added++; impAdded += imp;
         });
         if (!added) return 0;
@@ -4927,6 +5105,9 @@
     var LIVE_PATCHABLE = ['deviceClock', 'semanticInjections', 'deviceClockStaleMs', 'cleanOutput',
       'translate', 'selfKnowledge', 'attentionManager', 'exactTokens', 'workingMemory',
       'idleDeliberation', 'ownAffect', 'moodAware', 'channelSummary', 'factMemory', 'volunteer',
+      'contradictionAware',
+      'conversationMemory',
+      'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
       'proceduralModes', 'ackReactions', 'singleParagraph', 'replyReference', 'backfill',
@@ -4961,6 +5142,7 @@
       reactionSignificance: reactionSignificance, reactionThreshold: reactionThreshold, processMessageReactions: processMessageReactions, topReactions: topReactions, reactionSweep: reactionSweep,
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
+      detectContradiction: detectContradiction,
       getMemory: getMemory, editFact: editFact, deleteFact: deleteFact, addUserFact: addUserFact, editInsight: editInsight, deleteInsight: deleteInsight,
       getUserLang: getUserLang, setUserLang: setUserLang, updateConfig: updateConfig,
       exciseMessage: exciseMessage, exciseLastFromUser: exciseLastFromUser, assembleContext: assembleContext,
@@ -4973,6 +5155,7 @@
       seedCharacterMemories: seedCharacterMemories, clearCharacterMemories: clearCharacterMemories,
       workLoad: workLoad, workSync: workSync, noteDecision: noteDecision,
       deliberate: deliberate, deliberateDue: deliberateDue, deliberateSeed: deliberateSeed,
+      getSelfIntents: getSelfIntents, scheduleSelfIntent: scheduleSelfIntent, dueSelfIntent: dueSelfIntent,
       consolidateStructural: consolidateStructural, consolidateSemantic: consolidateSemantic, channelIsIdle: channelIsIdle,
       currentDebounce: currentDebounce, silenceZ: silenceZ, paceIsQuiet: paceIsQuiet, paceReady: paceReady, refreshPace: refreshPace, computeNextDelay: computeNextDelay,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
@@ -5422,7 +5605,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.83.0';
+  var VERSION = '0.87.0';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -5962,6 +6145,8 @@
         idleConsolidation: cfgGet('idleConsolidation', true),
         goalObjects: cfgGet('goalObjects', true),
         factMemory: cfgGet('factMemory', false),
+        contradictionAware: cfgGet('contradictionAware', false),
+        conversationMemory: cfgGet('conversationMemory', true),
         timeAware: cfgGet('timeAware', false),
         timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
         moodAware: cfgGet('moodAware', false),
@@ -5981,6 +6166,7 @@
         deviceClock: GM_getValue(NS + 'deviceClock', null),
         countTokens: countTokensHook,   // exact tokenizer when warm; returns null -> engine's chars/4 fallback
         idleDeliberation: cfgGet('idleDeliberation', false),
+        deferredIntents: cfgGet('deferredIntents', false),
         attentionManager: cfgGet('attentionManager', false),
         selfKnowledge: cfgGet('selfKnowledge', false),
         attentionStaleWindowMs: cfgGet('attentionStaleWindowMs', 600000),
@@ -6180,6 +6366,8 @@
       lullFiller: !!cfgGet('lullFiller', false),
       checkins: !!cfgGet('checkins', false),
       factMemory: !!cfgGet('factMemory', false),
+      contradictionAware: !!cfgGet('contradictionAware', false),
+      conversationMemory: cfgGet('conversationMemory', true) !== false,
       timeAware: !!cfgGet('timeAware', false),
       deviceTime: !!cfgGet('deviceTime', false),
       operatorNote: (function () { var m = semInjectMap(); return (m['opnote'] && m['opnote'].text) ? String(m['opnote'].text) : ''; })(),
@@ -6196,6 +6384,7 @@
       translate: cfgGet('translate', false) !== false,
       tokenizer: tokLoader.state(),
       idleDeliberation: cfgGet('idleDeliberation', false) !== false,
+      deferredIntents: !!cfgGet('deferredIntents', false),
       attentionManager: cfgGet('attentionManager', false) !== false,
       selfKnowledge: cfgGet('selfKnowledge', false) !== false,
       goalObjects: cfgGet('goalObjects', true) !== false,
@@ -6418,6 +6607,10 @@
         { var lf = !!(args && args.on); cfgSet('lullFiller', lf); patchEngines({ lullFiller: lf }); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
       case 'config.setCheckins':
         { var ck = !!(args && args.on); cfgSet('checkins', ck); patchEngines({ checkins: ck }); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
+      case 'config.setConversationMemory':
+        { var cmn = !!(args && args.on); cfgSet('conversationMemory', cmn); patchEngines({ conversationMemory: cmn }); return Promise.resolve({ ok: true, value: { conversationMemory: cmn } }); }
+      case 'config.setContradictionAware':
+        { var can = !!(args && args.on); cfgSet('contradictionAware', can); patchEngines({ contradictionAware: can }); return Promise.resolve({ ok: true, value: { contradictionAware: can } }); }
       case 'config.setFactMemory':
         { var fm = !!(args && args.on); cfgSet('factMemory', fm); patchEngines({ factMemory: fm }); return Promise.resolve({ ok: true, value: { factMemory: fm } }); }
       case 'config.setTimeAware':
@@ -6434,6 +6627,8 @@
         { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); patchEngines({ workingMemory: wmn }); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
       case 'config.setIdleDeliberation':
         { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); patchEngines({ idleDeliberation: idn }); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
+      case 'config.setDeferredIntents':
+        { var din = !!(args && args.on); cfgSet('deferredIntents', din); patchEngines({ deferredIntents: din }); return Promise.resolve({ ok: true, value: { deferredIntents: din } }); }
       case 'config.setAttentionManager':
         { var amn = !!(args && args.on); cfgSet('attentionManager', amn); patchEngines({ attentionManager: amn }); return Promise.resolve({ ok: true, value: { attentionManager: amn } }); }
       case 'config.setSelfKnowledge':
@@ -6777,7 +6972,7 @@
           // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
            'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
-           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'arch:index:' + ch,
+           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'arch:index:' + ch,
            'modlog', 'backfill:' + ch, 'blocklist'].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
@@ -6869,7 +7064,7 @@
       ['cursor:'+ch,'speaker:ring:'+ch,'rhythm:'+ch,'mood:'+ch,'intent:'+ch,'reminders:'+ch,
        'afk:'+ch,'highlights:'+ch,'reacttally:'+ch,'lull:'+ch,'checkins:'+ch,
        'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,
-       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch
+       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch
       ].forEach(function (k) { var v = GM_getValue(NS + pfx + k, null); if (v != null) chData[k] = v; });
       channels[ch] = chData;
     });
