@@ -14,7 +14,7 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;text-align:left}
   button{font-family:inherit;cursor:pointer}
   button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
@@ -98,7 +98,7 @@
   .send:hover{background:var(--accent-ink)} .send:disabled{background:#C6C3DE;cursor:default}
 
   /* ---- the mind drawer: her cognition, streamed, paced (the signature) ---- */
-  .mind{width:0;flex:none;background:var(--mind-bg);color:var(--mind-ink);display:flex;flex-direction:column;overflow:hidden;position:relative;transition:width .28s cubic-bezier(.4,0,.2,1)}
+  .mind{width:0;flex:none;background:var(--mind-bg);color:#fff;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:width .28s cubic-bezier(.4,0,.2,1)}
   .mind.open{width:440px}
   .mind-head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--mind-line)}
   .mind-head .t{font-family:var(--sans);font-weight:700;font-size:15px;color:#EAECF2}
@@ -118,15 +118,15 @@
   .thought .tag{flex:none;font-size:10px;letter-spacing:.04em;padding:1px 6px;border-radius:5px;height:fit-content;margin-top:1px;background:var(--mind-card);color:var(--mind-dim)}
   .thought .tag.cog{background:#2a2752;color:#a8a4ee}.thought .tag.mem{background:#173331;color:#7ad6cc}
   .thought .tag.io{background:#332a17;color:#e0b878}.thought .tag.flow{background:#2a2433;color:#c9a8e0}.thought .tag.page{background:#222;color:#888}
-  .thought .txt{text-align:left;color:var(--mind-ink);word-break:break-word;flex:1}
+  .thought .txt{text-align:left;color:#fff;word-break:break-word;flex:1}
   .stream .idle{color:var(--mind-dim);font-style:italic;padding:14px 2px}
-  .mind-tab{position:fixed;top:50%;right:0;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--mind-bg);color:var(--mind-ink);border:none;border-radius:9px 0 0 9px;padding:16px 7px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;box-shadow:-2px 0 10px rgba(0,0,0,.12)}
+  .mind-tab{position:fixed;top:50%;right:0;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--mind-bg);color:#fff;border:none;border-radius:9px 0 0 9px;padding:16px 7px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;box-shadow:-2px 0 10px rgba(0,0,0,.12)}
   .mind-tab .dot{display:block;width:7px;height:7px;border-radius:50%;background:#4a4f63;margin:0 auto 9px}
   .mind-tab.thinking .dot{background:var(--accent);animation:breathe 1.4s ease-in-out infinite}
   .mind.open ~ .mind-tab{display:none}
 
   /* ---- settings popup ---- */
-  .modal-bg{position:fixed;inset:0;background:rgba(30,27,22,.42);display:none;align-items:center;justify-content:center;z-index:40;padding:24px}
+  .modal-bg{position:fixed;inset:0;background:rgba(30,27,22,.42);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
   .modal-bg.open{display:flex}
   .modal{background:var(--ground);border-radius:16px;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(40,35,28,.3);overflow:hidden}
   .modal-head{display:flex;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
@@ -136,6 +136,17 @@
   .tab{border:none;background:transparent;color:var(--muted);font-size:14px;padding:8px 14px;border-bottom:2px solid transparent;margin-bottom:-1px}
   .tab.on{color:var(--accent-ink);border-bottom-color:var(--accent);font-weight:600}
   .panel{display:none;overflow-y:auto;padding:22px}.panel.on{display:block}
+  .charpane{display:block;overflow-y:auto;padding:22px}
+  .roster-av{width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff;background:var(--accent-ink)}
+  .save-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--card)}
+  .save-meta{min-width:0;flex:1}
+  .save-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:var(--ink)}
+  .save-badge{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:2px 7px;font-weight:700}
+  .save-badge.auto{background:var(--line-soft);color:var(--muted)}
+  .save-badge.manual{background:var(--accent-ink);color:#fff}
+  .save-sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .save-acts{display:flex;gap:6px;flex-shrink:0}
+  .save-acts .btn{padding:5px 11px;font-size:12.5px}
   /* ---- gallery (weld.gallery pattern: IndexedDB blobs + manifest) ---- */
   .gallery-modal{width:min(980px,96vw)}
   .gallery-modal .modal-head .spacer{flex:1}
@@ -154,7 +165,7 @@
   .gtile .gact.on{background:var(--accent)}
   .gtile .gfavmark{position:absolute;top:6px;left:6px;font-size:14px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
   .gempty{padding:42px 10px;text-align:center;color:var(--muted);font-size:13px}
-  .lightbox{position:fixed;inset:0;background:rgba(12,10,8,.9);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:60;padding:32px}
+  .lightbox{position:fixed;inset:0;background:rgba(12,10,8,.9);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:120;padding:32px}
   .lightbox img{max-width:92vw;max-height:78vh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
   .lightbox-cap{color:#eee;font-size:13px;max-width:760px;text-align:center;line-height:1.5}
   .lightbox-x{position:absolute;top:20px;right:24px;border:none;background:rgba(255,255,255,.14);color:#fff;border-radius:9px;width:38px;height:38px;font-size:18px;cursor:pointer}
@@ -191,6 +202,11 @@
   .roster-del{border:none;background:transparent;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 7px;border-radius:6px}
   .roster-del:hover{color:#fff;background:var(--bad,#d9534f)}
   .roster-alias{width:100%;font-size:12.5px;padding:5px 9px}
+  .subhead{font-family:var(--sans);font-weight:700;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
+  .subcard{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;background:var(--ground)}
+  .about-links{margin-top:16px;font-size:13px;color:var(--muted)}
+  .about-links a{color:var(--accent-ink);text-decoration:none}
+  .about-links a:hover{text-decoration:underline}
   .msg.her.hascolor{border-left:3px solid var(--speaker,var(--accent-ink));padding-left:13px}
   .who .spk-av{width:15px;height:15px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px;border:1px solid var(--line)}
   .rosterpick{display:flex;flex-wrap:wrap;gap:7px}
@@ -235,15 +251,17 @@
       <div class="spacer"></div>
       <button class="iconbtn" id="openCommunity">💬 Community</button>
       <button class="iconbtn" id="openGallery">🖼 Gallery</button>
+      <button class="iconbtn" id="openCharacters">◫ Characters</button>
+      <button class="iconbtn" id="openSaves">⟲ Save/Load</button>
       <button class="iconbtn" id="openSettings">⚙ Settings</button>
-      <button class="iconbtn" id="openMind">◧ Her mind</button>
+      <button class="iconbtn" id="openMind">◧ Thoughts</button>
     </div>
 
     <div class="thread" id="thread">
       <div class="col" id="threadCol">
         <div class="empty" id="emptyState">
           <h2>Say hello.</h2>
-          <div>She remembers what you tell her, forms her own sense of you over time, and thinks before she speaks — open <b>Her mind</b> on the right to watch her do it.</div>
+          <div>Characters remember what you tell them, form their own sense of you over time, and think before they speak — open <b>Thoughts</b> on the right to watch.</div>
         </div>
       </div>
     </div>
@@ -271,7 +289,7 @@
   <aside class="mind" id="mind">
     <div class="mind-head">
       <div>
-        <div class="t">Her mind</div>
+        <div class="t">Thoughts</div>
         <div class="sub">cognition, as it happens</div>
       </div>
       <button class="mind-x" id="closeMind" title="Close">×</button>
@@ -280,9 +298,145 @@
     <button class="jumpbtn jumpMind" id="jumpMind" title="Jump to latest">↓ New</button>
   </aside>
 </div>
-<button class="mind-tab" id="mindTab"><span class="dot"></span>Her mind</button>
+<button class="mind-tab" id="mindTab"><span class="dot"></span>Thoughts</button>
 
-<!-- settings popup: everything the user may want to adjust, plus the AICC character importer -->
+<!-- characters popup: the cast roster, recruit/import, portrait, and per-character memory -->
+<div class="modal-bg" id="charactersBg">
+  <div class="modal" role="dialog" aria-label="Characters">
+    <div class="modal-head">
+      <h2>Characters</h2>
+      <button class="x" id="closeCharacters">×</button>
+    </div>
+    <div class="charpane">
+      <div class="card">
+        <h3>The cast</h3>
+        <div class="note">Who's in the scene. Your primary always answers when no one else is named; add others and they reply when you <b>@name</b> them (or just use their name). Characters can address each other, too. Each keeps its <i>own</i> private memory of everyone — they don't share a mind.</div>
+        <div class="field" style="margin-top:14px">
+          <label>Primary name</label>
+          <input type="text" id="botNameInput" placeholder="Chloe">
+        </div>
+        <div class="subhead">In the scene</div>
+        <div id="rosterList"></div>
+        <div class="row" id="castDials" style="margin-top:12px;gap:18px;flex-wrap:wrap">
+          <label style="font-size:13px;color:var(--ink-soft)">Max speakers per turn
+            <input type="number" id="castMaxSpeakers" min="1" max="6" style="width:56px;margin-left:6px"></label>
+          <label style="font-size:13px;color:var(--ink-soft)">Max back-and-forth between characters
+            <input type="number" id="castMaxFollowups" min="0" max="6" style="width:56px;margin-left:6px"></label>
+        </div>
+        <div class="note" style="margin-top:12px">Currently: <b id="charCurrent">default Chloe</b></div>
+      </div>
+
+      <div class="card">
+        <h3>Add a character</h3>
+        <div class="note">Import from AI Character Chat — its native <code>.json.gz</code> export, a <code>.cbor.gz</code>/<code>.cbor</code>/<code>.json</code> file, a share link, a <code>user.uploads.dev</code> link, a file ID, or raw JSON. Personality, writing style, reminder, and saved memories all come across.</div>
+        <div class="chardrop" id="charDrop" style="margin-top:12px">
+          <b>Drop a character file here</b> — or <u id="charPickBtn">choose a file</u>
+          <input type="file" id="charFile" accept=".gz,.cbor,.json,application/gzip,application/cbor,application/json" hidden>
+          <div class="note" style="margin-top:6px">.cbor.gz · .gz · .cbor · .json</div>
+        </div>
+        <div class="row">
+          <input type="text" class="grow" id="charUrlInput" placeholder="…or paste a share link, a user.uploads.dev link, a file ID, or raw JSON">
+          <button class="btn" id="charUrlBtn">Load</button>
+          <button class="btn" id="charPasteBtn">Paste</button>
+        </div>
+        <div class="status" id="charStatus"></div>
+
+        <div class="subcard" id="charListCard" style="display:none">
+          <div class="subhead" style="margin-top:0">Characters found</div>
+          <div class="note">Pick one to preview.</div>
+          <div id="charList"></div>
+        </div>
+        <div class="subcard" id="charPreviewCard" style="display:none">
+          <h3 id="charPreviewName">Character</h3>
+          <textarea id="charInstruction" readonly></textarea>
+          <div id="charMemHead" class="note" style="margin-top:10px;display:none"><b>Saved memories</b> that will come across:</div>
+          <div id="charMemList" style="display:none"></div>
+          <div class="toggle" style="border:none;margin-top:8px"><input type="checkbox" id="charReplaceChk" checked><div><div class="tl">Make this the primary</div><div class="td">replace the current primary character</div></div></div>
+          <div class="toggle" style="border:none"><input type="checkbox" id="charSeedChk"><div><div class="tl">Bring their memories</div><div class="td">seed the saved memories from the export</div></div></div>
+          <div class="row"><button class="btn primary" id="charInstallBtn">Make primary</button><button class="btn" id="charAddSceneBtn">Add to scene</button><span class="status" id="charInstallNote"></span></div>
+        </div>
+
+        <div class="subhead" style="margin-top:16px">Or write your own</div>
+        <div class="note">Describe who they are — personality, voice, background, how they behave.</div>
+        <div class="row"><input type="text" class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, Aria, Doctor Vane…)"></div>
+        <textarea id="charAuthorInstr" rows="5" placeholder="You are … — describe their personality, voice, and how they speak." style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px"></textarea>
+        <div class="row"><button class="btn primary" id="charAuthorBtn">Make primary</button><button class="btn" id="charAuthorAddBtn">Add to scene</button><span class="status" id="charAuthorNote"></span></div>
+      </div>
+
+      <div class="card">
+        <h3>Portrait</h3>
+        <div class="note">Generate a portrait of the primary from who they are now (uses the image plugin on Perchance). It becomes their avatar in the header.</div>
+        <div class="row"><button class="btn" id="portraitBtn">Generate portrait</button><span class="status" id="portraitNote"></span></div>
+      </div>
+
+      <div class="card">
+        <h3>Memory</h3>
+        <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions.</div>
+        <div id="memViewCard" style="display:none;margin-top:10px">
+          <div class="subhead" style="margin-top:0">Whose memory</div>
+          <div id="memPicker" class="rosterpick"></div>
+        </div>
+        <div class="subhead">What they remember about you</div>
+        <div class="note">Everything they've learned or you've told them. Remove anything you'd rather they forget.</div>
+        <div id="factList" style="margin-top:8px"><div class="note">Nothing yet — memories build as you talk.</div></div>
+        <div class="subhead" style="margin-top:16px">Inner state</div>
+        <div class="note">Their mood, how they see themselves, what they've concluded about you, and what they're planning to revisit.</div>
+        <div id="innerState" style="margin-top:8px"><div class="note">—</div></div>
+        <div class="subhead" style="margin-top:16px">Context budget</div>
+        <div class="note">What goes into the prompt on each reply, and roughly what it costs. The whole request stays under its ceiling, dropping the oldest lines first.</div>
+        <div id="ctxBudget" style="margin-top:10px"><div class="note">—</div></div>
+      </div>
+
+      <div class="row"><button class="btn danger" id="charClearBtn">Reset to default Chloe</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- save/load popup: rolling auto-checkpoints + manual saves, plus backup/erase (data management) -->
+<div class="modal-bg" id="savesBg">
+  <div class="modal" role="dialog" aria-label="Save and load">
+    <div class="modal-head">
+      <h2>Save / Load</h2>
+      <button class="x" id="closeSaves">×</button>
+    </div>
+    <div class="charpane">
+      <div class="card">
+        <h3>Save now</h3>
+        <div class="note">Capture the whole session — every character's memory, the cast, and the transcript — as a point you can roll back to.</div>
+        <div class="row"><input type="text" id="saveLabel" class="grow" placeholder="Label (optional) — e.g. before the argument"><button class="btn primary" id="saveNowBtn">Save</button></div>
+        <div class="status" id="saveNote"></div>
+      </div>
+      <div class="card">
+        <h3>Timeline</h3>
+        <div class="note">Most recent at the top. <b>Load</b> rolls the entire session back to that point.</div>
+        <div id="savesList" style="margin-top:10px"><div class="note">No saves yet.</div></div>
+      </div>
+      <div class="card">
+        <h3>Auto-checkpoints</h3>
+        <div class="note">Checkpoints happen on a timer, keeping a rolling set of the most recent ones; the oldest drops off automatically.</div>
+        <div class="toggle" style="border:none;padding-left:0"><input type="checkbox" id="autoSaveChk"><div><div class="tl">Auto-save</div><div class="td">take a checkpoint on a timer</div></div></div>
+        <div class="row" style="gap:18px;flex-wrap:wrap;margin-top:6px">
+          <label style="font-size:13px;color:var(--ink-soft)">Every <input type="number" id="autoSaveMins" min="1" max="180" style="width:60px;margin:0 6px"> minutes</label>
+          <label style="font-size:13px;color:var(--ink-soft)">Keep <input type="number" id="autoSaveKeep" min="1" max="50" style="width:60px;margin:0 6px"> checkpoints</label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Backup</h3>
+        <div class="note" id="memStats">—</div>
+        <div class="note" style="margin-top:8px">Download the whole session as a single JSON file — back it up or move it to another browser.</div>
+        <div class="row"><button class="btn" id="exportBtn">Export</button><input type="file" id="importFile" accept=".json" hidden><button class="btn" id="importBtn">Import</button></div>
+        <div class="status" id="dataNote"></div>
+      </div>
+      <div class="card">
+        <h3>Start fresh</h3>
+        <div class="note">Erase the whole conversation and everything the characters have learned. This can't be undone.</div>
+        <div class="row"><button class="btn danger" id="wipeBtn">Erase everything</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- settings popup: everything NOT about the cast (you, context, behavior, memory & data, about) -->
 <div class="modal-bg" id="settingsBg">
   <div class="modal" role="dialog" aria-label="Settings">
     <div class="modal-head">
@@ -290,89 +444,22 @@
       <button class="x" id="closeSettings">×</button>
     </div>
     <div class="tabs">
-      <button class="tab on" data-tab="character">Character</button>
-      <button class="tab" data-tab="you">You</button>
+      <button class="tab on" data-tab="you">You</button>
       <button class="tab" data-tab="context">Context</button>
       <button class="tab" data-tab="behavior">Behavior</button>
-      <button class="tab" data-tab="memory">Memory &amp; data</button>
       <button class="tab" data-tab="about">About</button>
     </div>
 
-    <!-- CHARACTER: AICC importer (1:1 with AI Character Chat) + write-your-own -->
-    <div class="panel on" data-panel="character">
-      <div class="note" style="margin-bottom:14px">She is currently: <b id="charCurrent">default Chloe</b></div>
-
-      <div class="card">
-        <h3>Scene</h3>
-        <div class="note">Who's in the room. Your primary companion always answers when no one else is named; add more characters and they speak when you <b>@name</b> them (or just use their name). Characters can address each other too. Each one keeps its <i>own</i> private memory of everyone — they don't share a mind.</div>
-        <div id="rosterList" style="margin-top:10px"></div>
-        <div class="row" id="castDials" style="margin-top:12px;gap:18px;flex-wrap:wrap">
-          <label style="font-size:13px;color:var(--ink-soft)">Max speakers per turn
-            <input type="number" id="castMaxSpeakers" min="1" max="6" style="width:56px;margin-left:6px"></label>
-          <label style="font-size:13px;color:var(--ink-soft)">Max back-and-forth between characters
-            <input type="number" id="castMaxFollowups" min="0" max="6" style="width:56px;margin-left:6px"></label>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>Her portrait</h3>
-        <div class="note">Generate a portrait from who she is now (uses the image plugin on Perchance). It becomes her avatar in the header.</div>
-        <div class="row"><button class="btn" id="portraitBtn">Generate portrait</button><span class="status" id="portraitNote"></span></div>
-      </div>
-
-      <div class="card">
-        <h3>Import an AI Character Chat character</h3>
-        <div class="note">Everything AICC exports works here: its native <code>.json.gz</code> character export, a <code>.cbor.gz</code> / <code>.cbor</code> / <code>.json</code> file, a share link, a <code>user.uploads.dev</code> link, a file ID, or raw character JSON. Personality, writing style, reminder, and the character's saved memories all come across.</div>
-        <div class="chardrop" id="charDrop" style="margin-top:12px">
-          <b>Drop a character file here</b> — or <u id="charPickBtn">choose a file</u>
-          <input type="file" id="charFile" accept=".gz,.cbor,.json,application/gzip,application/cbor,application/json" hidden>
-          <div class="note" style="margin-top:6px">.cbor.gz · .gz · .cbor · .json</div>
-        </div>
-        <div class="row">
-          <input type="text" class="grow" id="charUrlInput" placeholder="…or paste a share link, a user.uploads.dev link, a file ID, or raw character JSON">
-          <button class="btn" id="charUrlBtn">Load</button>
-          <button class="btn" id="charPasteBtn">Paste</button>
-        </div>
-        <div class="status" id="charStatus"></div>
-      </div>
-
-      <div class="card" id="charListCard" style="display:none">
-        <h3>Characters found</h3>
-        <div class="note">Pick one to preview.</div>
-        <div id="charList"></div>
-      </div>
-
-      <div class="card" id="charPreviewCard" style="display:none">
-        <h3 id="charPreviewName">Character</h3>
-        <textarea id="charInstruction" readonly></textarea>
-        <div id="charMemHead" class="note" style="margin-top:10px;display:none"><b>Saved memories</b> that will come across:</div>
-        <div id="charMemList" style="display:none"></div>
-        <div class="toggle" style="border:none;margin-top:8px"><input type="checkbox" id="charReplaceChk" checked><div><div class="tl">Become this character</div><div class="td">replace her current personality</div></div></div>
-        <div class="toggle" style="border:none"><input type="checkbox" id="charSeedChk"><div><div class="tl">Bring their memories</div><div class="td">seed the saved memories from the export</div></div></div>
-        <div class="row"><button class="btn primary" id="charInstallBtn">Apply</button><button class="btn" id="charAddSceneBtn">Add to scene</button><span class="status" id="charInstallNote"></span></div>
-      </div>
-
-      <div class="card">
-        <h3>Or write your own</h3>
-        <div class="note">Describe who she is — personality, voice, background, how she should behave.</div>
-        <div class="row"><input type="text" class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, Aria, Doctor Vane…)"></div>
-        <textarea id="charAuthorInstr" rows="5" placeholder="You are … — describe their personality, voice, and how they speak." style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px"></textarea>
-        <div class="row"><button class="btn primary" id="charAuthorBtn">Make this her</button><button class="btn" id="charAuthorAddBtn">Add to scene</button><span class="status" id="charAuthorNote"></span></div>
-      </div>
-
-      <div class="row"><button class="btn danger" id="charClearBtn">Reset to default Chloe</button></div>
-    </div>
-
     <!-- YOU: your identity in the chat (AICC user-persona parity) -->
-    <div class="panel" data-panel="you">
+    <div class="panel on" data-panel="you">
       <div class="field">
         <label>Your name</label>
-        <div class="desc">What she calls you. She uses it naturally and remembers it.</div>
+        <div class="desc">What the character calls you. Used naturally, and remembered.</div>
         <input type="text" id="userNameInput" placeholder="You">
       </div>
       <div class="card">
-        <h3>Tell her about you</h3>
-        <div class="note">Anything she should keep in mind about you — pinned, so it sticks. Add them one at a time.</div>
+        <h3>Tell the character about you</h3>
+        <div class="note">Anything the character should keep in mind about you — pinned, so it sticks. Add them one at a time.</div>
         <div class="row"><input type="text" class="grow" id="aboutYouInput" placeholder="e.g. I'm a night-owl developer who likes dry humour"><button class="btn primary" id="aboutYouBtn">Remember this</button></div>
         <div class="status" id="aboutYouNote"></div>
       </div>
@@ -381,97 +468,56 @@
     <!-- CONTEXT: browser hookup (live date/time) + semantic injections (always-known facts) -->
     <div class="panel" data-panel="context">
       <div class="card">
-        <h3>What she reads from your device</h3>
+        <h3>Live context from your device</h3>
         <div class="note" id="clockNow">—</div>
-        <div class="note" style="margin-top:6px">She knows the real local date, time, timezone, and your language straight from the browser, and keeps it current as time passes.</div>
+        <div class="note" style="margin-top:6px">The local date, time, timezone, and language are read live from the browser and kept current — so replies stay grounded in the real moment.</div>
       </div>
       <div class="card">
-        <h3>Things she should always know</h3>
+        <h3>Always in context</h3>
         <div class="note">Facts, a setting, world details, ground rules — anything you want present in every reply. This runs locally, so there are no length or content limits.</div>
         <div class="row"><input type="text" class="grow" id="injInput" placeholder="e.g. We're roleplaying aboard a starship in the year 2400"><button class="btn primary" id="injAddBtn">Add</button></div>
         <div id="injList" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h3>Lorebook</h3>
-        <div class="note">Background that surfaces only when it's relevant. Give each entry some trigger words — when one shows up in the conversation, that entry is slipped into her context for that reply (it doesn't sit in every prompt like the rules above). Great for characters, places, and world facts.</div>
+        <div class="note">Background that surfaces only when it's relevant. Give each entry some trigger words — when one shows up in the conversation, that entry is slipped into context for that reply (it doesn't sit in every prompt like the rules above). Great for characters, places, and world facts.</div>
         <div class="row" style="margin-top:8px"><button class="btn primary" id="loreAddBtn">+ Add entry</button><button class="btn" id="loreImportBtn">Import</button><button class="btn" id="loreExportBtn">Export</button><input type="file" id="loreFile" accept=".json,application/json" hidden></div>
         <div id="loreList" style="margin-top:10px"></div>
       </div>
     </div>
 
-    <!-- BEHAVIOR: the feature toggles, straight from Chloe-bot's cognitive engine -->
+    <!-- BEHAVIOR: the cognitive-engine feature toggles -->
     <div class="panel" data-panel="behavior">
-      <div class="field">
-        <label>Her name</label>
-        <input type="text" id="botNameInput" placeholder="Chloe">
-      </div>
       <div class="card">
         <h3>Personality</h3>
-        <div class="note">Where she sits on each dial — the model's tone follows these, and the centre is neutral. (Perchance's model exposes no temperature, so "heat" lives in sarcasm + playfulness.)</div>
+        <div class="note">Where the character sits on each dial — the model's tone follows these, and the centre is neutral. (Perchance's model exposes no temperature, so "heat" lives in sarcasm + playfulness.)</div>
         <div id="dials" style="margin-top:10px"></div>
         <div class="row" style="margin-top:8px"><button class="btn" id="dialsReset">Reset to neutral</button></div>
       </div>
       <div class="card">
         <h3>Content moderation</h3>
         <div class="note">Block image prompts that contain certain terms. One phrase per line; <code>*</code> is a wildcard. Off by default. (Import <code>weld-banlist</code> in the top panel to also enforce a content-rating ceiling.)</div>
-        <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="modEnabled"><div><div class="tl">Enable the content gate</div><div class="td">she declines to draw anything matching a blocked term</div></div></div>
+        <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="modEnabled"><div><div class="tl">Enable the content gate</div><div class="td">the character won’t draw anything matching a blocked term</div></div></div>
         <textarea id="modPhrases" rows="3" placeholder="one blocked phrase per line — e.g.&#10;gore&#10;bad*word" style="margin-top:6px"></textarea>
         <div class="row" style="margin-top:8px"><span class="status" id="modNote"></span></div>
       </div>
       <div class="card">
-        <h3>Her expressions</h3>
-        <div class="note">Show a small read of her mood beside each reply, inferred from her own words. It's just a display touch — it never changes what she says.</div>
-        <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="emoToggle"><div><div class="tl">Show her mood on each reply</div><div class="td">e.g. a soft \uD83D\uDE0A when she's warm, \uD83D\uDE0F when she's teasing</div></div></div>
+        <h3>Expressions</h3>
+        <div class="note">Show a small read of the character’s mood beside each reply, inferred from their own words. It’s just a display touch — it never changes what they say.</div>
+        <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="emoToggle"><div><div class="tl">Show mood on each reply</div><div class="td">e.g. a soft \uD83D\uDE0A when warm, \uD83D\uDE0F when teasing</div></div></div>
       </div>
-      <div class="note" style="margin:4px 0 8px">These are the parts of her mind you can turn on and off. They all run locally in your browser, and changes take effect immediately.</div>
+      <div class="note" style="margin:4px 0 8px">These are the parts of the character’s mind you can turn on and off. They all run locally in your browser, and changes take effect immediately.</div>
       <div id="behaviorToggles"></div>
     </div>
 
     <!-- MEMORY & DATA -->
-    <div class="panel" data-panel="memory">
-      <div class="card" id="memViewCard" style="display:none">
-        <h3>Whose memory</h3>
-        <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions. Pick whose to inspect; the cards below follow your choice.</div>
-        <div id="memPicker" class="rosterpick" style="margin-top:10px"></div>
-      </div>
-      <div class="card">
-        <h3>What she's stored</h3>
-        <div class="note" id="memStats">—</div>
-      </div>
-      <div class="card">
-        <h3>Context budget</h3>
-        <div class="note">What goes into her head on each reply, and roughly what it costs — measured with the same tokenizer she uses. She keeps the whole request under her ceiling, dropping the oldest lines first.</div>
-        <div id="ctxBudget" style="margin-top:10px"><div class="note">\u2014</div></div>
-      </div>
-      <div class="card">
-        <h3>What's on her mind</h3>
-        <div class="note">Her mood, how she sees herself, what she's concluded about you, and what she's planning to come back to — the shape of her thinking, not just raw facts.</div>
-        <div id="innerState" style="margin-top:8px"><div class="note">\u2014</div></div>
-      </div>
-      <div class="card">
-        <h3>What she remembers about you</h3>
-        <div class="note">Everything she's learned or you've told her. Remove anything you'd rather she forget.</div>
-        <div id="factList" style="margin-top:8px"><div class="note">Nothing yet — she'll start remembering as you talk.</div></div>
-      </div>
-      <div class="card">
-        <h3>Export</h3>
-        <div class="note">Download everything she remembers as a single JSON file — back it up or move it to another browser.</div>
-        <div class="row"><button class="btn" id="exportBtn">Export memory</button><input type="file" id="importFile" accept=".json" hidden><button class="btn" id="importBtn">Import memory</button></div>
-        <div class="status" id="dataNote"></div>
-      </div>
-      <div class="card">
-        <h3>Start fresh</h3>
-        <div class="note">Erase the whole conversation and everything she's learned. This can't be undone.</div>
-        <div class="row"><button class="btn danger" id="wipeBtn">Erase everything</button></div>
-      </div>
-    </div>
-
     <div class="panel" data-panel="about">
       <div class="card">
         <h3 id="aboutTitle">Chloe Solo</h3>
-        <div class="note">A standalone, in-browser AI companion built on the Chloe cognitive engine — facts, insights, episodic and semantic memory, reflection, and feedback learning, all running locally with no server and no account. On a Perchance page she speaks through the free ai-text and image plugins; opened on its own she runs in demo mode so you can see the machine work.</div>
+        <div class="note">A standalone, in-browser AI companion built on the Chloe cognitive engine — facts, insights, episodic and semantic memory, reflection, and feedback learning, all running locally with no server and no account. On a Perchance page it speaks through the free ai-text and image plugins; opened on its own it runs in demo mode so you can see the machine work.</div>
       </div>
-      <div class="note">Open <b>Her mind</b> at any time to watch her think, and slow the pace down to read along.</div>
+      <div class="note">Open <b>Thoughts</b> any time to watch a character think, and slow the pace down to read along.</div>
+      <div class="about-links">Built by therealwestninja &#183; <a href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt</a> &#183; <a href="https://github.com/therealwestninja" target="_blank" rel="noopener">GitHub</a></div>
     </div>
   </div>
 </div>
@@ -8331,6 +8377,8 @@ return window.weld.comments;
     contradictionAware:false, userModeling:false, feedbackLearning:false, semanticRecall:false,
     moderation:{ enabled:false, phrases:[], rating:'x' }, lorebook:[], showEmotion:true,
     cast:[], castMaxSpeakers:2, castMaxFollowups:2,   // multi-character scene (extras beyond the primary)
+    autoSave:true, autoSaveMins:10, autoSaveKeep:10,  // rolling auto-checkpoints (Save/Load popup)
+    mindOpen:null,   // Thoughts drawer open/closed, remembered across refreshes (null = default by screen width)
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 } };
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
@@ -8342,30 +8390,30 @@ return window.weld.comments;
   ];
   // Every part of her mind the Discord app let you switch, grouped — each one live-patches the engine.
   var TOGGLE_GROUPS = [
-    { title:'Memory', note:'What she keeps and carries forward.', items:[
-      ['conversationMemory','Conversation memory','keep the back-and-forth (including her own lines) in context'],
+    { title:'Memory', note:'What the character keeps and carries forward.', items:[
+      ['conversationMemory','Conversation memory','keep the back-and-forth (including their own lines) in context'],
       ['factMemory','Remember facts about you','note durable facts and weigh how much each one matters'],
       ['episodicMemory','Episodic memory','remember notable moments and recall them when relevant'],
       ['episodeGraph','Connect related memories','link each moment to its closest earlier one (\u201c\u2026that reminds me of\u2026\u201d) \u2014 needs episodic memory'],
       ['channelSummary','Running summary','fold older talk into a rolling gist so it survives the context window'],
       ['idleConsolidation','Tidy memory when idle','merge duplicates and drop stale notes during quiet spells'] ] },
-    { title:'Understanding you', note:'How she builds a picture of you over time.', items:[
-      ['reflection','Reflect on what she learns','form one or two higher-level conclusions from accumulated facts'],
-      ['goalObjects','Track what you\u2019re working on','keep what you\u2019re building as a goal she can follow up on'],
+    { title:'Understanding you', note:'How the character builds a picture of you over time.', items:[
+      ['reflection','Reflect on what the character learns','form one or two higher-level conclusions from accumulated facts'],
+      ['goalObjects','Track what you\u2019re working on','keep what you\u2019re building as a goal the character can follow up on'],
       ['relationshipTrust','Let familiarity grow','a quiet warmth that builds through good exchanges and cools with long absence'],
       ['userModeling','Match your register','mirror how long and how playfully you tend to write'],
       ['feedbackLearning','Learn what lands','lean toward the reply length and tone that work for you (\ud83d\udc4d/\ud83d\udc4e)'],
       ['contradictionAware','Notice contradictions','if something flips an earlier fact, keep both and gently ask'],
       ['semanticRecall','Recall by meaning','find memories by meaning, not keywords (loads a small model once)'] ] },
-    { title:'Inner life & thinking', note:'Her autonomous cognition between your messages.', items:[
-      ['ownAffect','Inner weather','a small internal state (curiosity, confidence, warmth) that drifts with her day'],
+    { title:'Inner life & thinking', note:'The character\u2019s autonomous cognition between your messages.', items:[
+      ['ownAffect','Inner weather','a small internal state (curiosity, confidence, warmth) that drifts with their day'],
       ['moodAware','Sense the mood','read and gently match the energy of the conversation'],
       ['workingMemory','Hold the moment','a fast-fading sense of what\u2019s happening right now'],
-      ['idleDeliberation','Think things over when idle','spend quiet time actually reasoning about open threads (uses her AI; needs inner weather)'],
+      ['idleDeliberation','Think things over when idle','spend quiet time actually reasoning about open threads (uses the model; needs inner weather)'],
       ['attentionManager','Prioritise by relevance','when several background passes are due at once, do the one the moment calls for'] ] },
     { title:'Grounding & image', note:null, items:[
-      ['selfKnowledge','Self-knowledge','she knows her own name, version, and how long she\u2019s been running'],
-      ['imageMemory','Remember her images','recall recent images so \u201canother like that\u201d / \u201cmake it landscape\u201d work'] ] }
+      ['selfKnowledge','Self-knowledge','knows its own name, version, and how long it\u2019s been running'],
+      ['imageMemory','Remember generated images','recall recent images so \u201canother like that\u201d / \u201cmake it landscape\u201d work'] ] }
   ];
   var state = loadState();
   function loadState(){ try { var s = JSON.parse(localStorage.getItem(NS+'__state__')); return Object.assign({}, DEF_STATE, s||{}); } catch(e){ return Object.assign({}, DEF_STATE); } }
@@ -8440,7 +8488,7 @@ return window.weld.comments;
       var head = document.createElement('div'); head.className = 'lore-head';
       var keys = document.createElement('input'); keys.type = 'text'; keys.className = 'lore-keys'; keys.placeholder = 'trigger words, comma-separated'; keys.value = loreKeysArr(e).join(', ');
       var del = document.createElement('button'); del.className = 'lore-del'; del.textContent = '\u2715'; del.title = 'Delete entry';
-      var content = document.createElement('textarea'); content.className = 'lore-content'; content.rows = 2; content.placeholder = 'what she should know when a trigger appears'; content.value = e.content || '';
+      var content = document.createElement('textarea'); content.className = 'lore-content'; content.rows = 2; content.placeholder = 'what the character should know when a trigger appears'; content.value = e.content || '';
       keys.addEventListener('change', function(){ e.keys = keys.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean); persistState(); });
       content.addEventListener('change', function(){ e.content = content.value; persistState(); });
       del.addEventListener('click', function(){ state.lorebook.splice(idx, 1); persistState(); renderLore(); });
@@ -8479,7 +8527,7 @@ return window.weld.comments;
     var box = byId('injList'); if (!box) return;
     while (box.firstChild) box.removeChild(box.firstChild);
     var list = state.injections || [];
-    if (!list.length){ var e = document.createElement('div'); e.className='note'; e.textContent='Nothing yet — she only has the live date/time above.'; box.appendChild(e); return; }
+    if (!list.length){ var e = document.createElement('div'); e.className='note'; e.textContent='Nothing yet — only the live date/time above.'; box.appendChild(e); return; }
     list.forEach(function(it, idx){
       var row = document.createElement('div'); row.className='memrow';
       var t = document.createElement('div'); t.className='mt'; t.textContent = it.text;
@@ -8502,7 +8550,7 @@ return window.weld.comments;
     var box = byId('factList'); var eng = viewEngine(); if (!box || !eng || !eng.getFacts) return;
     Promise.resolve(eng.getFacts(USER_ID)).then(function(facts){
       while (box.firstChild) box.removeChild(box.firstChild);
-      if (!facts || !facts.length){ var e=document.createElement('div'); e.className='note'; e.textContent='Nothing yet \u2014 she\u2019ll start remembering as you talk.'; box.appendChild(e); return; }
+      if (!facts || !facts.length){ var e=document.createElement('div'); e.className='note'; e.textContent='Nothing yet \u2014 memories build as you talk.'; box.appendChild(e); return; }
       facts.slice().reverse().forEach(function(f){
         var row=document.createElement('div'); row.className='memrow';
         var t=document.createElement('div'); t.className='mt'; t.textContent=f.text;
@@ -8536,19 +8584,19 @@ return window.weld.comments;
       var mood = r[0], persona = r[1], mem = r[2], goals = r[3], intents = r[4];
       while (box.firstChild) box.removeChild(box.firstChild);
       var moodStr = (mood && eng.moodDescriptor) ? eng.moodDescriptor(mood) : '';
-      box.appendChild(section('Mood', moodStr ? ['She feels ' + moodStr + ' right now.'] : [], 'Still settling — her mood forms as you talk.'));
-      box.appendChild(section('How she sees herself', persona ? [txt(persona)] : [], 'She hasn\u2019t formed a self-note yet.'));
+      box.appendChild(section('Mood', moodStr ? ['Feeling ' + moodStr + ' right now.'] : [], 'Still settling — mood forms as you talk.'));
+      box.appendChild(section('Self-image', persona ? [txt(persona)] : [], 'No self-note yet.'));
       var insights = (mem && mem.insights || []).map(function(x){ return txt(x.text); });
-      box.appendChild(section('What she\u2019s concluded about you', insights, 'No standing conclusions yet \u2014 just facts so far.'));
+      box.appendChild(section('Conclusions about you', insights, 'No standing conclusions yet \u2014 just facts so far.'));
       var goalTexts = (goals || []).map(function(g){ return txt(g.text); });
-      box.appendChild(section('Things she means to follow up on', goalTexts, 'Nothing on her list yet.'));
+      box.appendChild(section('To follow up on', goalTexts, 'Nothing on the list yet.'));
       var now = Date.now();
       var pend = (intents || []).map(function(it){
         var subj = it.subject ? (' \u2014 ' + txt(it.subject)) : '';
         var when = (it.dueAt && it.dueAt > now) ? (' (in ~' + Math.max(1, Math.round((it.dueAt - now) / 60000)) + ' min)') : '';
         return txt(it.kind) + subj + when;
       });
-      box.appendChild(section('What she\u2019s planning to revisit', pend, 'Nothing queued to come back to.'));
+      box.appendChild(section('Planning to revisit', pend, 'Nothing queued to come back to.'));
     });
   }
 
@@ -8816,6 +8864,62 @@ return window.weld.comments;
     return { init:init, store:store, getManifest:getManifest, getBlobUrl:getBlobUrl, toggleFavorite:toggleFavorite, remove:remove, clear:clear, usingWeld:function(){ return !!weld; } };
   })();
 
+  /* ---- Save/Load: rolling auto-checkpoints + manual saves, each a full snapshot of the session.
+   * A snapshot is every chloeSolo: localStorage key (memory of every character, the cast, the transcript,
+   * all settings). Restore writes them back and reloads — a clean, total rollback. Kept in IndexedDB so
+   * many large saves fit. ---- */
+  var Saves = (function(){
+    var DB = 'chloe-solo-saves', SLOTS = 'slots', dbP = null;
+    function openDb(){
+      if (dbP) return dbP;
+      dbP = new Promise(function(res, rej){
+        var r = indexedDB.open(DB, 1);
+        r.onupgradeneeded = function(e){ var db = e.target.result; if (!db.objectStoreNames.contains(SLOTS)) db.createObjectStore(SLOTS, { keyPath:'id' }); };
+        r.onsuccess = function(e){ res(e.target.result); };
+        r.onerror = function(e){ dbP = null; rej(e.target.error); };
+      });
+      return dbP;
+    }
+    function op(mode, fn){ return openDb().then(function(db){ return new Promise(function(res, rej){
+      var tx = db.transaction(SLOTS, mode), s = tx.objectStore(SLOTS), q = fn(s);
+      if (q && 'onsuccess' in q){ q.onsuccess = function(){ res(q.result); }; q.onerror = function(){ rej(q.error); }; }
+      else { tx.oncomplete = function(){ res(); }; tx.onerror = function(){ rej(tx.error); }; }
+    }); }); }
+    return {
+      list: function(){ return op('readonly', function(s){ return s.getAll(); }).then(function(a){ return sortSlotsNewestFirst(a || []); }); },
+      put:  function(slot){ return op('readwrite', function(s){ return s.put(slot); }); },
+      del:  function(id){ return op('readwrite', function(s){ return s.delete(id); }); },
+      get:  function(id){ return op('readonly', function(s){ return s.get(id); }); }
+    };
+  })();
+  // pure helpers (unit-tested): newest-first ordering, and which auto-saves to drop past the keep-count.
+  function sortSlotsNewestFirst(a){ return a.slice().sort(function(x, y){ return (y.ts || 0) - (x.ts || 0); }); }
+  function autosToPrune(all, keep){ var autos = sortSlotsNewestFirst(all.filter(function(s){ return s.kind === 'auto'; })); return autos.slice(Math.max(1, keep || 1)).map(function(s){ return s.id; }); }
+
+  function snapshotNS(){ var d = {}; try { for (var i = 0; i < localStorage.length; i++){ var k = localStorage.key(i); if (k && k.indexOf(NS) === 0) d[k] = localStorage.getItem(k); } } catch(e){} return d; }
+  function makeSlot(kind, label){ return { id: kind.charAt(0) + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind: kind, label: String(label || '').slice(0, 80), ts: Date.now(), msgCount: (queue ? queue.length : 0), version: SOLO_VERSION, data: snapshotNS() }; }
+  function saveSlot(kind, label){ var slot = makeSlot(kind, label); return Saves.put(slot).then(function(){ return (kind === 'auto') ? pruneAuto().then(function(){ return slot; }) : slot; }); }
+  function pruneAuto(){ return Saves.list().then(function(all){ return Promise.all(autosToPrune(all, state.autoSaveKeep || 10).map(function(id){ return Saves.del(id); })); }); }
+  function restoreSlot(id){
+    return Saves.get(id).then(function(slot){
+      if (!slot || !slot.data) return false;
+      var del = []; try { for (var i = 0; i < localStorage.length; i++){ var k = localStorage.key(i); if (k && k.indexOf(NS) === 0) del.push(k); } } catch(e){}
+      del.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
+      Object.keys(slot.data).forEach(function(k){ try { localStorage.setItem(k, slot.data[k]); } catch(e){} });
+      location.reload(); return true;
+    });
+  }
+  var autoTimer = null, lastAutoCount = -1;
+  function startAutoSave(){
+    if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
+    if (!state.autoSave) return;
+    var mins = Math.max(1, state.autoSaveMins || 10);
+    autoTimer = setInterval(function(){
+      if (!queue || queue.length === lastAutoCount) return;   // skip if nothing new since the last checkpoint
+      lastAutoCount = queue.length;
+      saveSlot('auto').then(function(){ if (byId('savesBg') && byId('savesBg').classList.contains('open')) renderSaves(); }).catch(function(){});
+    }, mins * 60 * 1000);
+  }
   function dataUrlToBlob(dataUrl){
     try {
       var parts = String(dataUrl).split(','); var head = parts[0] || '', b64 = parts[1] || '';
@@ -9040,12 +9144,20 @@ return window.weld.comments;
   }
   function renderRoster(){
     var box = byId('rosterList'); if (!box) return; box.innerHTML = '';
+    function avatarEl(name, color, src){
+      if (src){ var im = document.createElement('img'); im.className = 'roster-av'; im.src = src; im.alt = ''; return im; }
+      var d = document.createElement('div'); d.className = 'roster-av'; d.textContent = (String(name || '?').trim()[0] || '?').toUpperCase(); if (color) d.style.background = color; return d;
+    }
     function row(name, opts){
       var r = document.createElement('div'); r.className = 'roster-row';
       var top = document.createElement('div'); top.className = 'roster-top';
-      var n = document.createElement('span'); n.className = 'roster-name'; n.textContent = name; if (opts && opts.extra) n.style.color = castColor(opts.extra.id); top.appendChild(n);
+      var isExtra = opts && opts.extra;
+      var color = isExtra ? castColor(opts.extra.id) : null;
+      var src = isExtra ? (opts.extra.avatar || '') : (state.herAvatar || (state.character && state.character.avatar) || '');
+      top.appendChild(avatarEl(name, color, src));
+      var n = document.createElement('span'); n.className = 'roster-name'; n.textContent = name; if (isExtra) n.style.color = color; top.appendChild(n);
       if (opts && opts.primary){ var tag = document.createElement('span'); tag.className = 'roster-tag'; tag.textContent = 'primary'; top.appendChild(tag); }
-      if (opts && opts.extra){
+      if (isExtra){
         var lab = document.createElement('label'); lab.className = 'roster-act';
         var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = opts.extra.active !== false;
         cb.addEventListener('change', function(){ opts.extra.active = cb.checked; persistState(); buildEngine(); });
@@ -9055,7 +9167,7 @@ return window.weld.comments;
         top.appendChild(del);
       }
       r.appendChild(top);
-      if (opts && opts.extra){
+      if (isExtra){
         var al = document.createElement('input'); al.type = 'text'; al.className = 'roster-alias'; al.placeholder = 'also answers to\u2026 (nicknames, comma-separated)';
         al.value = (opts.extra.aliases || []).join(', ');
         al.addEventListener('change', function(){ opts.extra.aliases = al.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean); persistState(); });
@@ -9663,6 +9775,43 @@ return window.weld.comments;
     if (!t.__wired){ t.__wired = true; t.addEventListener('change', function(){ state.showEmotion = t.checked; persistState(); refreshEmotionCues(); }); }
   }
   function closeSettings(){ byId('settingsBg').classList.remove('open'); }
+  function openCharacters(){ byId('charactersBg').classList.add('open'); updateCharLabel(); renderRoster(); }
+  function closeCharacters(){ byId('charactersBg').classList.remove('open'); }
+  function exportSlotFile(s){
+    var blob = new Blob([JSON.stringify({ format:'chloe-solo', version: s.version || SOLO_VERSION, data: s.data }, null, 0)], { type:'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'chloe-solo-save-' + String(s.label || s.kind || 'slot').replace(/[^a-z0-9]+/gi, '-').slice(0, 30) + '.json'; a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1500);
+  }
+  function renderSaves(){
+    var chk = byId('autoSaveChk'); if (chk) chk.checked = state.autoSave !== false;
+    var mi = byId('autoSaveMins'); if (mi) mi.value = state.autoSaveMins || 10;
+    var ke = byId('autoSaveKeep'); if (ke) ke.value = state.autoSaveKeep || 10;
+    var box = byId('savesList'); if (!box) return;
+    box.innerHTML = '<div class="note">loading\u2026</div>';
+    Saves.list().then(function(all){
+      box.innerHTML = '';
+      if (!all.length){ box.innerHTML = '<div class="note">No saves yet \u2014 save now, or let auto-checkpoints build up.</div>'; return; }
+      all.forEach(function(s){
+        var row = document.createElement('div'); row.className = 'save-row';
+        var meta = document.createElement('div'); meta.className = 'save-meta';
+        var title = document.createElement('div'); title.className = 'save-title';
+        var badge = document.createElement('span'); badge.className = 'save-badge ' + (s.kind === 'auto' ? 'auto' : 'manual'); badge.textContent = s.kind === 'auto' ? 'auto' : 'saved'; title.appendChild(badge);
+        var lbl = document.createElement('span'); lbl.textContent = s.label || (s.kind === 'auto' ? 'checkpoint' : 'manual save'); title.appendChild(lbl);
+        var sub = document.createElement('div'); sub.className = 'save-sub'; sub.textContent = new Date(s.ts).toLocaleString() + ' \u00b7 ' + (s.msgCount || 0) + ' messages';
+        meta.appendChild(title); meta.appendChild(sub);
+        var acts = document.createElement('div'); acts.className = 'save-acts';
+        var load = document.createElement('button'); load.className = 'btn'; load.textContent = 'Load';
+        load.addEventListener('click', function(){ if (confirm('Load this save?\n\nThis rolls the entire session \u2014 the conversation and every character\u2019s memory \u2014 back to that point. Your current state will be replaced; save it first if you want to keep it.')) restoreSlot(s.id); });
+        var exp = document.createElement('button'); exp.className = 'btn'; exp.textContent = 'Export'; exp.addEventListener('click', function(){ exportSlotFile(s); });
+        var del = document.createElement('button'); del.className = 'btn danger'; del.textContent = '\u2715'; del.title = 'Delete this save'; del.addEventListener('click', function(){ Saves.del(s.id).then(renderSaves); });
+        acts.appendChild(load); acts.appendChild(exp); acts.appendChild(del);
+        row.appendChild(meta); row.appendChild(acts); box.appendChild(row);
+      });
+    }).catch(function(){ box.innerHTML = '<div class="note">could not read saves.</div>'; });
+  }
+  function openSaves(){ byId('savesBg').classList.add('open'); renderSaves(); }
+  function closeSaves(){ byId('savesBg').classList.remove('open'); }
 
   /* ---- gallery viewer: a Solo-styled grid over whichever backend is active ---- */
   var galleryOpen = false, gallerySort = 'newest', galleryFavOnly = false, _galUrls = [];
@@ -9752,6 +9901,16 @@ return window.weld.comments;
   function wireSettings(){
     byId('openSettings').addEventListener('click', openSettings);
     byId('closeSettings').addEventListener('click', closeSettings);
+    var oc = byId('openCharacters'); if (oc) oc.addEventListener('click', openCharacters);
+    var cc = byId('closeCharacters'); if (cc) cc.addEventListener('click', closeCharacters);
+    var cbg = byId('charactersBg'); if (cbg) cbg.addEventListener('click', function(e){ if (e.target === cbg) closeCharacters(); });
+    var os2 = byId('openSaves'); if (os2) os2.addEventListener('click', openSaves);
+    var cs2 = byId('closeSaves'); if (cs2) cs2.addEventListener('click', closeSaves);
+    var sbg = byId('savesBg'); if (sbg) sbg.addEventListener('click', function(e){ if (e.target === sbg) closeSaves(); });
+    var sn = byId('saveNowBtn'); if (sn) sn.addEventListener('click', function(){ var lbl = (byId('saveLabel').value || '').trim(); setText('saveNote', 'saving\u2026'); saveSlot('manual', lbl).then(function(){ byId('saveLabel').value = ''; setText('saveNote', 'saved.'); renderSaves(); toast('Session saved', 'success'); }).catch(function(){ setText('saveNote', 'could not save \u2014 storage may be full.'); }); });
+    var asc = byId('autoSaveChk'); if (asc) asc.addEventListener('change', function(){ state.autoSave = asc.checked; persistState(); startAutoSave(); });
+    var asm = byId('autoSaveMins'); if (asm) asm.addEventListener('change', function(){ state.autoSaveMins = Math.max(1, Math.min(180, parseInt(asm.value, 10) || 10)); persistState(); startAutoSave(); });
+    var ask = byId('autoSaveKeep'); if (ask) ask.addEventListener('change', function(){ state.autoSaveKeep = Math.max(1, Math.min(50, parseInt(ask.value, 10) || 10)); persistState(); pruneAuto(); });
     var dr = byId('dialsReset'); if (dr) dr.addEventListener('click', resetDials);
     // behavior toggles are rendered + wired live in renderToggles() (openSettings)
     byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
@@ -9772,7 +9931,7 @@ return window.weld.comments;
       var v = (byId('aboutYouInput').value||'').trim(); if (!v) return;
       if (!engine || !engine.addFacts){ setText('aboutYouNote','one moment\u2026'); return; }
       ensureUserPartition().then(function(){ return engine.addFacts(USER_ID, [{ text: v, importance: 8 }], 'operator'); }).then(function(n){
-        byId('aboutYouInput').value=''; setText('aboutYouNote', n ? 'she\u2019ll keep that in mind.' : 'she already knew that.'); renderFactList();
+        byId('aboutYouInput').value=''; setText('aboutYouNote', n ? 'the character will keep that in mind.' : 'already known.'); renderFactList();
       });
     });
     byId('aboutYouInput').addEventListener('keydown', function(e){ if (e.key==='Enter'){ e.preventDefault(); byId('aboutYouBtn').click(); } });
@@ -9800,7 +9959,7 @@ return window.weld.comments;
     });
     // data tab
     byId('wipeBtn').addEventListener('click', function(){
-      if (!confirm('Erase the whole conversation and everything she has learned? This cannot be undone.')) return;
+      if (!confirm('Erase the whole conversation and everything the character has learned? This cannot be undone.')) return;
       var del = []; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0) del.push(key); } } catch(e){}
       del.forEach(function(key){ try { localStorage.removeItem(key); } catch(e){} });
       queue = []; state = Object.assign({}, DEF_STATE); persistState();
@@ -9818,13 +9977,13 @@ return window.weld.comments;
     byId('importBtn').addEventListener('click', function(){ byId('importFile').click(); });
     byId('importFile').addEventListener('change', function(){ var f = this.files && this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function(){ try { var obj = JSON.parse(r.result); var d = obj && obj.data; if (!d) throw 0; Object.keys(d).forEach(function(key){ try { localStorage.setItem(key, d[key]); } catch(e){} }); state = loadState(); queue = loadQueue(); location.reload(); } catch(e){ setText('dataNote','that did not look like a Chloe Solo export.'); } }; r.readAsText(f); });
   }
-  function emptyTemplate(){ var d = document.createElement('div'); d.className='empty'; d.id='emptyState'; d.innerHTML='<h2>Say hello.</h2><div>She remembers what you tell her and thinks before she speaks — open <b>Her mind</b> to watch.</div>'; return d; }
+  function emptyTemplate(){ var d = document.createElement('div'); d.className='empty'; d.id='emptyState'; d.innerHTML='<h2>Say hello.</h2><div>Characters remember what you tell them and think before they speak \u2014 open <b>Thoughts</b> to watch.</div>'; return d; }
 
   /* ---- mind drawer open/close + speed ---- */
   function wireMind(){
     streamEl = byId('stream');
-    function openMind(){ byId('mind').classList.add('open'); }
-    function closeMindFn(){ byId('mind').classList.remove('open'); }
+    function openMind(){ byId('mind').classList.add('open'); state.mindOpen = true; persistState(); }
+    function closeMindFn(){ byId('mind').classList.remove('open'); state.mindOpen = false; persistState(); }
     byId('openMind').addEventListener('click', openMind);
     byId('mindTab').addEventListener('click', openMind);
     byId('closeMind').addEventListener('click', closeMindFn);
@@ -9854,10 +10013,10 @@ return window.weld.comments;
     clearStaleLocks();            // remove any leftover run-lock/pending key from a prior load
     updateCharLabel();
     wireComposer(); wireMind(); wireSettings(); wireToolbar(); wireGallery(); wireCommunity();
-    if (window.innerWidth > 880) byId('mind').classList.add('open');   // the thinking is the point — show it
+    if (state.mindOpen == null ? window.innerWidth > 880 : state.mindOpen) byId('mind').classList.add('open');   // remembered across refreshes (first run: open on wide screens)
     // restore the visible conversation
     if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content); }); }
-    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); });
+    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); });
     setInterval(refreshClock, 60000);   // keep her clock + injections current across a long session
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
