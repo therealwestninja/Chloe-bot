@@ -519,6 +519,7 @@
         <h3>Live context from your device</h3>
         <div class="note" id="clockNow">—</div>
         <div class="note" style="margin-top:6px">The local date, time, timezone, and language are read live from the browser and kept current — so replies stay grounded in the real moment.</div>
+        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="matchLangChk"><div><div class="tl">Match my device language</div><div class="td">on first run, reply in your browser's language if it isn't English (override any time with /lang)</div></div></div>
       </div>
       <div class="card">
         <h3>Always in context</h3>
@@ -585,7 +586,7 @@
     <div class="panel" data-panel="about">
       <div class="card">
         <h3 id="aboutTitle">My Girl - Chloe</h3>
-        <div class="note">Your AI companion, "Chloe" v2, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. You don't have to wait to write, jump in at any time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft en entire adventuring party on an alien planet, this thing can do it. It each character will learn facts, insights, have seperate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
+        <div class="note">Your AI companion, "Chloe" v2, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. You don't have to wait to write, jump in at any time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft an entire adventuring party on an alien planet, this thing can do it. Each character will learn facts, insights, have separate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
       </div>
       <div class="note"> Have fun!</div>
       <div class="about-links">Built by therealwestninja &#183; <a href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt</a> &#183; <a href="https://github.com/therealwestninja" target="_blank" rel="noopener">GitHub</a></div>
@@ -2748,7 +2749,6 @@ return window.weld.comments;
     if (deps.globalStore) cfg.globalStore = deps.globalStore;
 
     var CURSOR_KEY = 'cursor:' + cfg.channelId;
-    var INDEX_KEY = 'roster:index';
     // GDPR / ethereal mode. A user who asks to be forgotten becomes invisible to memory in THIS
     // bucket: no partition, no facts, no roster/summary/episode contribution, no image tracking —
     // but the bot can still reply to them in the moment. Per-context by design: the public bucket
@@ -2819,10 +2819,9 @@ return window.weld.comments;
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
     var afkNoticedKeys = [];             // insertion order, to bound afkNoticed (prevent a slow leak over a long session)
-    var lastSawHumanAt = 0;              // when a human last spoke here (observation, always updated)
     function noteAuthorForLoop(isBot) {
       if (isBot) consecutiveBotTurns++;
-      else { consecutiveBotTurns = 0; lastSawHumanAt = clock.now(); }
+      else { consecutiveBotTurns = 0; }
     }
     // Reply probability decays as a channel becomes bot-only chatter, so two bots don't ping-pong
     // forever. 0..botLoopGrace bot turns: full chance. Beyond that, halve per extra turn, floored.
@@ -6041,10 +6040,10 @@ return window.weld.comments;
     function chooseAttention(candidates, signals) {
       if (!candidates.length) return null;
       if (!cfg.attentionManager) return candidates[0];   // fixed ladder: list is already in priority order
-      var best = candidates[0], bestScore = attentionScore(candidates[0], signals), bestIdx = 0;
+      var best = candidates[0], bestScore = attentionScore(candidates[0], signals);
       for (var i = 1; i < candidates.length; i++) {
         var sc = attentionScore(candidates[i], signals);
-        if (sc > bestScore + 1e-9) { best = candidates[i]; bestScore = sc; bestIdx = i; }
+        if (sc > bestScore + 1e-9) { best = candidates[i]; bestScore = sc; }
       }
       if (best !== candidates[0]) log('[chloe.attend] chose ' + best.name + ' (score ' + bestScore.toFixed(1) + ') over ' + candidates[0].name);
       return best;
@@ -7226,7 +7225,7 @@ return window.weld.comments;
     // messages, then blend into a decayed state so mood drifts rather than snapping.
     function moodSignals(humanMsgs, avgGapMs) {
       if (!humanMsgs.length) return null;
-      var laugh = 0, excl = 0, emoji = 0, caps = 0, qs = 0, totalLen = 0;
+      var laugh = 0, excl = 0, emoji = 0, totalLen = 0;
       var laughRe = /\b(lol|lmao|lmfao|rofl|haha+|hehe+|heh)\b|😂|🤣|😹/i;
       var emojiRe = /[\u231A-\uD83F\uDC00-\uDFFF\u2600-\u27BF\uFE0F\u2190-\u21FF\u2B00-\u2BFF]/;
       humanMsgs.forEach(function (t) {
@@ -7235,9 +7234,6 @@ return window.weld.comments;
         if (laughRe.test(t)) laugh++;
         if (t.indexOf('!') >= 0) excl++;
         if (emojiRe.test(t)) emoji++;
-        if (/\?/.test(t)) qs++;
-        var words = t.split(/\s+/).filter(function (w) { return w.length >= 3; });
-        if (words.some(function (w) { return w === w.toUpperCase() && /[A-Z]/.test(w); })) caps++;
       });
       var n = humanMsgs.length;
       var avgLen = totalLen / n;
@@ -7615,7 +7611,6 @@ return window.weld.comments;
           curDelay = computeNextDelay(curDelay, summary);
           if (running) timer = setTimeout(tick, curDelay);
         }, function (e) {
-          var code = e && (e.status || (e.body && e.body.code));
           var unknownChannel = (e && e.status === 404) || (e && e.body && e.body.code === 10003);
           log('[chloe.T0] poll error:', (e && e.message) || e);
           if (unknownChannel && typeof cfg.onChannelGone === 'function') {
@@ -7716,12 +7711,10 @@ return window.weld.comments;
       appendModLog: appendModLog,
       knownFromOtherSurfaces: knownFromOtherSurfaces,
       ingestOne: ingestOne,
-      quietSweep: quietSweep,
       dueForMemberCheck: dueForMemberCheck,
       noteMemberPresent: noteMemberPresent,
       markDeparted: markDeparted,
       backfillStep: backfillStep,
-      computeNextDelay: computeNextDelay,
       start: start,
       stop: stop,
       isRunning: isRunning,
@@ -8464,6 +8457,7 @@ return window.weld.comments;
     cast:[], castMaxSpeakers:2, castMaxFollowups:2,   // multi-character scene (extras beyond the primary)
     autoSave:true, autoSaveMins:10, autoSaveKeep:10,  // rolling auto-checkpoints (Save/Load popup)
     mindOpen:null,   // Thoughts drawer open/closed, remembered across refreshes (null = default by screen width)
+    matchDeviceLang:true,   // first run: reply in the browser's language if it isn't English (overridable)
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 } };
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
@@ -9106,7 +9100,7 @@ return window.weld.comments;
       feedbackLearning: state.feedbackLearning, semanticRecall: state.semanticRecall,
       character: state.character || null,
       // ---- browser hookup: she knows the real local date/time/timezone/language ----
-      timeAware: true, deviceTime: true, deviceClockStaleMs: 600000,
+      deviceClockStaleMs: 600000,
       timezoneOffsetMins: browserContext().offsetMins, deviceClock: deviceClockOf(browserContext()),
       semanticInjections: buildInjections(),
       // ---- chat is reply + image only: her self-initiated SPEECH (greet/lull/checkin) would post to the
@@ -9422,8 +9416,8 @@ return window.weld.comments;
     });
     scrollThread(true);
   }
-  function updateCharLabel(){ var nm = state.botName || 'Chloe'; setText('charCurrent', state.character ? state.character.name : 'default Chloe'); setText('herName', nm); setText('aboutTitle', nm + ' Solo');
-    try { document.title = nm + ' Solo'; } catch(e){}
+  function updateCharLabel(){ var nm = state.botName || 'Chloe'; setText('charCurrent', state.character ? state.character.name : 'default Chloe'); setText('herName', nm); setText('aboutTitle', 'My Girl - ' + nm);
+    try { document.title = 'My Girl - ' + nm; } catch(e){}
     var img = byId('herAvatar'); var av = state.herAvatar || (state.character && state.character.avatar);
     if (img){ if (av){ img.src = av; img.style.display = ''; } else { img.style.display = 'none'; } }
     syncFavicon(av);   // push the avatar to the browser-tab favicon (Perchance relays a <link rel=icon> change to the parent tab)
@@ -9491,12 +9485,50 @@ return window.weld.comments;
     var tag = 'page', txt = line, m = String(line).match(/^\[chloe\.?([a-zA-Z0-9]*)\]\s*([\s\S]*)$/);
     if (m){ tag = m[1] || 'flow'; txt = m[2]; }
     var cls = CATMAP[tag] || 'flow';
+    var pretty = prettifyThought(tag, txt);   // plain-language marker for known cognitive ops; null = keep raw
     var row = document.createElement('div'); row.className = 'thought';
     var t = document.createElement('span'); t.className = 'tag ' + cls; t.textContent = tag || '·';
-    var x = document.createElement('span'); x.className = 'txt'; x.textContent = txt;
+    var x = document.createElement('span'); x.className = 'txt'; x.textContent = pretty || txt;
+    if (pretty) row.title = line;   // the raw developer line is one hover away
     row.appendChild(t); row.appendChild(x); streamEl.appendChild(row);
     while (streamEl.children.length > 400) streamEl.removeChild(streamEl.firstChild);
     scrollMind();
+  }
+  // The engine narrates itself in developer shorthand ("packed 12 lines (~340 tok)"). For the mind
+  // drawer we translate the meaningful operations into plain language so the stream reads like a mind
+  // at work, not a log. Anything unmapped keeps its raw text; the original line stays on hover (title).
+  function prettifyThought(tag, txt){
+    var t = String(txt || '');
+    function num(re){ var mm = t.match(re); return mm ? mm[1] : null; }
+    switch (tag){
+      case 'ctx':   { var c = num(/packed\s+(\d+)\s+line/); return c ? ('weighing ' + c + ' things from our talk') : 'gathering what matters right now'; }
+      case 'think': {
+        if (/nothing worth breaking/i.test(t)) return 'turning it over';
+        var q = num(/into\s+(\d+)\s+question/); if (q) return 'breaking it into ' + q + ' parts';
+        return 'thinking it over';
+      }
+      case 'img':   return /fail|error|no image/i.test(t) ? 'my drawing didn\u2019t come through'
+                         : (/done|finish|ready|sent/i.test(t) ? 'finished a picture' : 'drawing something');
+      case 'reflect':     return 'reflecting on what I\u2019ve learned';
+      case 'consolidate': return 'tidying my memory';
+      case 'sum': case 'summary': return 'summarizing where we\u2019ve got to';
+      case 'epi':    return 'saving this moment to remember';
+      case 'fact':   return 'noting something about you';
+      case 'goal':   return 'keeping your goal in mind';
+      case 'trust':  return 'updating how well I know you';
+      case 'affect': case 'mood': return 'checking my own mood';
+      case 'feedback': return 'learning from how that landed';
+      case 'archive':  return 'filing away older context';
+      case 'excise':   return 'forgetting what you asked me to';
+      case 'remind':   return 'setting something aside to remember';
+      case 'intent':   return 'making a note to come back to this';
+      case 'react':    return 'reacting to that';
+      case 'greet':    return 'thinking how to say hi';
+      case 'checkin':  return 'wondering how you\u2019re doing';
+      case 'lull':     return 'sitting with the quiet';
+      case 'sleep':    return 'resting \u2014 quiet for now';
+      default:         return null;   // unmapped: keep the engine\u2019s own words
+    }
   }
 
   /* ---- chat rendering ---- */
@@ -9748,6 +9780,25 @@ return window.weld.comments;
   function setLang(code){ code = String(code||'').trim(); if (!(engine && engine.setUserLang)) return;
     if (!code || /^(off|none|clear|default)$/i.test(code)){ engine.setUserLang(USER_ID, null); renderSystemLine('reply language: default'); return; }
     engine.setUserLang(USER_ID, code); renderSystemLine('reply language set to ' + code);
+  }
+  // The 24 languages the engine can name (mirror of its LANG_NAMES). Auto-match only applies one of these.
+  var AUTO_LANGS = { fr:1,es:1,de:1,it:1,pt:1,nl:1,ru:1,ja:1,ko:1,zh:1,ar:1,hi:1,tr:1,pl:1,sv:1,uk:1,vi:1,id:1,th:1,el:1,he:1,cs:1,ro:1,fi:1 };
+  // On first run, match her reply language to the browser's — navigator.language IS the chatter here
+  // (Solo is the browser), so the locale is meaningful. Fires once, never overrides a language the user
+  // has already chosen, skips English (the default), and only applies a language the engine can name.
+  function autoMatchLang(){
+    try {
+      if (state.matchDeviceLang === false) return;
+      if (state.langAutoTried) return;
+      state.langAutoTried = true; persistState();
+      if (!(engine && engine.setUserLang && engine.getUserLang)) return;
+      Promise.resolve(engine.getUserLang(USER_ID)).then(function(cur){
+        if (cur) return;                                       // the user already chose a language
+        var code = String(browserContext().locale || '').toLowerCase().split(/[-_]/)[0];   // "fr-FR" -> "fr"
+        if (!code || code === 'en' || !AUTO_LANGS[code]) return;
+        setLang(code);
+      }).catch(function(){});
+    } catch(e){}
   }
   function statusCmd(){
     Promise.all([
@@ -10120,6 +10171,7 @@ return window.weld.comments;
     var asc = byId('autoSaveChk'); if (asc) asc.addEventListener('change', function(){ state.autoSave = asc.checked; persistState(); startAutoSave(); });
     var asm = byId('autoSaveMins'); if (asm) asm.addEventListener('change', function(){ state.autoSaveMins = Math.max(1, Math.min(180, parseInt(asm.value, 10) || 10)); persistState(); startAutoSave(); });
     var ask = byId('autoSaveKeep'); if (ask) ask.addEventListener('change', function(){ state.autoSaveKeep = Math.max(1, Math.min(50, parseInt(ask.value, 10) || 10)); persistState(); pruneAuto(); });
+    var mlc = byId('matchLangChk'); if (mlc){ mlc.checked = state.matchDeviceLang !== false; mlc.addEventListener('change', function(){ state.matchDeviceLang = mlc.checked; persistState(); }); }
     var dr = byId('dialsReset'); if (dr) dr.addEventListener('click', resetDials);
     // behavior toggles are rendered + wired live in renderToggles() (openSettings)
     byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
@@ -10311,7 +10363,7 @@ return window.weld.comments;
     if (state.mindOpen == null ? window.innerWidth > 880 : state.mindOpen) byId('mind').classList.add('open');   // remembered across refreshes (first run: open on wide screens)
     // restore the visible conversation
     if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content, { mid: m.id }); }); }
-    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); });
+    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); autoMatchLang(); });
     setInterval(refreshClock, 60000);   // keep her clock + injections current across a long session
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
