@@ -1,0 +1,463 @@
+# Research Directions for Chloe's Cognitive Architecture
+
+## Core Goal
+
+Do not focus primarily on improving prompts.
+
+Instead, research how biological and distributed systems achieve:
+
+* Planning
+* Coordination
+* Adaptation
+* Fault tolerance
+* Long-term memory
+* Task allocation
+* Self-repair
+* Collective reasoning
+* Exploration vs exploitation
+* Goal persistence
+
+The objective is to evolve Chloe from a chatbot into a cognitive ecosystem.
+
+---
+
+# 1. Global Workspace Theory
+
+Research:
+
+* Global Workspace Theory (Baars)
+* Blackboard Architectures
+* Global Workspace Agents
+* Theater of Mind architectures
+
+Key idea:
+
+The brain is not one thinker.
+
+Many specialized systems compete for attention.
+
+Only the most relevant information enters a shared workspace where all systems can access it.
+
+Potential Chloe implementation:
+
+Instead of a single reasoning chain:
+
+* Memory agent
+* Personality agent
+* Moderation agent
+* Planning agent
+* Research agent
+* Image agent
+* Tool agent
+
+Each submits proposals.
+
+A central workspace broadcasts important information.
+
+Agents subscribe to events instead of directly messaging each other.
+
+Benefits:
+
+* Reduced coupling
+* Better modularity
+* Better reasoning diversity
+* Easier expansion
+
+Research references:
+Global Workspace Theory and newer Global Workspace Agent architectures.
+
+---
+
+# 2. Ant Colony Intelligence
+
+Research:
+
+* Ant colony optimization
+* Pheromone routing
+* Recruitment systems
+* Collective transport
+* Task allocation
+
+Key idea:
+
+Ants rarely issue direct orders.
+
+They modify the environment.
+
+Other ants react to environmental changes.
+
+Potential Chloe implementation:
+
+Instead of agents sending messages:
+
+Agents leave signals.
+
+Examples:
+
+Task importance score
+Confidence score
+Urgency marker
+Failure marker
+Research trail
+Memory trail
+
+Other agents discover and follow those trails.
+
+Benefits:
+
+* Lower coordination overhead
+* Emergent prioritization
+* Better scalability
+
+Research references:
+Ant-inspired task allocation and stigmergy systems consistently demonstrate robust decentralized coordination.
+
+---
+
+# 3. Stigmergic Memory
+
+Research:
+
+* Stigmergy
+* Environmental memory
+* Swarm coordination
+
+Key idea:
+
+The environment itself becomes memory.
+
+Potential Chloe implementation:
+
+Instead of passing huge prompts:
+
+Shared objects become:
+
+* Task cards
+* Goals
+* Memory nodes
+* Warnings
+* Research artifacts
+
+Agents operate on shared state.
+
+Benefits:
+
+* Less context duplication
+* Better traceability
+* Easier debugging
+
+Research references:
+Modern swarm systems use environmental state as both memory and communication channel.
+
+---
+
+# 4. Active Inference
+
+Research:
+
+* Karl Friston
+* Active Inference
+* Predictive Processing
+* Free Energy Principle
+
+Key idea:
+
+Biological intelligence is prediction machinery.
+
+Brains continuously predict future states and act to reduce prediction errors.
+
+Potential Chloe implementation:
+
+Maintain predictions about:
+
+* User intent
+* Conversation direction
+* System health
+* Moderation risk
+* Memory usefulness
+
+Track prediction accuracy.
+
+Learn from failures.
+
+Benefits:
+
+* Better planning
+* Better anticipation
+* Reduced reactive behavior
+
+Research references:
+Recent active inference work explores predictive planning, memory-based learning, and biologically grounded decision systems.
+
+---
+
+# 5. Social Insect Task Allocation
+
+Research:
+
+* Bees
+* Ants
+* Termites
+* Social insect labor division
+
+Key idea:
+
+Workers self-select tasks.
+
+No central scheduler is required.
+
+Potential Chloe implementation:
+
+Agents maintain:
+
+* Interest score
+* Expertise score
+* Availability score
+* Confidence score
+
+Tasks attract agents.
+
+Agents volunteer.
+
+Benefits:
+
+* Natural load balancing
+* Better specialization
+* Graceful scaling
+
+Research references:
+Social insect task allocation models demonstrate decentralized specialization and adaptive labor distribution.
+
+---
+
+# 6. Immune System Architecture
+
+Research:
+
+* Innate immunity
+* Adaptive immunity
+* Danger theory
+* Immune surveillance
+
+Key idea:
+
+The immune system is a distributed anomaly detection network.
+
+Potential Chloe implementation:
+
+Background agents:
+
+* Detect prompt injection
+* Detect memory corruption
+* Detect loops
+* Detect hallucination cascades
+* Detect runaway task spawning
+
+Benefits:
+
+* Self-defense
+* Fault isolation
+* Recovery mechanisms
+
+---
+
+# 7. Sleep and Dreaming
+
+Research:
+
+* Memory consolidation
+* Replay systems
+* Dream simulation
+* Offline learning
+
+Key idea:
+
+Brains improve while inactive.
+
+Potential Chloe implementation:
+
+During idle periods:
+
+* Reorganize memories
+* Merge duplicates
+* Build summaries
+* Detect patterns
+* Refine knowledge graphs
+
+Benefits:
+
+* Cleaner memory
+* Better long-term learning
+* Reduced context pollution
+
+---
+
+# 8. Flocking and Consensus Systems
+
+Research:
+
+* Bird flocking
+* Fish schooling
+* Consensus algorithms
+
+Key idea:
+
+Complex group behavior emerges from simple local rules.
+
+Potential Chloe implementation:
+
+Each reasoning agent generates:
+
+* Confidence
+* Direction
+* Evidence
+
+Consensus emerges from weighted agreement.
+
+Benefits:
+
+* Reduced single-agent failure
+* Better decision quality
+* More robust reasoning
+
+---
+
+# 9. Executive Function Models
+
+Research:
+
+* Prefrontal cortex
+* Goal management
+* Working memory
+* Cognitive control
+
+Key idea:
+
+The brain contains systems dedicated to:
+
+* Prioritization
+* Goal persistence
+* Task switching
+
+Potential Chloe implementation:
+
+Create an Executive Agent.
+
+Responsibilities:
+
+* Manage goals
+* Allocate resources
+* Resolve conflicts
+* Cancel obsolete work
+* Monitor progress
+
+Benefits:
+
+* Reduced context drift
+* Better long-term projects
+
+---
+
+# 10. Failure Recovery Through Biological Redundancy
+
+Research:
+
+* Neural redundancy
+* Degeneracy
+* Fault-tolerant biological systems
+
+Key idea:
+
+Multiple biological systems can perform similar functions.
+
+Potential Chloe implementation:
+
+Never rely on one reasoning pathway.
+
+Critical tasks should be solved by:
+
+* Multiple agents
+* Different reasoning styles
+* Different models
+
+Compare results.
+
+Benefits:
+
+* Reduced catastrophic failures
+* Better reliability
+
+---
+
+# 11. Cognitive Diversity
+
+Research:
+
+* Group intelligence
+* Collective intelligence
+* Diversity effects in problem solving
+
+Key idea:
+
+Groups outperform individuals when members think differently.
+
+Potential Chloe implementation:
+
+Maintain agents with different cognitive styles:
+
+* Logical
+* Creative
+* Critical
+* Skeptical
+* Strategic
+* Research-oriented
+
+Encourage disagreement before synthesis.
+
+Benefits:
+
+* Less groupthink
+* More novel solutions
+
+---
+
+# 12. Exbodied Intelligence
+
+Research:
+
+* Swarm robotics
+* Environmental computation
+* Collective construction systems
+
+Key idea:
+
+Part of intelligence can exist outside the agent.
+
+Potential Chloe implementation:
+
+Move cognition into:
+
+* Databases
+* Shared artifacts
+* Visual boards
+* Memory graphs
+* Task maps
+
+The system becomes larger than any individual agent.
+
+Research references:
+Recent swarm research explores intelligence emerging from agent-environment interactions rather than centralized control.
+
+---
+
+# Most Important Research Question
+
+Do not ask:
+
+"How can Chloe generate better replies?"
+
+Ask:
+
+"How would evolution build a chatbot if it started with cells, neurons, insect colonies, immune systems, and social groups instead of software engineering practices?"
+
+Use biological intelligence as the reference architecture and software as the implementation medium.

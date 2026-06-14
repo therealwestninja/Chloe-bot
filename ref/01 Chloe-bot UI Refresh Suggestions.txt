@@ -1,0 +1,227 @@
+# Chloe-bot UI Refresh Suggestions
+
+## General Direction
+
+The current UI already exposes a large amount of information and functionality. Rather than adding more controls, consider shifting toward a calmer, more focused layout where the bot's activity is the primary focus and advanced controls remain available but mostly hidden until needed.
+
+The goal is not to make the interface look more modern, tactical, or enterprise. The goal is to make it feel easier to monitor and understand at a glance.
+
+Think more:
+
+* IRC client
+* Discord
+* Slack
+* Obsidian
+* Browser developer tools
+
+Think less:
+
+* Security operations center
+* Analytics dashboard
+* SaaS administration panel
+* Cybersecurity software
+
+---
+
+## Prioritize the Activity Feed
+
+Consider making the bot activity feed the largest and most important surface in the application.
+
+This feed could become the primary window into Chloe's behavior.
+
+Potential event types:
+
+* User messages received
+* Responses generated
+* Memory lookups
+* Memory writes
+* Moderation actions
+* Image generation requests
+* Plugin activity
+* Errors and warnings
+* System events
+
+The feed should read more like a timeline than a log file.
+
+Example:
+
+[RECEIVED]
+User asks question
+
+[MEMORY]
+Loaded 3 memories
+
+[THINKING]
+Generating response
+
+[MODERATION]
+Passed content review
+
+[RESPONSE]
+Sent message
+
+---
+
+## Reduce Permanent Controls
+
+Many actions do not need dedicated buttons visible at all times.
+
+Where possible:
+
+* Move secondary actions into menus
+* Use right-click context menus
+* Use dropdowns
+* Use expandable sections
+* Use popup panels
+
+The interface should expose complexity only when needed.
+
+---
+
+## Replace Dashboard Cards with Information Panels
+
+If the UI currently contains many metric cards, consider replacing them with simpler information panels.
+
+Examples:
+
+Instead of:
+
+* Requests per minute
+* Success percentage
+* Average latency
+* Memory usage
+
+Shown constantly,
+
+Consider:
+
+Status Bar
+
+Online | 3 Active Threads | 126ms | Memory OK
+
+with detailed metrics available in a diagnostics panel.
+
+---
+
+## Introduce a Tab-Based Workspace
+
+A single side panel with tabs may reduce clutter significantly.
+
+Potential tabs:
+
+* Chat
+* Moderation
+* Memory
+* Tools
+* Settings
+
+Only one tab should be visible at a time.
+
+This reduces visual noise while keeping all functionality accessible.
+
+---
+
+## Treat Debug Information as an Expandable Surface
+
+Debug data is valuable but not constantly needed.
+
+Consider collapsing it by default.
+
+Example:
+
+Debug ▼
+
+When expanded:
+
+* Current prompt
+* Active context
+* Memory state
+* Queue status
+* API requests
+* Plugin states
+* Recent errors
+
+This keeps technical information available without dominating the interface.
+
+---
+
+## Plugin-Oriented Presentation
+
+Because Chloe is effectively a collection of systems working together, consider exposing major subsystems as modules rather than settings pages.
+
+Example:
+
+Modules
+
+● Memory
+● Moderation
+● Vision
+● Image Generation
+● Discord Bridge
+● Scheduler
+● Personality Engine
+
+Selecting a module could open a dedicated configuration panel rather than displaying all options simultaneously.
+
+---
+
+## Reduce Visual Weight
+
+Consider simplifying visual styling.
+
+Possible adjustments:
+
+* Fewer gradients
+* Fewer shadows
+* Fewer decorative borders
+* Less color overall
+* More whitespace
+* More consistent spacing
+
+Color should primarily communicate state.
+
+Examples:
+
+Green = active
+
+Yellow = warning
+
+Red = attention required
+
+Blue = selected item
+
+Everything else can remain neutral.
+
+---
+
+## Make Chloe Feel Like a Living Process
+
+One possible direction is to present Chloe less as software being configured and more as a system being observed.
+
+The interface could emphasize:
+
+* What Chloe is currently doing
+* What information Chloe is using
+* Which modules are active
+* What decisions Chloe is making
+
+This may help moderators understand behavior more quickly than traditional dashboards.
+
+The interface becomes a window into the bot's cognitive pipeline rather than a collection of settings pages.
+
+---
+
+## Preserve Existing Features
+
+This is intended as a presentation-layer refinement, not a feature reduction.
+
+Most existing functionality should remain available.
+
+The primary change is to:
+
+* Reduce visual clutter
+* Improve information hierarchy
+* Move advanced controls behind panels
+* Make bot activity the center of attention
+
+The interface should feel simpler while remaining just as powerful.

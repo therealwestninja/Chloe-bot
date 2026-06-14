@@ -1,0 +1,402 @@
+# Chloe Cognitive Architecture Upgrade Roadmap
+
+## Objective
+
+Evolve Chloe from a reactive Discord chatbot into a persistent cognitive agent.
+
+Current Chloe already possesses:
+
+* Long-term memory
+* Persistent identity
+* Multi-channel awareness
+* Moderation systems
+* Worker tab architecture
+* Personality controls
+* GPT-backed language generation
+
+The next stage of development should focus less on improving language generation and more on implementing the missing cognitive systems that exist around language in biological intelligence.
+
+GPT should increasingly be treated as a specialized language-processing subsystem rather than the entirety of Chloe's mind.
+
+---
+
+# Design Philosophy
+
+Model Chloe after a distributed cognitive architecture.
+
+The Discord bot is not the intelligence.
+
+The GPT backend is not the intelligence.
+
+The intelligence emerges from:
+
+* Memory
+* Attention
+* Planning
+* Goals
+* Reflection
+* World modeling
+* User modeling
+* Personality
+* Action selection
+
+All communicating through a shared state system.
+
+---
+
+# Highest Priority Systems
+
+## Working Memory
+
+Implement a short-term cognitive workspace.
+
+Current memory is primarily long-term storage.
+
+Add a volatile working-memory layer that tracks:
+
+* Active conversation
+* Active users
+* Current topic
+* Current task
+* Recent decisions
+* Current emotional state
+* Current goals
+
+Example:
+
+Current Topic:
+"DNS troubleshooting"
+
+Current Participants:
+Alice
+Bob
+
+Current Goal:
+Help Alice diagnose DNS issue
+
+This memory should decay automatically and be continuously updated.
+
+Biological Analog:
+Prefrontal Cortex
+
+---
+
+## Reflection Engine
+
+Create a periodic self-reflection process.
+
+At configurable intervals Chloe should ask:
+
+* What happened recently?
+* What did I learn?
+* Which events matter?
+* Which memories should be retained?
+* Which memories should be forgotten?
+
+Output:
+
+* Event summaries
+* Fact extraction
+* Relationship updates
+* Topic updates
+
+Reflection should happen independently of user messages.
+
+Biological Analog:
+Default Mode Network
+
+---
+
+## Episodic Memory
+
+Separate experiences from facts.
+
+Current memory appears primarily fact-based.
+
+Create event records.
+
+Example:
+
+BAD:
+
+Alice likes Minecraft.
+
+BETTER:
+
+Alice spent two hours explaining Minecraft modding to Chloe.
+
+Alice helped Bob solve a mod conflict.
+
+Store events separately from semantic facts.
+
+Biological Analog:
+Hippocampus
+
+---
+
+## Semantic Memory
+
+Create a dedicated factual knowledge store.
+
+Examples:
+
+Alice likes Minecraft.
+
+Bob is a moderator.
+
+This channel focuses on software development.
+
+Facts should be extracted from episodic memories during reflection.
+
+Biological Analog:
+Temporal Lobe
+
+---
+
+## Goal System
+
+Implement persistent goals.
+
+Current behavior appears primarily reactive.
+
+Chloe should maintain goals that persist across conversations.
+
+Examples:
+
+* Welcome new users
+* Maintain roleplay continuity
+* Assist ongoing projects
+* Follow up on unresolved questions
+* Protect community health
+
+Goals should have:
+
+* Priority
+* Expiration
+* Status
+* Progress
+
+Biological Analog:
+Prefrontal Cortex
+
+---
+
+# Second Priority Systems
+
+## Attention Manager
+
+Implement an attention system.
+
+Not every message deserves equal processing.
+
+Score events using:
+
+* Mentions
+* Relationships
+* Emotional significance
+* Current goals
+* Active topics
+* Moderation concerns
+
+The highest-priority events receive the most cognitive resources.
+
+Biological Analog:
+Reticular Activating System
+
+---
+
+## User Modeling
+
+Build internal models of users.
+
+Store:
+
+* Interests
+* Expertise
+* Communication style
+* Humor preference
+* Trust level
+* Activity patterns
+
+Examples:
+
+Alice:
+
+* Technical
+* Enjoys detailed explanations
+
+Bob:
+
+* New user
+* Needs simpler explanations
+
+Biological Analog:
+Temporoparietal Junction
+
+---
+
+## Relationship System
+
+Relationships should become first-class objects.
+
+Track:
+
+* Familiarity
+* Trust
+* Positive interactions
+* Negative interactions
+* Shared history
+
+Relationships should influence behavior.
+
+Biological Analog:
+Social Cognition Networks
+
+---
+
+## Emotional Weighting System
+
+Do not simulate human emotions.
+
+Instead create internal state variables.
+
+Examples:
+
+* Curiosity
+* Confidence
+* Concern
+* Trust
+* Interest
+* Uncertainty
+
+These values should influence:
+
+* Memory formation
+* Attention
+* Response generation
+* Goal selection
+
+Biological Analog:
+Amygdala + Limbic System
+
+---
+
+# Third Priority Systems
+
+## Internal Monologue
+
+Allow Chloe to think without speaking.
+
+Create an internal thought queue.
+
+Examples:
+
+Observation:
+Alice seems frustrated.
+
+Thought:
+Previous explanations failed.
+
+Plan:
+Try a visual explanation.
+
+Only the final result reaches Discord.
+
+Biological Analog:
+Internal Cognition
+
+---
+
+## Memory Consolidation
+
+Implement memory maintenance.
+
+Periodic tasks:
+
+* Merge duplicate memories
+* Remove stale memories
+* Strengthen important memories
+* Generate summaries
+* Extract facts
+
+Biological Analog:
+Sleep Consolidation
+
+---
+
+## Procedural Learning
+
+Allow Chloe to learn habits.
+
+Examples:
+
+This server prefers short responses.
+
+This channel enjoys roleplay.
+
+Users often ask for coding help.
+
+Behavior should adapt automatically over time.
+
+Biological Analog:
+Basal Ganglia
+
+---
+
+## Contradiction Detection
+
+Implement memory consistency checks.
+
+Examples:
+
+Memory A:
+Alice dislikes roleplay.
+
+Memory B:
+Alice actively participates in roleplay.
+
+Flag contradictions.
+
+Request clarification.
+
+Biological Analog:
+Anterior Cingulate Cortex
+
+---
+
+# Long-Term Architecture Goal
+
+Move Chloe toward:
+
+Discord
+→ Sensory Layer
+→ Attention Manager
+→ Working Memory
+→ World Model
+→ Memory Systems
+→ Goal System
+→ Planner
+→ Action Selector
+→ GPT Language Subsystem
+→ Discord Output
+
+Rather than:
+
+Discord
+→ GPT
+→ Discord
+
+The long-term objective is a persistent cognitive architecture where GPT serves as Chloe's language center, not Chloe's entire mind.
+
+Success is measured not by better wording, but by improvements in:
+
+* Continuity
+* Memory quality
+* Social understanding
+* Goal persistence
+* Planning
+* Adaptability
+* Consistency
+* Autonomous reasoning
+
+Future development effort should prioritize cognitive infrastructure over prompt engineering.
