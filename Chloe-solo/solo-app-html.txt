@@ -3,6 +3,7 @@
      the whole mind hides behind the drawer on the right. -->
 <style>
   :root{
+    color-scheme: light dark;   /* native controls/scrollbars follow the active theme */
     --ground:#F4F5F8; --card:#FFFFFF; --ink:#23262D; --ink-soft:#3D424C; --muted:#737985;
     --line:#E4E6EC; --line-soft:#EFF0F4;
     --accent:#5B62E0; --accent-ink:#3F44B8; --accent-soft:#ECEDFB; --accent-line:#D3D5F3;
@@ -12,6 +13,24 @@
     --sans:Tahoma,Verdana,Geneva,'DejaVu Sans',sans-serif;
     --mono:ui-monospace,'SF Mono','JetBrains Mono','Cascadia Code',Menlo,Consolas,monospace;
   }
+  /* Dark tokens. Applied when the device is in dark mode (unless the user forced Light),
+     or when the user explicitly picks Dark. The mind drawer is already dark, so it's untouched. */
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#14161B; --card:#1D2027; --ink:#E9EBF1; --ink-soft:#B4BAC6; --muted:#868D9B;
+      --line:#2C303A; --line-soft:#23272F;
+      --accent:#7E84F2; --accent-ink:#A2A7F7; --accent-soft:#22253A; --accent-line:#393E62;
+      --good:#5FB088; --bad:#E5775E; --warn:#D9B45A;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --ground:#14161B; --card:#1D2027; --ink:#E9EBF1; --ink-soft:#B4BAC6; --muted:#868D9B;
+    --line:#2C303A; --line-soft:#23272F;
+    --accent:#7E84F2; --accent-ink:#A2A7F7; --accent-soft:#22253A; --accent-line:#393E62;
+    --good:#5FB088; --bad:#E5775E; --warn:#D9B45A;
+  }
+  :root[data-theme="light"]{ color-scheme: light; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;text-align:left}
@@ -97,7 +116,7 @@
   .send{border:none;background:var(--accent);color:#fff;border-radius:12px;padding:0 18px;height:46px;font-size:14px;font-weight:600;flex:none;transition:background .15s}
   .send:hover{background:var(--accent-ink)} .send:disabled{background:#C6C3DE;cursor:default}
 
-  /* ---- the mind drawer: her cognition, streamed, paced (the signature) ---- */
+  /* ---- the mind drawer: cognition, streamed and paced ---- */
   .mind{width:0;flex:none;background:var(--mind-bg);color:#fff;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:width .28s cubic-bezier(.4,0,.2,1)}
   .mind.open{width:440px}
   .mind-head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--mind-line)}
@@ -201,7 +220,32 @@
   .roster-act{margin-left:auto;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer}
   .roster-del{border:none;background:transparent;color:var(--muted);font-size:14px;cursor:pointer;padding:2px 7px;border-radius:6px}
   .roster-del:hover{color:#fff;background:var(--bad,#d9534f)}
+  .roster-del:disabled{opacity:.3;cursor:not-allowed}
+  .roster-del:disabled:hover{color:var(--muted);background:transparent}
+  .roster-name-in{flex:1;min-width:0;border:1px solid transparent;background:transparent;font:inherit;font-weight:600;font-size:14px;color:var(--ink);padding:3px 6px;border-radius:7px}
+  .roster-name-in:hover{border-color:var(--line)}
+  .roster-name-in:focus{border-color:var(--accent);background:var(--card);outline:none}
+  .roster-mp{border:1px solid var(--line);background:var(--card);color:var(--ink-soft);border-radius:7px;padding:3px 10px;font-size:11.5px;cursor:pointer;white-space:nowrap}
+  .roster-mp:hover{border-color:var(--accent);color:var(--accent-ink)}
+  .roster-ctrls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .roster-ctrls .roster-act{margin-left:0}
+  .roster-ctrls .roster-alias{flex:1;min-width:130px;width:auto}
+  .roster-row.off{opacity:.55}
+  .roster-restore{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);padding:8px 2px 2px}
   .roster-alias{width:100%;font-size:12.5px;padding:5px 9px}
+  /* appearance controls */
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--card)}
+  .segbtn{border:none;background:transparent;color:var(--ink-soft);font:inherit;font-size:12.5px;padding:7px 16px;cursor:pointer;border-right:1px solid var(--line)}
+  .segbtn:last-child{border-right:none}
+  .segbtn.on{background:var(--accent);color:#fff}
+  .swatches{display:flex;flex-wrap:wrap;gap:8px}
+  .swatch{width:28px;height:28px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0;position:relative}
+  .swatch.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--accent)}
+  .colorpick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);cursor:pointer}
+  .colorpick input[type=color]{width:30px;height:26px;border:1px solid var(--line);border-radius:7px;background:var(--card);cursor:pointer;padding:2px}
+  .roster-color{width:26px;height:24px;min-width:26px;border:1px solid var(--line);border-radius:7px;background:var(--card);cursor:pointer;padding:2px}
+  .roster-color::-webkit-color-swatch{border:none;border-radius:4px}
+  .roster-color-wrap{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
   .subhead{font-family:var(--sans);font-weight:700;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
   .subcard{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;background:var(--ground)}
   .about-links{margin-top:16px;font-size:13px;color:var(--muted)}
@@ -270,16 +314,16 @@
     <div class="composer">
       <div class="inner">
         <div class="toolbar" id="toolbar">
-          <button class="tbtn" id="tbWrite" title="Let her draft your next message (editable before you send)"><span class="k">✍️</span> Write for me</button>
-          <button class="tbtn" id="tbRecap" title="She recaps the conversation so far">📜 Recap</button>
-          <button class="tbtn" id="tbVolunteer" title="She speaks up on her own right now">💬 Volunteer</button>
+          <button class="tbtn" id="tbWrite" title="Let the character draft your next message (editable before you send)"><span class="k">✍️</span> Write for me</button>
+          <button class="tbtn" id="tbRecap" title="Recap the conversation so far">📜 Recap</button>
+          <button class="tbtn" id="tbVolunteer" title="The character speaks up on their own right now">💬 Volunteer</button>
           <button class="tbtn" id="tbBeat" title="A spontaneous in-character beat">✨ Beat</button>
           <button class="tbtn" id="tbRemind" title="Set a reminder">⏰ Remind</button>
           <button class="tbtn" id="tbCmds" title="All slash commands">⌘ Commands</button>
           <div class="cmdpalette" id="cmdPalette"></div>
         </div>
         <div class="wrap">
-          <textarea id="input" rows="1" placeholder="Write to her…  (try /img, /mem, /sys, /nar, /recap, or paste JSON)"></textarea>
+          <textarea id="input" rows="1" placeholder="Write a message…  (try /img, /mem, /sys, /nar, /recap, or paste JSON)"></textarea>
           <button class="send" id="sendBtn" disabled>Send</button>
         </div>
       </div>
@@ -353,14 +397,14 @@
           <div id="charMemList" style="display:none"></div>
           <div class="toggle" style="border:none;margin-top:8px"><input type="checkbox" id="charReplaceChk" checked><div><div class="tl">Make this the primary</div><div class="td">replace the current primary character</div></div></div>
           <div class="toggle" style="border:none"><input type="checkbox" id="charSeedChk"><div><div class="tl">Bring their memories</div><div class="td">seed the saved memories from the export</div></div></div>
-          <div class="row"><button class="btn primary" id="charInstallBtn">Make primary</button><button class="btn" id="charAddSceneBtn">Add to scene</button><span class="status" id="charInstallNote"></span></div>
+          <div class="row"><button class="btn primary" id="charInstallBtn">Set as default</button><button class="btn" id="charAddSceneBtn">Add to scene</button><span class="status" id="charInstallNote"></span></div>
         </div>
 
         <div class="subhead" style="margin-top:16px">Or write your own</div>
         <div class="note">Describe who they are — personality, voice, background, how they behave.</div>
         <div class="row"><input type="text" class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, Aria, Doctor Vane…)"></div>
         <textarea id="charAuthorInstr" rows="5" placeholder="You are … — describe their personality, voice, and how they speak." style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px"></textarea>
-        <div class="row"><button class="btn primary" id="charAuthorBtn">Make primary</button><button class="btn" id="charAuthorAddBtn">Add to scene</button><span class="status" id="charAuthorNote"></span></div>
+        <div class="row"><button class="btn primary" id="charAuthorBtn">Set as default</button><button class="btn" id="charAuthorAddBtn">Add to scene</button><span class="status" id="charAuthorNote"></span></div>
       </div>
 
       <div class="card">
@@ -447,6 +491,7 @@
       <button class="tab on" data-tab="you">You</button>
       <button class="tab" data-tab="context">Context</button>
       <button class="tab" data-tab="behavior">Behavior</button>
+      <button class="tab" data-tab="appearance">Appearance</button>
       <button class="tab" data-tab="about">About</button>
     </div>
 
@@ -508,6 +553,29 @@
       </div>
       <div class="note" style="margin:4px 0 8px">These are the parts of the character’s mind you can turn on and off. They all run locally in your browser, and changes take effect immediately.</div>
       <div id="behaviorToggles"></div>
+    </div>
+
+    <!-- APPEARANCE: theme mode + accent colour, saved locally -->
+    <div class="panel" data-panel="appearance">
+      <div class="card">
+        <h3>Theme</h3>
+        <div class="note">By default the app follows your device's light or dark setting. Pin it here if you'd rather it stayed put.</div>
+        <div class="seg" id="themeSeg" style="margin-top:10px">
+          <button class="segbtn" data-mode="system">System</button>
+          <button class="segbtn" data-mode="light">Light</button>
+          <button class="segbtn" data-mode="dark">Dark</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Accent colour</h3>
+        <div class="note">The highlight colour used across buttons, links, focus rings, and the primary character.</div>
+        <div class="swatches" id="accentSwatches" style="margin-top:10px"></div>
+        <div class="row" style="margin-top:10px;align-items:center;gap:10px">
+          <label class="colorpick"><input type="color" id="accentCustom"><span>Custom…</span></label>
+          <span class="status" id="accentNote"></span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:4px"><button class="btn" id="appearanceReset">Reset appearance</button></div>
     </div>
 
     <!-- MEMORY & DATA -->
@@ -8174,11 +8242,11 @@ return window.weld.comments;
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var name = (ctx && ctx.name) ? String(ctx.name) : 'friend';
     var days = (ctx && ctx.absentMs) ? Math.max(1, Math.round(ctx.absentMs / 86400000)) : null;
-    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context (mood, time, modes, what she knows of them)
+    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // assembler context (mood, time, modes, known facts)
     var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are Chloe. ' + name + ' is someone you talk with a lot, and they have not been around for ' + (days ? (days + ' days') : 'a while') + '.\n'
-      + ((ctx && ctx.summary && !soft) ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')   // v0.58: the assembler context already carries her facts (PERSON band) — the bespoke summary would say it twice
+      + ((ctx && ctx.summary && !soft) ? ('What you remember about them: ' + String(ctx.summary) + '\n') : '')   // the assembler context already carries the facts (PERSON band) — a bespoke summary would duplicate it
       + 'Write a short, warm check-in addressed to them \u2014 happy and light, like noticing a friend has been quiet. Do NOT include their name (it is added for you). Do NOT guilt-trip or be clingy. One sentence, maybe two. No name prefix.';
     return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[[', '\n[['] })).then(function (result) {
       var text = String(result || '').trim();
@@ -8191,12 +8259,12 @@ return window.weld.comments;
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var prompt = (ctx && ctx.prompt) ? String(ctx.prompt) : '';
     if (!prompt) return Promise.resolve({ ok: false, reason: 'no beat prompt' });
-    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // v0.57: assembler context rides into beats too
+    var soft = (ctx && ctx.injections && ctx.injections.length) ? (ctx.injections.join('\n') + '\n') : '';   // assembler context rides into beats too
     var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are Chloe. Write a short, natural, in-character message to the channel based on this idea: ' + prompt + '\n'
       + 'One or two sentences. Do not prefix with your name. Do not say that this is scheduled or automated \u2014 just say it as you would in the moment.';
-    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[' + '[', '\n[' + '['] })).then(function (result) {   // v0.58: turn-marker stops, same as every other template
+    return Promise.resolve(ai({ instruction: instruction, startWith: '', stopSequences: ['\n\n[' + '[', '\n[' + '['] })).then(function (result) {   // turn-marker stops, same as every other template
       var text = String(result || '').trim();
       if (!text) dlog('beat: model returned empty');
       return { ok: !!text, value: text };
@@ -8212,7 +8280,7 @@ return window.weld.comments;
     if (!lines.length) return Promise.resolve({ ok: true, value: 'It\u2019s been quiet \u2014 nothing much to catch up on.' });
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
     var youName = (ctx && ctx.recent && ctx.recent.you && ctx.recent.you.name) ? ctx.recent.you.name : 'Chloe';
-    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // v0.58: recaps written under the same mood/mode awareness as everything else
+    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // recaps inherit the same mood/mode awareness as everything else
     var instruction = personaBase(ctx) + personaStyle(ctx) + '\n\n'
       + soft
       + 'You are ' + youName + '. A moderator asked for a quick recap of what\u2019s been happening in the channel.\n'
@@ -8275,7 +8343,7 @@ return window.weld.comments;
     if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
     var who = (ctx && ctx.person && ctx.person.name) ? ctx.person.name : 'someone';
     var youName = (ctx && ctx.recent && ctx.recent.you && ctx.recent.you.name) ? ctx.recent.you.name : 'Chloe';
-    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // v0.58: greetings honor mood, time, and modes too
+    var soft = (ctx && ctx.recent && ctx.recent.injections && ctx.recent.injections.length) ? (ctx.recent.injections.join('\n') + '\n') : '';   // greetings honor mood, time, and modes too
     var familiar = (ctx && ctx.interactionCount) || 0;
     var lines = (ctx && ctx.recent && ctx.recent.channelRecent) ? ctx.recent.channelRecent : [];
     var transcript = ''; lines.forEach(function (l) { transcript = transcript + l.who + ': ' + l.text + '\n'; });
@@ -8367,13 +8435,13 @@ return window.weld.comments;
   function refresh(){ updateCharLabel(); persistState(); }
 
   /* ---- settings state, persisted ---- */
-  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[],
+  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[], theme:'system', accent:null, botColor:null,
     // on by default (the full cognitive loop); the user can switch any of them off
     conversationMemory:true, factMemory:true, episodicMemory:true, episodeGraph:true, channelSummary:true,
     idleConsolidation:true, reflection:true, goalObjects:true, relationshipTrust:true,
     ownAffect:true, moodAware:true, workingMemory:true, idleDeliberation:true, attentionManager:true,
     selfKnowledge:true, imageMemory:true,
-    // opt-in (off by default — the same defaults the Discord app shipped)
+    // opt-in (off by default)
     contradictionAware:false, userModeling:false, feedbackLearning:false, semanticRecall:false,
     moderation:{ enabled:false, phrases:[], rating:'x' }, lorebook:[], showEmotion:true,
     cast:[], castMaxSpeakers:2, castMaxFollowups:2,   // multi-character scene (extras beyond the primary)
@@ -8388,7 +8456,7 @@ return window.weld.comments;
     ['formality',   'Casual', 'Polished'],
     ['verbosity',   'Terse', 'Expansive']
   ];
-  // Every part of her mind the Discord app let you switch, grouped — each one live-patches the engine.
+  // Every switchable part of the cognitive loop, grouped — each one live-patches the engine.
   var TOGGLE_GROUPS = [
     { title:'Memory', note:'What the character keeps and carries forward.', items:[
       ['conversationMemory','Conversation memory','keep the back-and-forth (including their own lines) in context'],
@@ -8431,8 +8499,8 @@ return window.weld.comments;
       setIndex: function(ids){ try { localStorage.setItem(P+'__index__', JSON.stringify(ids)); } catch(e){} return Promise.resolve(true); }
     };
   }
-  var store = makeStore();   // primary character keeps the legacy chloeSolo: namespace (memory migrates for free)
-  // #4: ask the browser to treat this origin's storage as persistent so her memory isn't evicted under pressure
+  var store = makeStore();   // primary character keeps the legacy chloeSolo: namespace (its memory migrates)
+  // ask the browser to keep this origin's storage persistent so memory isn't evicted under pressure
   function requestPersistentStorage(){
     try {
       if (navigator.storage && navigator.storage.persist){
@@ -8440,7 +8508,7 @@ return window.weld.comments;
       }
     } catch(e){}
   }
-  // drop any stale Bridge multi-instance keys (run-lock / pending-reply) carried over from a prior load
+  // drop any stale multi-instance keys (run-lock / pending-reply) carried over from a prior load
   function clearStaleLocks(){ try { store.del('runlock:' + CH); store.del('pending:' + CH); } catch(e){} }
 
   /* ---- browser hookup: real local date/time/timezone/language fed into her context ---- */
@@ -8456,7 +8524,7 @@ return window.weld.comments;
   }
   function deviceClockOf(bc){ return { time: bc.timeStr, date: bc.dateStr, tz: bc.tz, at: bc.now }; }
   // semantic injections: arbitrary always-known facts surfaced into every prompt. Local + relaxed —
-  // no sanitising or length limits like the Discord build needed. First entry is the live device clock.
+  // no sanitising or length limits. First entry is the live device clock.
   function buildInjections(){
     var bc = browserContext();
     var list = [{ id:'devicetime', at: bc.now, ttlMs: 180000,
@@ -8561,7 +8629,7 @@ return window.weld.comments;
       });
     });
   }
-  // #6: surface the structures her thinking builds — not just raw facts
+  // surface the structures the engine builds — not just raw facts
   function renderInnerState(){
     var box = byId('innerState'); var eng = viewEngine(), st = viewStore(); if (!box || !eng) return;
     function txt(v){ return String(v == null ? '' : v); }
@@ -8801,10 +8869,10 @@ return window.weld.comments;
   function scrubTokens(s){ return String(s||'').replace(/<@!?&?[0-9a-z_-]+>\s*/gi, '').replace(/<#[0-9a-z_-]+>/gi, '').replace(/\s{2,}/g, ' ').trim(); }
   function soloSend(chId, body){
     setThinking(false);
-    var text = scrubTokens(body);   // strip any leftover <@id>/<#id> tokens (reminders carry one; no Discord surface here)
+    var text = scrubTokens(body);   // strip any leftover <@id>/<#id> tokens (reminders can carry one)
     if (text){
       enqueue(BOT_ID, herName(), true, text);
-      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text); if (isGroup()) styleSpeaker(w, BOT_ID, state.herAvatar); }
+      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text); if (w){ w.setAttribute('data-cid', BOT_ID); if (isGroup() || state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); } }
     }
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
@@ -8968,16 +9036,15 @@ return window.weld.comments;
       // pacing limited ONLY by Perchance's generate latency — no artificial waits anywhere
       pollFloorMs: 100, pollCeilMs: 700, debounceMs: 0, debounceFloorMs: 0, cooldownMs: 0, globalCooldownMs: 0, adaptivePace: true, adaptivePolling: true,
       typingRefreshMs: 4000,
-      // ---- image generation (survived the transplant): answer image requests + paint on her own ----
+      // ---- image generation: answer image requests + paint on its own ----
       image: true, sendImage: soloSendImage, imageCooldownMs: 0, imageQueueMax: 4, imageMemory: state.imageMemory !== false, imageMemoryRing: 12,
       // ---- no Discord surface: no commands, moderation, @-pings, #-channels, reactions ----
       commandPrefix: null, ackCommands: false, backgroundText: false, volunteer: false,
       reactionTracking: false, reactionSummon: false, reactionAutoHighlight: false, archiveStale: false,
-      // ---- single instance: the Bridge's Queen/worker failover machinery does not apply here.
-      //      runLock would otherwise block polling for its TTL after every refresh (stale lock from the
-      //      prior page load); replyResume can never verify without a Discord recentFetch. Both off. ----
+      // ---- single instance: runLock would block polling for its TTL after a refresh (a stale lock from
+      //      the prior load); replyResume can't verify without a recentFetch. Both off. ----
       runLock: false, replyResume: false,
-      // ---- the full cognitive loop — defaults on, every one now switchable from the Behavior tab ----
+      // ---- the full cognitive loop — defaults on, switchable from the Behavior tab ----
       conversationMemory: state.conversationMemory !== false, selfKnowledge: state.selfKnowledge !== false,
       factMemory: state.factMemory !== false, reflection: state.reflection !== false,
       episodicMemory: state.episodicMemory !== false, channelSummary: state.channelSummary !== false,
@@ -9036,7 +9103,19 @@ return window.weld.comments;
   var extraEngines = {};                                  // id -> { engine, store, char }
   var turnPlan = { content: null, allowed: {}, depth: 0 };
   function activeExtras(){ return (state.cast || []).filter(function(c){ return c && c.active !== false; }); }
-  function isGroup(){ return activeExtras().length > 0; }
+  function botInScene(){ return state.botActive !== false; }   // the default character can be taken out of the cast
+  function activeMembers(){                                     // unified scene roster: default character (if present) + active extras
+    var out = [];
+    if (botInScene()) out.push({ id: BOT_ID, name: herName(), aliases: state.botAliases || [], isBot: true });
+    activeExtras().forEach(function(c){ out.push({ id: c.id, name: c.name, aliases: c.aliases || [], isBot: false, ref: c }); });
+    return out;
+  }
+  function primaryIdEff(){                                      // who answers when no one is named; survives removals
+    var act = activeMembers();
+    if (state.primaryId && act.some(function(m){ return m.id === state.primaryId; })) return state.primaryId;
+    return act.length ? act[0].id : BOT_ID;
+  }
+  function isGroup(){ return activeMembers().length > 1 || !botInScene(); }
   // Titles aren't names — so "Doctor Vane" answers to "Vane", not to "the doctor said…".
   var NAME_TITLES = { doctor:1, dr:1, captain:1, capt:1, mr:1, mrs:1, ms:1, miss:1, lady:1, lord:1, sir:1, madam:1, madame:1, professor:1, prof:1, master:1, mistress:1, the:1, king:1, queen:1, prince:1, princess:1, saint:1, st:1, general:1, commander:1, agent:1, officer:1 };
   // The names a character answers to: their full name, their personal name (first word that isn't a
@@ -9051,9 +9130,8 @@ return window.weld.comments;
     return dedup;
   }
   function castRoster(){
-    var r = [{ id: BOT_ID, name: herName(), primary: true, tokens: nameTokens(herName()) }];
-    activeExtras().forEach(function(c){ r.push({ id: c.id, name: c.name, tokens: nameTokens(c.name, c.aliases) }); });
-    return r;
+    var pid = primaryIdEff();
+    return activeMembers().map(function(m){ return { id: m.id, name: m.name, primary: m.id === pid, tokens: nameTokens(m.name, m.aliases) }; });
   }
   function namedIn(text, name){ try { return new RegExp('(^|[^a-z0-9_])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9_]|$)', 'i').test(String(text || '')); } catch(e){ return false; } }
   // Addressed if @-mentioned (<@id>) OR any of their names appears in the text (@Aria and bare "Aria"
@@ -9073,7 +9151,7 @@ return window.weld.comments;
     if (fromHuman){
       turnPlan.depth = 0;
       if (named.length) named.slice(0, maxSp).forEach(function(r){ allowed[r.id] = 1; });
-      else allowed[BOT_ID] = 1;                           // unaddressed -> the primary (your always-on companion)
+      else allowed[primaryIdEff()] = 1;                   // unaddressed -> the primary (your always-on companion)
     } else {
       if (turnPlan.depth < (state.castMaxFollowups || 2) && named.length){
         turnPlan.depth++;
@@ -9084,7 +9162,8 @@ return window.weld.comments;
   }
   function engageDecideFor(charId){
     return function(content){
-      if (!isGroup()) return undefined;                   // solo -> fall through to normal addressing
+      if (charId === BOT_ID && !botInScene()) return false;   // default character removed -> stays silent
+      if (!isGroup()) return undefined;                   // sole companion -> fall through to normal addressing
       if (String(content || '') !== turnPlan.content) return false;   // only ever answer the latest planned beat
       return !!turnPlan.allowed[charId];
     };
@@ -9094,7 +9173,7 @@ return window.weld.comments;
   function castColor(seed){ var h = 0; seed = String(seed || ''); for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0; return CAST_PALETTE[h % CAST_PALETTE.length]; }
   function styleSpeaker(wrap, cid, avatar){
     if (!wrap) return;
-    var color = (!cid || cid === BOT_ID) ? null : castColor(cid);   // primary keeps the default accent
+    var color = colorFor(cid);   // user override -> auto palette -> default accent (primary)
     wrap.classList.add('hascolor');
     wrap.style.setProperty('--speaker', color || 'var(--accent-ink)');
     var who = wrap.querySelector('.who'); if (who) who.style.color = color || '';
@@ -9108,8 +9187,8 @@ return window.weld.comments;
       return Promise.resolve(true);
     };
   }
-  // which character's memory the Memory & data tab is inspecting (session-only; resets to the primary).
-  // The whole point of the cast is separate memory per character — this is how you actually see it.
+  // which character's memory the views inspect (session-only; resets to the primary). Each character
+  // keeps its own memory store, so this selects which store the fact/state/budget views read from.
   var memViewId = BOT_ID;
   function viewEngine(){ var e = extraEngines[memViewId]; return (memViewId && memViewId !== BOT_ID && e) ? e.engine : engine; }
   function viewStore(){ var e = extraEngines[memViewId]; return (memViewId && memViewId !== BOT_ID && e) ? e.store : store; }
@@ -9121,7 +9200,7 @@ return window.weld.comments;
     extraEngines = {};
     engine = ChloeT0.createEngine({ transport: transport, store: store, clock: { now: Date.now }, log: onEngineLog, config: buildConfig() });
     registerLorebook(engine);
-    engine.start();
+    if (botInScene()) engine.start();   // built for internal reads, but dormant when the default character is removed
     activeExtras().forEach(function(c){
       try {
         var st = makeStore(NS + 'c:' + c.id + ':');
@@ -9132,6 +9211,7 @@ return window.weld.comments;
         extraEngines[c.id] = { engine: ex, store: st, char: c };
       } catch(e){ pushThought('[scene] could not start ' + (c && c.name) + ': ' + (e && e.message)); }
     });
+    if (!activeMembers().some(function(m){ return m.id === memViewId; })) memViewId = primaryIdEff();   // don't strand the memory view on a removed character
   }
   function slugId(name){ return 'c-' + String(name || 'char').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) + '-' + Math.random().toString(36).slice(2, 6); }
   function addToScene(ch){
@@ -9144,39 +9224,67 @@ return window.weld.comments;
   }
   function renderRoster(){
     var box = byId('rosterList'); if (!box) return; box.innerHTML = '';
+    var pid = primaryIdEff(), activeCount = activeMembers().length;
     function avatarEl(name, color, src){
       if (src){ var im = document.createElement('img'); im.className = 'roster-av'; im.src = src; im.alt = ''; return im; }
       var d = document.createElement('div'); d.className = 'roster-av'; d.textContent = (String(name || '?').trim()[0] || '?').toUpperCase(); if (color) d.style.background = color; return d;
     }
-    function row(name, opts){
-      var r = document.createElement('div'); r.className = 'roster-row';
+    function refreshAll(){ persistState(); buildEngine(); renderRoster(); renderMemPicker(); updateCharLabel(); }
+    function row(m){   // m: { id, name, isBot, ref(extra) }
+      var color = colorFor(m.id);
+      var src = m.isBot ? (state.herAvatar || (state.character && state.character.avatar) || '') : (m.ref.avatar || '');
+      var isActive = m.isBot ? true : (m.ref.active !== false);
+      var r = document.createElement('div'); r.className = 'roster-row' + (isActive ? '' : ' off');
       var top = document.createElement('div'); top.className = 'roster-top';
-      var isExtra = opts && opts.extra;
-      var color = isExtra ? castColor(opts.extra.id) : null;
-      var src = isExtra ? (opts.extra.avatar || '') : (state.herAvatar || (state.character && state.character.avatar) || '');
-      top.appendChild(avatarEl(name, color, src));
-      var n = document.createElement('span'); n.className = 'roster-name'; n.textContent = name; if (isExtra) n.style.color = color; top.appendChild(n);
-      if (opts && opts.primary){ var tag = document.createElement('span'); tag.className = 'roster-tag'; tag.textContent = 'primary'; top.appendChild(tag); }
-      if (isExtra){
-        var lab = document.createElement('label'); lab.className = 'roster-act';
-        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = opts.extra.active !== false;
-        cb.addEventListener('change', function(){ opts.extra.active = cb.checked; persistState(); buildEngine(); });
-        lab.appendChild(cb); lab.appendChild(document.createTextNode(' in scene')); top.appendChild(lab);
-        var del = document.createElement('button'); del.className = 'roster-del'; del.textContent = '\u2715'; del.title = 'Remove from scene';
-        del.addEventListener('click', function(){ var i = state.cast.indexOf(opts.extra); if (i >= 0) state.cast.splice(i, 1); persistState(); buildEngine(); renderRoster(); updateCharLabel(); });
-        top.appendChild(del);
-      }
+      top.appendChild(avatarEl(m.name, color, src));
+      var n = document.createElement('input'); n.type = 'text'; n.className = 'roster-name-in'; n.value = m.name; if (color) n.style.color = color;
+      n.title = 'Rename';
+      n.addEventListener('change', function(){ var v = n.value.trim(); if (!v){ n.value = m.name; return; } if (m.isBot) state.botName = v; else m.ref.name = v; refreshAll(); });
+      top.appendChild(n);
+      if (m.id === pid){ var tag = document.createElement('span'); tag.className = 'roster-tag'; tag.textContent = 'primary'; tag.title = 'Answers when you don\u2019t name anyone'; top.appendChild(tag); }
+      else { var mp = document.createElement('button'); mp.className = 'roster-mp'; mp.textContent = 'Make primary'; mp.title = 'Answers when you don\u2019t name anyone';
+        mp.addEventListener('click', function(){ if (!m.isBot) m.ref.active = true; state.primaryId = m.id; refreshAll(); toast(m.name + ' now leads the scene', 'success'); });
+        top.appendChild(mp); }
+      var del = document.createElement('button'); del.className = 'roster-del'; del.textContent = '\u2715';
+      var canRemove = activeCount > 1 || !isActive;   // never leave the scene with nobody in it
+      del.disabled = !canRemove; del.title = canRemove ? (m.isBot ? 'Take the default character out of the scene' : 'Remove this character') : 'Add or enable another character first';
+      del.addEventListener('click', function(){
+        if (!canRemove) return;
+        if (m.isBot) state.botActive = false;
+        else { var i = state.cast.indexOf(m.ref); if (i >= 0) state.cast.splice(i, 1); }
+        if (state.primaryId === m.id) state.primaryId = null;   // primaryIdEff() picks a new lead
+        refreshAll(); toast(m.name + ' left the scene');
+      });
+      top.appendChild(del);
       r.appendChild(top);
-      if (isExtra){
-        var al = document.createElement('input'); al.type = 'text'; al.className = 'roster-alias'; al.placeholder = 'also answers to\u2026 (nicknames, comma-separated)';
-        al.value = (opts.extra.aliases || []).join(', ');
-        al.addEventListener('change', function(){ opts.extra.aliases = al.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean); persistState(); });
-        r.appendChild(al);
+      var ctrls = document.createElement('div'); ctrls.className = 'roster-ctrls';
+      if (!m.isBot){
+        var lab = document.createElement('label'); lab.className = 'roster-act';
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = isActive;
+        cb.addEventListener('change', function(){ m.ref.active = cb.checked; if (!cb.checked && state.primaryId === m.id) state.primaryId = null; refreshAll(); });
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(' in scene')); ctrls.appendChild(lab);
       }
+      var cw = document.createElement('label'); cw.className = 'roster-color-wrap';
+      var ci = document.createElement('input'); ci.type = 'color'; ci.className = 'roster-color'; ci.title = 'Highlight colour';
+      ci.value = colorFor(m.id) || (m.isBot ? (state.accent || '#5B62E0') : castColor(m.id));
+      ci.addEventListener('input', function(){ if (m.isBot) state.botColor = ci.value; else m.ref.color = ci.value; persistState(); recolorMessages(); renderMemPicker(); });
+      cw.appendChild(ci); cw.appendChild(document.createTextNode(' colour')); ctrls.appendChild(cw);
+      var al = document.createElement('input'); al.type = 'text'; al.className = 'roster-alias'; al.placeholder = 'also answers to\u2026 (comma-separated)';
+      al.value = (m.isBot ? (state.botAliases || []) : (m.ref.aliases || [])).join(', ');
+      al.addEventListener('change', function(){ var arr = al.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean); if (m.isBot) state.botAliases = arr; else m.ref.aliases = arr; persistState(); buildEngine(); });
+      ctrls.appendChild(al);
+      r.appendChild(ctrls);
       box.appendChild(r);
     }
-    row(herName(), { primary: true });
-    (state.cast || []).forEach(function(c){ row(c.name, { extra: c }); });
+    if (botInScene()) row({ id: BOT_ID, name: herName(), isBot: true });
+    (state.cast || []).forEach(function(c){ row({ id: c.id, name: c.name, isBot: false, ref: c }); });
+    if (!botInScene()){
+      var rr = document.createElement('div'); rr.className = 'roster-restore';
+      var s = document.createElement('span'); s.textContent = 'The default character is out of the scene.'; rr.appendChild(s);
+      var b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Bring back ' + (state.botName || 'Chloe');
+      b.addEventListener('click', function(){ state.botActive = true; persistState(); buildEngine(); renderRoster(); renderMemPicker(); updateCharLabel(); });
+      rr.appendChild(b); box.appendChild(rr);
+    }
     var ms = byId('castMaxSpeakers'), mf = byId('castMaxFollowups');
     if (ms){ ms.value = state.castMaxSpeakers || 2; if (!ms.__w){ ms.__w = 1; ms.addEventListener('change', function(){ state.castMaxSpeakers = Math.max(1, Math.min(6, parseInt(ms.value, 10) || 2)); persistState(); }); } }
     if (mf){ mf.value = (state.castMaxFollowups == null ? 2 : state.castMaxFollowups); if (!mf.__w){ mf.__w = 1; mf.addEventListener('change', function(){ state.castMaxFollowups = Math.max(0, Math.min(6, parseInt(mf.value, 10) || 0)); persistState(); }); } }
@@ -9185,13 +9293,13 @@ return window.weld.comments;
   function renderMemPicker(){
     var card = byId('memViewCard'), box = byId('memPicker');
     if (!isGroup()){ memViewId = BOT_ID; if (card) card.style.display = 'none'; return; }
-    if (memViewId !== BOT_ID && !extraEngines[memViewId]) memViewId = BOT_ID;   // viewed character left the scene
+    if (!activeMembers().some(function(m){ return m.id === memViewId; })) memViewId = primaryIdEff();   // viewed character left the scene
     if (card) card.style.display = '';
     if (!box) return; box.innerHTML = '';
-    var roster = [{ id: BOT_ID, name: herName() }].concat(activeExtras().map(function(c){ return { id: c.id, name: c.name }; }));
+    var roster = activeMembers().map(function(m){ return { id: m.id, name: m.name }; });
     roster.forEach(function(m){
       var b = document.createElement('button'); b.className = 'mempick' + (m.id === memViewId ? ' on' : ''); b.textContent = m.name;
-      if (m.id !== BOT_ID) b.style.setProperty('--speaker', castColor(m.id));
+      b.style.setProperty('--speaker', colorFor(m.id) || 'var(--accent-ink)');
       b.addEventListener('click', function(){ memViewId = m.id; renderMemPicker(); refreshMemViews(); });
       box.appendChild(b);
     });
@@ -9349,10 +9457,9 @@ return window.weld.comments;
     return mdFallback(src);
   }
   function setBody(el, text, rich){ if (rich){ el.innerHTML = mdRender(text); } else { el.textContent = text; } }
-  // Emotion cue (mined from fur-ai's detectBotEmotion): infer her mood from her own words and show a
-  // small glyph by her name. fur-ai swapped per-emotion portraits; Chloe has one portrait, so this is a
-  // lightweight read-out instead. Recency wins (the last feeling in a reply dominates), longer phrase
-  // breaks ties, and a few punctuation tells override. Display-only — it never touches what she says.
+  // Emotion cue: infer the character's mood from their own words and show a small glyph by their name.
+  // Recency wins (the last feeling in a reply dominates), longer phrases break ties, and a few
+  // punctuation tells override. Display-only — it never touches what they say.
   var EMOTION_KEYWORDS = {
     happy: 'happy,joy,smile,smiles,smiling,playful,grin,grins,grinning,laugh,laughs,laughing,laughter,giggle,giggles,giggling,haha,hehe,yay,excited,delight,delighted,beaming,thrilled,glad,hug,cuddle,adore,chuckle,chuckles,chuckling,:D,^_^',
     sad: 'sad,sadness,sob,sobs,sobbing,weep,weeping,tears,teary,cry,cries,crying,gloomy,grief,whimper,whimpering,lonely,heartbreak,devastated,miserable,melancholy,mourning,hollow,downcast',
@@ -9445,7 +9552,7 @@ return window.weld.comments;
   function proactive(kind, idea){
     setThinking(true);
     herContext().then(function(actx){
-      if (!actx){ setThinking(false); renderSystemLine('(she needs a language model connected for that)'); return; }
+      if (!actx){ setThinking(false); renderSystemLine('(connect a language model for that)'); return; }
       var p;
       if (kind === 'recap') p = recap({ recent: actx });
       else { actx.prompt = idea || 'Share a small, natural thought or observation right now.'; p = beat(actx); }
@@ -9483,7 +9590,7 @@ return window.weld.comments;
     }, function(){ setThinking(false); renderSystemLine('(image failed)'); });
   }
   function addMemory(text){ text = String(text||'').trim();
-    if (!text){ renderSystemLine('(what should she remember? e.g. /mem I love sci-fi)'); return; }
+    if (!text){ renderSystemLine('(what should the character remember? e.g. /mem I love sci-fi)'); return; }
     if (engine && engine.addFacts) Promise.resolve(engine.addFacts(USER_ID, [{ text: text, importance: 8 }], 'operator')).then(function(){ renderSystemLine('remembered: ' + text); try { renderFactList(); renderInnerState(); } catch(e){} });
   }
   function addSysDirective(text){ text = String(text||'').trim();
@@ -9505,7 +9612,7 @@ return window.weld.comments;
     if (engine && engine.addGoal) Promise.resolve(engine.addGoal(text, USER_ID, userNameStr(), 'command')).then(function(){ renderSystemLine('noted a goal: ' + text); try { renderInnerState(); } catch(e){} });
   }
   function forgetCmd(rest){ rest = String(rest||'').trim();
-    if (/^me$/i.test(rest)){ if (confirm('Forget everything she\u2019s learned about you?') && engine && engine.getFacts){ Promise.resolve(engine.getFacts(USER_ID)).then(function(fs){ (fs||[]).forEach(function(f){ try { engine.forgetFact(USER_ID, f.text); } catch(e){} }); renderSystemLine('forgotten everything about you'); try { renderFactList(); renderInnerState(); } catch(e){} }); } return; }
+    if (/^me$/i.test(rest)){ if (confirm('Forget everything the character has learned about you?') && engine && engine.getFacts){ Promise.resolve(engine.getFacts(USER_ID)).then(function(fs){ (fs||[]).forEach(function(f){ try { engine.forgetFact(USER_ID, f.text); } catch(e){} }); renderSystemLine('forgotten everything about you'); try { renderFactList(); renderInnerState(); } catch(e){} }); } return; }
     if (!rest){ renderSystemLine('(/forget <a thing>  or  /forget me)'); return; }
     if (engine && engine.forgetFact) Promise.resolve(engine.forgetFact(USER_ID, rest)).then(function(){ renderSystemLine('forgotten: ' + rest); try { renderFactList(); } catch(e){} });
   }
@@ -9582,22 +9689,22 @@ return window.weld.comments;
   var COMMANDS = [
     { group:'Compose & scene', items:[
       ['/img <prompt>', 'generate an image now — then "make it landscape", "add a hat", "more moody", or "another one" refines the last one'],
-      ['/nar <text>', 'narrate a scene line she reacts to'],
+      ['/nar <text>', 'narrate a scene line the character reacts to'],
       ['/sys <text>', 'a standing directive (/sys clear resets)'],
       ['/mem <text>', 'remember a durable fact about you'] ] },
-    { group:'Make her act', items:[
-      ['/recap', 'she summarises the conversation'],
+    { group:'Make them act', items:[
+      ['/recap', 'the character summarises the conversation'],
       ['/beat [idea]', 'a spontaneous in-character message'],
-      ['/volunteer', 'she speaks up on her own'],
+      ['/volunteer', 'the character speaks up on their own'],
       ['/writeforme', 'draft your next message'] ] },
     { group:'Memory & life', items:[
       ['/remind 10m <text>', 'set a reminder (m/h/d; /remind clear)'],
-      ['/goal <text>', 'give her a goal to follow up on'],
-      ['/aboutme', 'what she remembers about you'],
+      ['/goal <text>', 'give the character a goal to follow up on'],
+      ['/aboutme', 'what the character remembers about you'],
       ['/highlight [note]', 'save the last line to revisit'],
       ['/highlights', 'list saved lines (/highlights clear)'],
       ['/forget <thing>', '/forget me to wipe'],
-      ['/persona <note>', 'set/show her style note (/persona clear)'],
+      ['/persona <note>', 'set/show the character’s style note (/persona clear)'],
       ['/lang <code>', 'reply language (/lang off)'],
       ['/time   /date', 'the current time / date'] ] },
     { group:'Power', items:[
@@ -9716,9 +9823,9 @@ return window.weld.comments;
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); }
-  // Context inspector (mined from uminara's Gen-Context breakdown): show what's in her head per reply,
-  // priced with the SAME tokenizer she uses (engine.estimateTokens), plus the authoritative totals.
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); }
+  // Context inspector: show what's in context per reply, priced with the same tokenizer the engine
+  // uses (engine.estimateTokens), plus the authoritative totals.
   function renderContextBudget(){
     var box = byId('ctxBudget'); var eng = viewEngine(); if (!box) return;
     if (!eng){ box.innerHTML = '<div class="note">\u2014</div>'; return; }
@@ -9999,7 +10106,93 @@ return window.weld.comments;
   }
 
   /* ---- boot ---- */
+  /* ============ appearance: theme mode (system/light/dark) + accent colour, saved to state ============ */
+  var ACCENT_PRESETS = [
+    { name:'Indigo', hex:'#5B62E0' }, { name:'Violet', hex:'#8A5BD0' }, { name:'Rose', hex:'#C2417A' },
+    { name:'Coral', hex:'#C0562B' }, { name:'Amber', hex:'#B8902A' }, { name:'Teal', hex:'#2E9E7B' },
+    { name:'Ocean', hex:'#2E7DD1' }, { name:'Forest', hex:'#5C8A3A' }, { name:'Slate', hex:'#5A6478' }
+  ];
+  function clampN(n,a,b){ return Math.max(a, Math.min(b, n)); }
+  function hexToHsl(hex){
+    hex = String(hex||'').replace('#',''); if (hex.length===3) hex = hex.replace(/(.)/g,'$1$1');
+    var r=parseInt(hex.slice(0,2),16)/255, g=parseInt(hex.slice(2,4),16)/255, b=parseInt(hex.slice(4,6),16)/255;
+    var mx=Math.max(r,g,b), mn=Math.min(r,g,b), hh=0, s=0, l=(mx+mn)/2;
+    if (mx!==mn){ var d=mx-mn; s = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+      hh = mx===r ? (g-b)/d+(g<b?6:0) : mx===g ? (b-r)/d+2 : (r-g)/d+4; hh/=6; }
+    return { h:hh*360, s:s*100, l:l*100 };
+  }
+  function hslToHex(h,s,l){
+    h=(h%360+360)%360; s=clampN(s,0,100)/100; l=clampN(l,0,100)/100;
+    var c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2, r=0,g=0,b=0;
+    if (h<60){r=c;g=x;} else if(h<120){r=x;g=c;} else if(h<180){g=c;b=x;} else if(h<240){g=x;b=c;} else if(h<300){r=x;b=c;} else {r=c;b=x;}
+    function hx(v){ return ('0'+Math.round((v+m)*255).toString(16)).slice(-2); }
+    return '#'+hx(r)+hx(g)+hx(b);
+  }
+  function effectiveDark(){
+    if (state.theme === 'dark') return true;
+    if (state.theme === 'light') return false;
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch(e){ return false; }
+  }
+  function applyThemeMode(){
+    var root = document.documentElement;
+    if (state.theme === 'light' || state.theme === 'dark') root.setAttribute('data-theme', state.theme);
+    else root.removeAttribute('data-theme');
+  }
+  function applyAccent(){
+    var root = document.documentElement, props = ['--accent','--accent-ink','--accent-soft','--accent-line'];
+    if (!state.accent){ props.forEach(function(p){ root.style.removeProperty(p); }); return; }
+    var c = hexToHsl(state.accent), dark = effectiveDark();
+    if (dark){
+      root.style.setProperty('--accent',      hslToHex(c.h, c.s, clampN(c.l,58,70)));
+      root.style.setProperty('--accent-ink',  hslToHex(c.h, c.s, 77));
+      root.style.setProperty('--accent-soft', hslToHex(c.h, clampN(c.s,18,45), 16));
+      root.style.setProperty('--accent-line', hslToHex(c.h, clampN(c.s,18,50), 34));
+    } else {
+      root.style.setProperty('--accent',      hslToHex(c.h, c.s, clampN(c.l,46,60)));
+      root.style.setProperty('--accent-ink',  hslToHex(c.h, c.s, clampN(c.l-14,26,46)));
+      root.style.setProperty('--accent-soft', hslToHex(c.h, clampN(c.s,40,82), 94));
+      root.style.setProperty('--accent-line', hslToHex(c.h, clampN(c.s,30,72), 84));
+    }
+  }
+  function applyAppearance(){ applyThemeMode(); applyAccent(); }
+  function renderAppearance(){
+    var seg = byId('themeSeg');
+    if (seg) Array.prototype.forEach.call(seg.querySelectorAll('.segbtn'), function(b){
+      b.classList.toggle('on', (state.theme||'system') === b.getAttribute('data-mode'));
+      if (!b.__w){ b.__w=1; b.addEventListener('click', function(){ state.theme = b.getAttribute('data-mode'); persistState(); applyAppearance(); renderAppearance(); recolorMessages(); }); }
+    });
+    var sw = byId('accentSwatches');
+    if (sw){ sw.innerHTML='';
+      ACCENT_PRESETS.forEach(function(p){
+        var b=document.createElement('button'); b.className='swatch'+(((state.accent||'#5B62E0').toLowerCase()===p.hex.toLowerCase())?' on':''); b.style.background=p.hex; b.title=p.name;
+        b.addEventListener('click', function(){ state.accent = p.hex; persistState(); applyAppearance(); renderAppearance(); });
+        sw.appendChild(b);
+      });
+    }
+    var cc = byId('accentCustom');
+    if (cc){ cc.value = state.accent || '#5B62E0'; if (!cc.__w){ cc.__w=1;
+      cc.addEventListener('input', function(){ state.accent = cc.value; persistState(); applyAppearance(); });
+      cc.addEventListener('change', function(){ renderAppearance(); }); } }
+    var note = byId('accentNote'); if (note) note.textContent = state.accent ? ('using ' + state.accent.toUpperCase()) : 'default';
+    var rb = byId('appearanceReset'); if (rb && !rb.__w){ rb.__w=1; rb.addEventListener('click', function(){ state.theme='system'; state.accent=null; persistState(); applyAppearance(); renderAppearance(); recolorMessages(); toast('Appearance reset','success'); }); }
+  }
+  // a character's highlight colour: user override, else the auto palette colour (primary -> default accent)
+  function colorFor(id){
+    if (id === BOT_ID) return state.botColor || null;
+    var c = (state.cast || []).filter(function(x){ return x.id === id; })[0];
+    return (c && c.color) || castColor(id);
+  }
+  // restyle already-rendered messages when a character's colour changes (immediate, no reload)
+  function recolorMessages(){
+    Array.prototype.forEach.call(document.querySelectorAll('#thread .msg.her[data-cid]'), function(w){
+      var color = colorFor(w.getAttribute('data-cid'));
+      if (color || isGroup()){ w.classList.add('hascolor'); w.style.setProperty('--speaker', color || 'var(--accent-ink)'); var who=w.querySelector('.who'); if (who) who.style.color = color || ''; }
+      else { w.classList.remove('hascolor'); w.style.removeProperty('--speaker'); var who2=w.querySelector('.who'); if (who2) who2.style.color=''; }
+    });
+  }
   function boot(){
+    applyAppearance();   // honour saved theme + accent before first paint
+    try { if (window.matchMedia){ var __mq = window.matchMedia('(prefers-color-scheme: dark)'); var __onScheme = function(){ if ((state.theme||'system')==='system'){ applyAccent(); recolorMessages(); } }; __mq.addEventListener ? __mq.addEventListener('change', __onScheme) : (__mq.addListener && __mq.addListener(__onScheme)); } } catch(e){}
     threadCol = byId('threadCol'); emptyState = byId('emptyState'); streamEl = byId('stream');
     threadScroller = makeSticky(byId('thread'), byId('jumpThread'));
     mindScroller = makeSticky(byId('stream'), byId('jumpMind'));
@@ -10023,7 +10216,7 @@ return window.weld.comments;
 
   // expose a couple of shims the inlined char block reaches for (defined above as hoisted fns;
   // these assignments make them visible if the char block runs in a nested scope)
-  window.__solo = { call: call, byId: byId, setText: setText, log: log, refresh: refresh, selChannel: selChannel };
+  window.__solo = { call: call, byId: byId, setText: setText, log: log, refresh: refresh, selChannel: selChannel, addToScene: addToScene };
 })();
 </script>
 <script>
@@ -10037,6 +10230,7 @@ return window.weld.comments;
   function log(m){ return S.log ? S.log(m) : void 0; }
   function refresh(){ return S.refresh ? S.refresh() : void 0; }
   function selChannel(){ return S.selChannel ? S.selChannel() : 'solo'; }
+  function addToScene(a){ return S.addToScene ? S.addToScene(a) : false; }
   // Pure in-browser: decompress -> decode (CBOR/JSON/scavenge) -> extract characters + their
   // thread memories. No upload, no network except the CBOR decoder CDN on first .cbor.gz.
   var CHARCBOR = null;
@@ -10176,7 +10370,7 @@ return window.weld.comments;
   }
 
   // Recover an AICC upload id from a share link, a direct user.uploads.dev link, or a bare hex id
-  // (mined from aicc-recovery). Returns a normalized FILEID.gz, or null.
+  // Returns a normalized FILEID.gz, or null.
   function charExtractFileId(raw) {
     var s = String(raw || '').trim();
     var m = s.match(/[?&]data=[^~]*~([a-z0-9]{16,}(?:\.gz)?)/i);
@@ -10296,7 +10490,7 @@ return window.weld.comments;
     if (seed) jobs.push(call('character.seedMemories', { name: c.name, memories: CHARSTATE.memories, channelId: selChannel() }));
     if (!jobs.length) { setText('charInstallNote', 'nothing selected to apply'); return; }
     Promise.all(jobs).then(function () {
-      setText('charInstallNote', 'done \u2014 she is now ' + c.name + (seed ? ' (with ' + CHARSTATE.memories.length + ' memories)' : ''));
+      setText('charInstallNote', 'done \u2014 the default character is now ' + c.name + (seed ? ' (with ' + CHARSTATE.memories.length + ' memories)' : ''));
       log('character installed: ' + c.name + (replace ? ' (personality replaced)' : '') + (seed ? ', ' + CHARSTATE.memories.length + ' memories seeded' : ''));
       refresh();
     });
