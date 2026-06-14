@@ -1,4 +1,4 @@
-<!-- Chloe Solo — a standalone, in-browser AI companion. The whole cognitive engine from Chloe-bot,
+<!-- My Girl - Chloe — a standalone, in-browser AI companion. The whole cognitive engine from Chloe-bot,
      with no Discord and no Bridge. Designed for desktop, landscape. The chat is the simple face;
      the whole mind hides behind the drawer on the right. -->
 <style>
@@ -584,10 +584,10 @@
     <!-- MEMORY & DATA -->
     <div class="panel" data-panel="about">
       <div class="card">
-        <h3 id="aboutTitle">Chloe Solo</h3>
-        <div class="note">My-Girl is a standalone, in-browser AI companion built on the Chloe-bot cognitive engine. It's a 'brain in a jar'. Default is "Chloe" ver 2.0, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft en entire adventuring party on an alien planet, this thing can do it. It each character will learn facts, insights, have seperate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
+        <h3 id="aboutTitle">My Girl - Chloe</h3>
+        <div class="note">Your AI companion, "Chloe" v2, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. You don't have to wait to write, jump in at any time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft en entire adventuring party on an alien planet, this thing can do it. It each character will learn facts, insights, have seperate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
       </div>
-      <div class="note">Open <b>Thoughts</b> any time to watch a character think, and slow the pace down to read along.</div>
+      <div class="note"> Have fun!</div>
       <div class="about-links">Built by therealwestninja &#183; <a href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt</a> &#183; <a href="https://github.com/therealwestninja" target="_blank" rel="noopener">GitHub</a></div>
     </div>
   </div>
@@ -8431,7 +8431,7 @@ return window.weld.comments;
   // class of bug where a checkbox saves but never restores (or vice versa) is structurally impossible
 
 
-/* ============================ Chloe Solo glue ============================ */
+/* ============================ Chloe-bot glue ============================ */
 (function () {
   "use strict";
   var SOLO_VERSION = '0.1.0';
@@ -10184,7 +10184,7 @@ return window.weld.comments;
       setText('dataNote', 'exported.'); toast('Memory exported', 'success');
     });
     byId('importBtn').addEventListener('click', function(){ byId('importFile').click(); });
-    byId('importFile').addEventListener('change', function(){ var f = this.files && this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function(){ try { var obj = JSON.parse(r.result); var d = obj && obj.data; if (!d) throw 0; Object.keys(d).forEach(function(key){ try { localStorage.setItem(key, d[key]); } catch(e){} }); state = loadState(); queue = loadQueue(); location.reload(); } catch(e){ setText('dataNote','that did not look like a Chloe Solo export.'); } }; r.readAsText(f); });
+    byId('importFile').addEventListener('change', function(){ var f = this.files && this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function(){ try { var obj = JSON.parse(r.result); var d = obj && obj.data; if (!d) throw 0; Object.keys(d).forEach(function(key){ try { localStorage.setItem(key, d[key]); } catch(e){} }); state = loadState(); queue = loadQueue(); location.reload(); } catch(e){ setText('dataNote','that did not look like a My-Girl export.'); } }; r.readAsText(f); });
   }
   function emptyTemplate(){ var d = document.createElement('div'); d.className='empty'; d.id='emptyState'; d.innerHTML='<h2>Say hello.</h2><div>Characters remember what you tell them and think before they speak \u2014 open <b>Thoughts</b> to watch.</div>'; return d; }
 
