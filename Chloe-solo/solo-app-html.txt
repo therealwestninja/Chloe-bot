@@ -284,6 +284,18 @@
   .note{font-size:12px;color:var(--muted)} .mini{font-size:12px}
   .status{font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)}
   @media (max-width:880px){.mind.open{width:100vw;position:fixed;inset:0;z-index:50}}
+  .rxToggle{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);margin:8px 0;line-height:1.4;cursor:pointer}
+  .rxToggle input{margin-top:2px;flex:0 0 auto}
+  .reactionGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:10px;margin-top:12px}
+  .rxTile{border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--card);display:flex;flex-direction:column;gap:6px}
+  .rxThumb{width:100%;aspect-ratio:3/4;border-radius:7px;overflow:hidden;background:var(--bg);display:flex;align-items:center;justify-content:center}
+  .rxThumb img{width:100%;height:100%;object-fit:contain}
+  .rxThumb .rxEmpty{font-size:11px;color:#A9AFBB;text-align:center;padding:4px}
+  .rxLabel{font-size:12px;font-weight:600;color:var(--ink);text-transform:capitalize}
+  .rxLabel .rxSeason{font-weight:400;color:var(--accent,#7aa);font-size:10px;margin-left:4px;text-transform:none}
+  .rxDesc{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-family:inherit;font-size:11px;color:var(--ink);background:var(--bg);resize:vertical;min-height:34px;box-sizing:border-box}
+  .rxRegen{font-size:11px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer}
+  .rxRegen:disabled{opacity:.5;cursor:default}
 </style>
 
 <div class="app">
@@ -417,6 +429,14 @@
       </div>
 
       <div class="card">
+        <h3>Reaction portraits</h3>
+        <div class="note">VN-style emotion cutouts, painted in the background while you chat. She wears the one that fits her mood as she replies. Edit a look and regenerate to fix it; seasonal ones appear in their window.</div>
+        <label class="rxToggle"><input type="checkbox" id="reactionPortraitsChk" checked> Paint reaction portraits while idle</label>
+        <label class="rxToggle"><input type="checkbox" id="reactionFeedbackChk"> Provide feedback &mdash; your edits teach her looks &amp; preferences, applied to all future portraits</label>
+        <div class="reactionGrid" id="reactionGrid"></div>
+      </div>
+
+      <div class="card">
         <h3>Memory</h3>
         <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions.</div>
         <div id="memViewCard" style="display:none;margin-top:10px">
@@ -520,6 +540,11 @@
         <div class="note" id="clockNow">—</div>
         <div class="note" style="margin-top:6px">The local date, time, timezone, and language are read live from the browser and kept current — so replies stay grounded in the real moment.</div>
         <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="matchLangChk"><div><div class="tl">Match my device language</div><div class="td">on first run, reply in your browser's language if it isn't English (override any time with /lang)</div></div></div>
+      </div>
+
+      <div class="card">
+        <h3>Images</h3>
+        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="bgImageGenChk"><div><div class="tl">Generate reaction portraits in the background</div><div class="td">paint her VN-style emotion cutouts during idle time; turn off to stop all background image generation</div></div></div>
       </div>
       <div class="card">
         <h3>Always in context</h3>
@@ -8336,7 +8361,7 @@ return window.weld.comments;
         if (res) {
           clearInterval(iv);
           try { window.__chloePaint.delete(reqId); } catch (e) {}
-          if (res.ok && res.dataUrl) { dlog('paint: image ready (' + String(res.dataUrl).length + ' chars)'); resolve({ ok: true, value: String(res.dataUrl) }); }
+          if (res.ok && res.dataUrl) { dlog('paint: image ready (' + String(res.dataUrl).length + ' chars)'); resolve({ ok: true, value: String(res.dataUrl), blob: (res.blob || null) }); }
           else { dlog('paint: generation declined: ' + (res.reason || 'unknown')); resolve({ ok: false, reason: res.reason || 'no image' }); }
           return;
         }
@@ -8458,6 +8483,8 @@ return window.weld.comments;
     autoSave:true, autoSaveMins:10, autoSaveKeep:10,  // rolling auto-checkpoints (Save/Load popup)
     mindOpen:null,   // Thoughts drawer open/closed, remembered across refreshes (null = default by screen width)
     matchDeviceLang:true,   // first run: reply in the browser's language if it isn't English (overridable)
+    reactionPortraits:true,   // generate VN-style emotion cutouts during idle time (overridable)
+    reactionFeedback:false, imageStyleNotes:[],   // 'provide feedback' switch + the looks/preferences learned from edits
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 } };
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
@@ -8734,36 +8761,77 @@ return window.weld.comments;
     return { checkText: checkText };
   })();
 
+  // Valid Perchance image resolutions; any other value is silently dropped by the backend, so clamp.
+  function validResolution(r){ r = String(r||''); return ({ '512x512':1,'512x768':1,'768x512':1,'768x768':1 })[r] ? r : '768x768'; }
+  // Pick orientation from the prompt when the caller didn't specify one (mined from ai-slideshow):
+  // portrait/selfie -> tall, landscape/wide -> wide, otherwise the HD square.
+  function autoResolution(p){ p = String(p||'');
+    if (/\b(portrait|selfie|headshot)\b/i.test(p)) return '512x768';
+    if (/\b(landscape|wide.?angle|panorama|scenery|vista)\b/i.test(p)) return '768x512';
+    return '768x768';
+  }
+  // A prompt that is empty or only inline (key:::value) params passes client validation but the backend never
+  // responds and the call hangs forever (mined from ai-slideshow) — so reject it before reaching the plugin.
+  function paintablePrompt(s){ return String(s||'').replace(/\([a-zA-Z]+:::[^)]*\)/g, '').trim(); }
+  var PAINT_TIMEOUT_MS = 90000;
   function installPainter(){
     if (window.paintImage) return;   // a top-panel / pre-existing relay wins
+    // Serial request queue: bursts (many /img at once, or the reaction worker overlapping a user request) line
+    // up instead of contending for Perchance's broker. Concurrency is 1 by default (quota-light; each parallel
+    // slot drains the daily quota at the same rate) but the gate generalises to N the way ai-slideshow's does.
+    var IMAGE_MAX_CONCURRENCY = 1;
+    var q = [], active = 0;
+    function pump(){ while (active < IMAGE_MAX_CONCURRENCY && q.length){ active++; runPaintJob(q.shift()).then(slotFreed, slotFreed); } }
+    function slotFreed(){ active--; pump(); }
+    function runPaintJob(req){
+      return new Promise(function(resolve){
+        var reqId = req && req.reqId, done = false;
+        function finish(result){ if (done) return; done = true; try { window.__chloePaint.set(reqId, result); } catch(e){} resolve(); }
+        var mod = Moderation.checkText(req && req.prompt);
+        if (!mod.ok) return finish({ ok:false, reason: mod.reason });   // content gate
+        var t2i = null;
+        try { if (typeof root !== 'undefined' && root && typeof root.textToImagePlugin === 'function') t2i = root.textToImagePlugin; } catch(e){}
+        if (!t2i){ try { if (typeof window.textToImagePlugin === 'function') t2i = window.textToImagePlugin; } catch(e){} }
+        if (!t2i){
+          // no image plugin available (opened as a plain file): a labelled placeholder so the flow is visible
+          var d = String(req && req.resolution || '512x512').split('x'), w = +d[0]||512, h = +d[1]||512;
+          var label = String(req && req.prompt || '').replace(/[<&]/g,' ').slice(0,48);
+          var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4B477E"/><stop offset="1" stop-color="#A14A34"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="48%" fill="#fff" font-family="Tahoma" font-size="20" text-anchor="middle">demo image</text><text x="50%" y="56%" fill="#ffffffcc" font-family="Tahoma" font-size="13" text-anchor="middle">'+label+'</text></svg>';
+          return finish({ ok:true, dataUrl:'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg))) });
+        }
+        if (!paintablePrompt(req && req.prompt)) return finish({ ok:false, reason:'empty image prompt — nothing to draw' });   // would hang the backend forever
+        var opts = { prompt: String(req && req.prompt || ''), resolution: validResolution(req.resolution || autoResolution(req.prompt)) };
+        if (req.guidanceScale != null) opts.guidanceScale = req.guidanceScale;
+        if (req.removeBackground) opts.removeBackground = true;
+        var timer = setTimeout(function(){ finish({ ok:false, reason:'image generation timed out' }); }, PAINT_TIMEOUT_MS);
+        // canonical: await the result -> boxed String with .dataUrl (canvas.toDataURL). Let the plugin
+        // inject its own broker iframe into document.body (await mode) so onFinish resolves.
+        try {
+          Promise.resolve(t2i(opts)).then(function(out){
+            clearTimeout(timer);
+            var data = (out && out.dataUrl != null) ? String(out.dataUrl)
+                     : (out && out.url != null) ? String(out.url) : '';
+            var canvas = out && out.canvas;
+            // blob-direct (mined from ai-slideshow): take the Blob from the canvas instead of decoding the data
+            // URL later — PNG preserves a cutout's alpha, JPEG is smaller for opaque images. dataUrl is kept
+            // for display/avatar persistence; the Blob is what IDB stores.
+            if (canvas && typeof canvas.toBlob === 'function'){
+              try {
+                canvas.toBlob(function(blob){
+                  finish(blob ? { ok:true, dataUrl:data, blob:blob }
+                              : (data ? { ok:true, dataUrl:data } : { ok:false, reason:'the image plugin returned no image data' }));
+                }, req.removeBackground ? 'image/png' : 'image/jpeg', 0.92);
+                return;
+              } catch(e){}
+            }
+            finish(data ? { ok:true, dataUrl:data } : { ok:false, reason:'the image plugin returned no image data' });
+          }, function(e){ clearTimeout(timer); finish({ ok:false, reason:String((e && e.message) || e) || 'image generation failed' }); });
+        } catch(e){ clearTimeout(timer); finish({ ok:false, reason:String((e && e.message) || e) || 'image generation failed' }); }
+      });
+    }
     window.paintImage = function(req){
       try { if (!window.__chloePaint) window.__chloePaint = new Map(); } catch(e){ return; }
-      var reqId = req && req.reqId;
-      var mod = Moderation.checkText(req && req.prompt);
-      if (!mod.ok){ try { window.__chloePaint.set(reqId, { ok:false, reason: mod.reason }); } catch(e){} return; }   // content gate
-      var t2i = null;
-      try { if (typeof root !== 'undefined' && root && typeof root.textToImagePlugin === 'function') t2i = root.textToImagePlugin; } catch(e){}
-      if (!t2i){ try { if (typeof window.textToImagePlugin === 'function') t2i = window.textToImagePlugin; } catch(e){} }
-      if (!t2i){
-        // no image plugin available (opened as a plain file): a labelled placeholder so the flow is visible
-        var d = String(req && req.resolution || '512x512').split('x'), w = +d[0]||512, h = +d[1]||512;
-        var label = String(req && req.prompt || '').replace(/[<&]/g,' ').slice(0,48);
-        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4B477E"/><stop offset="1" stop-color="#A14A34"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><text x="50%" y="48%" fill="#fff" font-family="Tahoma" font-size="20" text-anchor="middle">demo image</text><text x="50%" y="56%" fill="#ffffffcc" font-family="Tahoma" font-size="13" text-anchor="middle">'+label+'</text></svg>';
-        window.__chloePaint.set(reqId, { ok:true, dataUrl:'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg))) });
-        return;
-      }
-      var opts = { prompt: String(req && req.prompt || ''), resolution: req.resolution || '768x768' };
-      if (req.guidanceScale != null) opts.guidanceScale = req.guidanceScale;
-      if (req.removeBackground) opts.removeBackground = true;
-      // canonical: await the result -> boxed String with .dataUrl (canvas.toDataURL). Let the plugin
-      // inject its own broker iframe into document.body (await mode) so onFinish resolves.
-      try {
-        Promise.resolve(t2i(opts)).then(function(out){
-          var data = (out && out.dataUrl != null) ? String(out.dataUrl)
-                   : (out && out.url != null) ? String(out.url) : '';
-          window.__chloePaint.set(reqId, data ? { ok:true, dataUrl:data } : { ok:false, reason:'the image plugin returned no image data' });
-        }, function(e){ window.__chloePaint.set(reqId, { ok:false, reason:String((e && e.message) || e) || 'image generation failed' }); });
-      } catch(e){ window.__chloePaint.set(reqId, { ok:false, reason:String((e && e.message) || e) || 'image generation failed' }); }
+      q.push(req); pump();   // enqueue; the drainer respects IMAGE_MAX_CONCURRENCY
     };
     try { if (typeof root !== 'undefined' && root && typeof root === 'object' && !root.paintImage) root.paintImage = window.paintImage; } catch(e){}
   }
@@ -8782,9 +8850,11 @@ return window.weld.comments;
   }
 
   /* ---- brain hooks: real aiTextPlugin on Perchance; a candid mock when opened standalone ---- */
+  var demoMode = false;
   function installMockIfNeeded(){
     var has = false;
     try { has = !!(window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin)); } catch(e){}
+    demoMode = !has;   // no real ai-text plugin -> placeholders only; the reaction worker stays idle
     if (has) { setText('herRole', 'a companion who remembers'); return; }
     setText('herRole', 'demo mode — no language model connected');
     // standalone: let the brain's root.* lookups resolve to window so the mock ai-text is found.
@@ -8841,6 +8911,7 @@ return window.weld.comments;
     liveWrap.classList.remove('streaming'); liveWrap.__pending = false;
     attachFeedback(liveWrap, finalText);
     applyEmotionCue(liveWrap, finalText);
+    showReaction(detectEmotion(finalText) || 'normal');   // swap the header avatar to her current mood (phase 3)
     liveWrap = null; liveBody = null; liveText = ''; liveActive = false;
     scrollThread(false);
     return true;
@@ -8944,6 +9015,221 @@ return window.weld.comments;
     return { init:init, store:store, getManifest:getManifest, getBlobUrl:getBlobUrl, toggleFavorite:toggleFavorite, remove:remove, clear:clear, usingWeld:function(){ return !!weld; } };
   })();
 
+  /* ===================== Reaction portraits — phase 1: factory + store + pipeline =====================
+   * VN-style emotion cutouts of the character, one per emotion, generated from the character description and
+   * cut out by the existing painter (removeBackground). Pure reuse: detectEmotion (selection, defined below),
+   * paint() + removeBackground (the pipeline already does cutouts), scrubImagePrompt, dataUrlToBlob. The store
+   * mirrors Gallery's IndexedDB shape but is KEYED by character+emotion so a reaction can be looked up, edited,
+   * and regenerated. This block adds no behaviour on its own; phases 2-4 add the worker, the display, and the UI.
+   */
+  // Reusable keyed blob+meta store (the IDB plumbing, factored so the next store that needs it doesn't re-roll it).
+  function makeKvBlobStore(dbName, storeName){
+    var dbP = null;
+    function openDb(){
+      if (dbP) return dbP;
+      dbP = new Promise(function(res, rej){
+        var r = indexedDB.open(dbName, 1);
+        r.onupgradeneeded = function(e){ var db = e.target.result; if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath:'id' }); };
+        r.onsuccess = function(e){ res(e.target.result); };
+        r.onerror = function(e){ dbP = null; rej(e.target.error); };
+      });
+      return dbP;
+    }
+    function op(mode, fn){ return openDb().then(function(db){ return new Promise(function(res, rej){
+      var tx = db.transaction(storeName, mode), s = tx.objectStore(storeName), q = fn(s);
+      if (q && 'onsuccess' in q){ q.onsuccess = function(){ res(q.result); }; q.onerror = function(){ rej(q.error); }; }
+      else { tx.oncomplete = function(){ res(); }; tx.onerror = function(){ rej(tx.error); }; }
+    }); }); }
+    return {
+      put:   function(rec){ return op('readwrite', function(s){ return s.put(rec); }); },
+      get:   function(id){ return op('readonly', function(s){ return s.get(id); }); },
+      all:   function(){ return op('readonly', function(s){ return s.getAll(); }); },
+      del:   function(id){ return op('readwrite', function(s){ return s.delete(id); }); },
+      clear: function(){ return op('readwrite', function(s){ return s.clear(); }); }
+    };
+  }
+  // The reaction set: keys mirror detectEmotion's taxonomy (so a detected mood maps straight to a cutout), plus a
+  // neutral baseline. Each carries the expression phrase the prompt factory injects. 7 by default, within 5-12.
+  // The core reaction set (10): a neutral baseline + the moods worth showing.
+  var REACTION_EXPRESSION = {
+    normal:    'calm neutral expression, relaxed, gentle gaze',
+    happy:     'bright warm smile, sparkling eyes, cheerful',
+    bored:     'half-lidded eyes, unimpressed flat look, cheek resting on hand',
+    worried:   'anxious furrowed brow, slight frown, uneasy eyes',
+    lonely:    'wistful distant gaze, faint sad smile, looking away',
+    sad:       'downcast eyes, gentle frown, sorrowful',
+    crying:    'tears streaming down, scrunched eyes, trembling lips, sobbing',
+    shy:       'blushing cheeks, shy averted glance, fingertips near lips',
+    excited:   'wide bright eyes, big open smile, energetic, hands raised',
+    celebrate: 'joyful cheer, arms thrown up, confetti, beaming party expression'
+  };
+  // Seasonal, day-of set: themed variants topped up only while their date window is active. Windows are
+  // approximate (Easter is a moveable feast); New Year's wraps the year end.
+  var SEASONAL = {
+    easter:       { expr:'cheerful, bunny-ear headband, pastel spring colours, holding a decorated egg', from:[3,22],  to:[4,26] },
+    halloween:    { expr:'playful, cute witch hat, jack-o-lanterns around, spooky-cute mood',             from:[10,24], to:[10,31] },
+    thanksgiving: { expr:'content warm smile, cozy autumn sweater, fall leaves, harvest mood',            from:[11,20], to:[11,28] },
+    christmas:    { expr:'warm smile, santa hat, cozy winter scarf, festive lights bokeh',                from:[12,1],  to:[12,26] },
+    new_years:    { expr:'celebratory, party hat, sparklers, fireworks bokeh, festive',                   from:[12,27], to:[1,2]  }
+  };
+  function expressionFor(emotion){ return REACTION_EXPRESSION[emotion] || (SEASONAL[emotion] && SEASONAL[emotion].expr) || REACTION_EXPRESSION.normal; }
+  function reactionEmotions(){ return Object.keys(REACTION_EXPRESSION); }   // the 10 core
+  // Prompt factory: character description + emotion expression -> a VN cutout prompt (cut out at paint time).
+  // Looks/preferences she's learned from feedback edits, folded into every future image prompt. Guarded so
+  // the factory stays callable (and testable) when there's no app state around it.
+  function learnedStyleNotes(){ try { var n = (state.imageStyleNotes || []); return n.length ? (', ' + n.join(', ')) : ''; } catch(e){ return ''; } }
+  function reactionPrompt(desc, emotion){
+    var base = String(desc || 'a warm, thoughtful presence').replace(/\s+/g, ' ').slice(0, 200);
+    return 'anime visual novel character sprite, ' + base + ', ' + expressionFor(emotion) + learnedStyleNotes()
+         + ', upper body, facing viewer, simple flat background, soft cel shading, clean lineart';
+  }
+  // Job factory: a character -> the core {emotion, prompt} jobs (the worker appends the active seasonal one).
+  function reactionJobs(character){
+    var desc = (character && character.instruction) ? character.instruction : null;
+    return reactionEmotions().map(function(emotion){ return { emotion: emotion, prompt: reactionPrompt(desc, emotion) }; });
+  }
+  function seasonalJob(character, key){
+    if (!SEASONAL[key]) return null;
+    var desc = (character && character.instruction) ? character.instruction : null;
+    return { emotion: key, prompt: reactionPrompt(desc, key) };
+  }
+  // Which seasonal window (if any) the date falls in. Windows can wrap the year end (New Year's).
+  function activeSeasonal(date){
+    date = date || new Date(); var cur = (date.getMonth()+1)*100 + date.getDate();
+    var keys = Object.keys(SEASONAL);
+    for (var i=0;i<keys.length;i++){ var sn = SEASONAL[keys[i]], a = sn.from[0]*100+sn.from[1], b = sn.to[0]*100+sn.to[1];
+      if (a <= b ? (cur >= a && cur <= b) : (cur >= a || cur <= b)) return keys[i]; }
+    return null;
+  }
+  // Pure selection: the first job whose emotion isn't in `have` yet (or null when the set is complete).
+  function nextReactionJob(jobs, have){
+    var has = {}; (have || []).forEach(function(e){ has[e] = 1; });
+    for (var i=0;i<jobs.length;i++){ if (!has[jobs[i].emotion]) return jobs[i]; }
+    return null;
+  }
+  // The store: one cutout per (character, emotion); records carry the editable prompt for regeneration.
+  var ReactionStore = (function(){
+    var kv = makeKvBlobStore('chloe-solo-reactions', 'reactions');
+    function key(charId, emotion){ return String(charId || 'default') + ':' + emotion; }
+    return {
+      put:    function(charId, emotion, blob, prompt, desc){ return kv.put({ id: key(charId, emotion), charId: String(charId||'default'), emotion: emotion, blob: blob, prompt: prompt || '', desc: desc || null, updatedAt: Date.now() }); },
+      get:    function(charId, emotion){ return kv.get(key(charId, emotion)); },
+      list:   function(charId){ var cid = String(charId||'default'); return kv.all().then(function(rs){ return (rs||[]).filter(function(r){ return r.charId === cid; }); }); },
+      remove: function(charId, emotion){ return kv.del(key(charId, emotion)); },
+      clear:  function(){ return kv.clear(); }
+    };
+  })();
+  // The pipeline (single job): description-prompt -> painter cutout -> store. One reaction, end to end.
+  function renderReaction(charId, job){
+    var prompt = (typeof scrubImagePrompt === 'function') ? scrubImagePrompt(job.prompt) : job.prompt;
+    return Promise.resolve(paint({ prompt: prompt, resolution: '512x768', removeBackground: true })).then(function(r){
+      if (!(r && r.ok && r.value)) return { ok:false, emotion: job.emotion, reason: (r && r.reason) || 'no image' };
+      var blob = r.blob || dataUrlToBlob(String(r.value)); if (!blob) return { ok:false, emotion: job.emotion, reason:'not a raster image' };
+      return ReactionStore.put(charId, job.emotion, blob, job.prompt, job.desc).then(function(){ return { ok:true, emotion: job.emotion }; });
+    });
+  }
+  // Phase 2 — the idle worker. When the chat has been quiet and the primary has a description, paint the next
+  // missing reaction (one at a time; the broker is serial). The store IS the progress, so a refresh resumes.
+  // Seasonal reactions are topped up only while their window is active. Never on the reply's critical path.
+  var REACTION_IDLE_MS = 25000, reactionBusy = false, lastUserActivity = Date.now();
+  function noteUserActivity(){ lastUserActivity = Date.now(); }
+  function reactionCharId(){ return (state.character && (state.character.id || state.character.name)) ? String(state.character.id || state.character.name) : 'default'; }
+  function reactionIdleTick(){
+    if (reactionBusy || demoMode || engineThinking) return;
+    if (state.reactionPortraits === false) return;
+    if (Date.now() - lastUserActivity < REACTION_IDLE_MS) return;
+    if (typeof paint !== 'function') return;
+    var character = state.character || null, charId = reactionCharId();
+    var jobs = reactionJobs(character); var sk = activeSeasonal(); if (sk){ var sj = seasonalJob(character, sk); if (sj) jobs = jobs.concat(sj); }
+    reactionBusy = true;
+    ReactionStore.list(charId).then(function(have){
+      var next = nextReactionJob(jobs, (have || []).map(function(r){ return r.emotion; }));
+      if (!next){ reactionBusy = false; return; }
+      pushThought('[chloe.react] painting the ' + next.emotion + ' portrait while it\u2019s quiet');
+      return renderReaction(charId, next).then(function(){ reactionBusy = false;
+        try { if (byId('charactersBg') && byId('charactersBg').classList.contains('open')) renderReactionGallery(); } catch(e){} });
+    }).catch(function(){ reactionBusy = false; });
+  }
+  // Phase 3 — the in-chat swap. On each finalized reply, show her mood by swapping the HEADER avatar to the
+  // matching reaction cutout. The base portrait (state.herAvatar) is left intact; only the displayed <img>
+  // changes. Falls back: a missing emotion -> the normal cutout -> the base portrait.
+  var _reactionUrl = null, _reactionEmo = null;
+  function forgetReaction(){ if (_reactionUrl){ try { URL.revokeObjectURL(_reactionUrl); } catch(e){} _reactionUrl = null; } _reactionEmo = null; }
+  function revertAvatar(){
+    var img = byId('herAvatar'); if (!img) return; forgetReaction();
+    var av = state.herAvatar || (state.character && state.character.avatar);
+    if (av){ img.src = av; img.style.display = ''; } else img.style.display = 'none';
+  }
+  function showReaction(emotion){
+    if (state.reactionPortraits === false) return;
+    var img = byId('herAvatar'); if (!img) return;
+    var emo = emotion || 'normal'; if (emo === _reactionEmo) return;
+    ReactionStore.get(reactionCharId(), emo).then(function(rec){
+      if (!rec || !rec.blob){ if (emo !== 'normal') showReaction('normal'); else revertAvatar(); return; }
+      var url = URL.createObjectURL(rec.blob);
+      if (_reactionUrl){ try { URL.revokeObjectURL(_reactionUrl); } catch(e){} }
+      _reactionUrl = url; _reactionEmo = emo; img.src = url; img.style.display = '';
+    }).catch(function(){});
+  }
+  // Phase 4 — the reaction gallery in the Characters popup: the set at a glance, each cutout with an editable
+  // appearance description and Regenerate. The emotion's expression is always added by the factory, so the
+  // edit field is appearance only; with 'provide feedback' on, an edit also teaches her (learnFromEdit).
+  var _rxThumbUrls = [];
+  function rxBaseDesc(){ return (state.character && state.character.instruction) ? String(state.character.instruction) : 'a warm, thoughtful presence'; }
+  function renderReactionGallery(){
+    var grid = byId('reactionGrid'); if (!grid) return;
+    var pc = byId('reactionPortraitsChk'); if (pc) pc.checked = state.reactionPortraits !== false;
+    var fc = byId('reactionFeedbackChk'); if (fc) fc.checked = !!state.reactionFeedback;
+    _rxThumbUrls.forEach(function(u){ try { URL.revokeObjectURL(u); } catch(e){} }); _rxThumbUrls = [];
+    var charId = reactionCharId();
+    var emotions = reactionEmotions(); var sk = activeSeasonal(); if (sk) emotions = emotions.concat(sk);
+    ReactionStore.list(charId).then(function(recs){
+      var byEmo = {}; (recs||[]).forEach(function(r){ byEmo[r.emotion] = r; });
+      grid.innerHTML = '';
+      emotions.forEach(function(emotion){
+        var rec = byEmo[emotion], seasonal = !!SEASONAL[emotion];
+        var tile = document.createElement('div'); tile.className = 'rxTile'; tile.setAttribute('data-emotion', emotion);
+        var thumb = document.createElement('div'); thumb.className = 'rxThumb';
+        if (rec && rec.blob){ var url = URL.createObjectURL(rec.blob); _rxThumbUrls.push(url); var im = document.createElement('img'); im.src = url; im.alt = emotion; thumb.appendChild(im); }
+        else { var em = document.createElement('div'); em.className = 'rxEmpty'; em.textContent = (state.reactionPortraits === false) ? 'turned off' : (demoMode ? 'needs the image plugin' : 'painting when idle\u2026'); thumb.appendChild(em); }
+        var label = document.createElement('div'); label.className = 'rxLabel'; label.textContent = emotion.replace('_',' ');
+        if (seasonal){ var sp = document.createElement('span'); sp.className = 'rxSeason'; sp.textContent = 'seasonal'; label.appendChild(sp); }
+        var desc = document.createElement('textarea'); desc.className = 'rxDesc'; desc.rows = 2; desc.placeholder = rxBaseDesc().slice(0,80); desc.value = (rec && rec.desc) ? rec.desc : '';
+        var btn = document.createElement('button'); btn.className = 'rxRegen'; btn.textContent = 'Regenerate';
+        btn.addEventListener('click', function(){ regenerateReaction(emotion, desc.value, btn); });
+        tile.appendChild(thumb); tile.appendChild(label); tile.appendChild(desc); tile.appendChild(btn);
+        grid.appendChild(tile);
+      });
+    }).catch(function(){});
+  }
+  function regenerateReaction(emotion, descText, btn){
+    if (demoMode){ toast('Connect the image plugin on Perchance to paint reactions', 'info'); return; }
+    var desc = String(descText || '').trim(), charId = reactionCharId(), base = rxBaseDesc();
+    var job = { emotion: emotion, desc: desc || null, prompt: reactionPrompt(desc || base, emotion) };
+    if (btn){ btn.disabled = true; btn.textContent = 'painting\u2026'; }
+    if (state.reactionFeedback && desc) learnFromEdit(desc);
+    Promise.resolve(renderReaction(charId, job)).then(function(res){
+      if (btn){ btn.disabled = false; btn.textContent = 'Regenerate'; }
+      if (res && res.ok){ toast('Repainted ' + emotion.replace('_',' '), 'success'); renderReactionGallery(); }
+      else toast((res && res.reason) ? res.reason : 'no image \u2014 connect the image plugin', 'error');
+    });
+  }
+  // 'Provide feedback' on: an edit becomes a learned look she carries into every future portrait, and a fact
+  // the engine keeps (so it surfaces in context too). The notes are deduped and capped.
+  function learnFromEdit(desc){
+    desc = String(desc||'').trim(); if (!desc) return;
+    state.imageStyleNotes = state.imageStyleNotes || [];
+    var norm = desc.toLowerCase();
+    if (!state.imageStyleNotes.some(function(n){ return String(n).toLowerCase() === norm; })){
+      state.imageStyleNotes.push(desc);
+      while (state.imageStyleNotes.length > 8) state.imageStyleNotes.shift();
+    }
+    persistState();
+    try { if (engine && engine.addFacts) engine.addFacts(USER_ID, [{ text: 'Prefers ' + herName() + ' portrayed as: ' + desc, importance: 6 }], 'image-feedback'); } catch(e){}
+    pushThought('[chloe.learn] a look to keep in mind: ' + desc);
+  }
+  /* ============================ end reaction portraits phases 1-4 ============================ */
+
   /* ---- Save/Load: rolling auto-checkpoints + manual saves, each a full snapshot of the session.
    * A snapshot is every chloeSolo: localStorage key (memory of every character, the cast, the transcript,
    * all settings). Restore writes them back and reloads — a clean, total rollback. Kept in IndexedDB so
@@ -9039,22 +9325,22 @@ return window.weld.comments;
       .replace(/\{\{\s*char\s*\}\}/gi, herName());
     return scrubImagePrompt(t);
   }
-  function persistImage(dataUrl, caption){
+  function persistImage(dataUrl, caption, blob){
     var d = String(dataUrl || '');
     if (d.indexOf('data:image/') !== 0 || d.indexOf('data:image/svg') === 0) return;   // raster data URLs only (the engine only delivers data: URLs); skip the demo SVG placeholder
-    var blob = dataUrlToBlob(d); if (!blob) return;
+    blob = blob || dataUrlToBlob(d); if (!blob) return;   // prefer the canvas-direct Blob; decode only as a fallback
     Gallery.init().then(function(){ return Gallery.store(blob, { prompt: extractPrompt(caption) }); })
       .then(function(){ toast('Saved to gallery', 'success'); if (galleryOpen) renderGallery(); }).catch(function(){});
   }
 
-  function soloSendImage(chId, dataUrl, caption){
+  function soloSendImage(chId, dataUrl, caption, blob){
     setThinking(false);
     dropLiveOrphan();   // an image reply isn't streamed text; clear any half-open text bubble
     var cap = cleanImageText(caption);
     var m = enqueue(BOT_ID, herName(), true, cap || '(shared an image)');
     var w = renderMessage('her', herName(), cap, { image: dataUrl, mid: m.id });
     if (w) w.setAttribute('data-cid', BOT_ID);
-    persistImage(dataUrl, cap);   // -> IndexedDB gallery
+    persistImage(dataUrl, cap, blob);   // -> IndexedDB gallery (blob-direct when the canvas gave us one)
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
   }
@@ -9420,6 +9706,7 @@ return window.weld.comments;
     try { document.title = 'My Girl - ' + nm; } catch(e){}
     var img = byId('herAvatar'); var av = state.herAvatar || (state.character && state.character.avatar);
     if (img){ if (av){ img.src = av; img.style.display = ''; } else { img.style.display = 'none'; } }
+    if (typeof forgetReaction === 'function') forgetReaction();   // base portrait shown -> next reply re-applies its reaction
     syncFavicon(av);   // push the avatar to the browser-tab favicon (Perchance relays a <link rel=icon> change to the parent tab)
   }
   // Browser-tab favicon = the character's avatar. Perchance's output page watches link[rel="icon"] and
@@ -9577,15 +9864,20 @@ return window.weld.comments;
   // Emotion cue: infer the character's mood from their own words and show a small glyph by their name.
   // Recency wins (the last feeling in a reply dominates), longer phrases break ties, and a few
   // punctuation tells override. Display-only — it never touches what they say.
+  // Taxonomy aligned to the reaction set: detectEmotion's output keys are reaction emotions, so a detected
+  // mood maps straight to a cutout. 'normal' is the implicit null default (neutral text -> no cue, base portrait).
   var EMOTION_KEYWORDS = {
-    happy: 'happy,joy,smile,smiles,smiling,playful,grin,grins,grinning,laugh,laughs,laughing,laughter,giggle,giggles,giggling,haha,hehe,yay,excited,delight,delighted,beaming,thrilled,glad,hug,cuddle,adore,chuckle,chuckles,chuckling,:D,^_^',
-    sad: 'sad,sadness,sob,sobs,sobbing,weep,weeping,tears,teary,cry,cries,crying,gloomy,grief,whimper,whimpering,lonely,heartbreak,devastated,miserable,melancholy,mourning,hollow,downcast',
-    mischief: 'mischief,mischievous,naughty,tease,teases,teasing,smirk,smirks,smirking,sly,cheeky,prank,flirt,flirty,flirting,smug,plotting,scheming,wink,winks,winking,seductive,snicker',
-    surprise: 'surprise,surprised,shock,shocked,gasp,gasps,gasping,wow,whoa,stunned,amazed,astonished,bewildered,wide-eyed',
-    embarrassed: 'embarrass,embarrassed,embarrassing,shy,blush,blushes,blushing,flush,flushed,awkward,nervous,stutter,mortified,flustered,bashful,stammer,stammering',
-    angry: 'angry,mad,rage,raging,furious,fury,hiss,glare,glares,glaring,snarl,snarling,irritated,irritation,livid,irate,seething,scowl,scowls,scowling,hostile'
+    happy: 'happy,joy,smile,smiles,smiling,grin,grins,grinning,laugh,laughs,laughing,laughter,giggle,giggles,giggling,haha,hehe,glad,delight,delighted,content,pleased,cheerful,beaming,lovely,chuckle,chuckles,chuckling,hug,cuddle,adore,:D,^_^',
+    excited: 'excited,exciting,thrilled,thrilling,ecstatic,eager,pumped,stoked,exhilarated,buzzing,amazed,wow,whoa,omg,awesome,fantastic,incredible,cant wait,cannot wait',
+    celebrate: 'celebrate,celebrating,celebration,congrats,congratulations,hooray,hurray,woohoo,yay,party,cheers,victory,winner,triumphant,achievement,accomplished,we did it,nailed it',
+    shy: 'shy,blush,blushes,blushing,bashful,timid,flustered,embarrass,embarrassed,embarrassing,awkward,sheepish,mortified,stutter,stammer,stammering',
+    bored: 'bored,boring,bore,tedious,dull,uninterested,uninteresting,meh,sigh,sighs,sighing,yawn,yawns,yawning,monotonous,listless,restless',
+    worried: 'worried,worry,worries,worrying,anxious,anxiety,nervous,uneasy,afraid,scared,fear,fearful,frightened,concern,concerned,dread,apprehensive,fret,fretting,tense,stressed,panic,panicking',
+    lonely: 'lonely,alone,lonesome,loneliness,isolated,isolation,abandoned,forsaken,nobody,longing,yearning',
+    sad: 'sad,sadness,downcast,gloomy,glum,heartbreak,heartbroken,sorrow,sorrowful,melancholy,miserable,grief,grieving,mourning,hollow,wistful,disappointed,dejected,despair',
+    crying: 'cry,cries,crying,cried,sob,sobs,sobbing,weep,weeping,wept,tears,teary,tearful,bawl,bawling,whimper,whimpering,sniffle,sniffling'
   };
-  var EMOTION_CUE = { happy:['\uD83D\uDE0A','happy'], sad:['\uD83D\uDE41','a little down'], mischief:['\uD83D\uDE0F','playful'], surprise:['\uD83D\uDE2E','surprised'], embarrassed:['\uD83D\uDE33','flustered'], angry:['\uD83D\uDE20','irritated'] };
+  var EMOTION_CUE = { happy:['\uD83D\uDE0A','happy'], excited:['\uD83E\uDD29','excited'], celebrate:['\uD83C\uDF89','celebrating'], shy:['\uD83D\uDE33','shy'], bored:['\uD83D\uDE10','bored'], worried:['\uD83D\uDE1F','worried'], lonely:['\uD83E\uDD7A','lonely'], sad:['\uD83D\uDE41','a little down'], crying:['\uD83D\uDE22','tearful'] };
   function detectEmotion(text){
     if (!text) return null;
     var best = null, maxIndex = -1, maxLen = 0;
@@ -9600,7 +9892,7 @@ return window.weld.comments;
         else if (m.index === maxIndex && len > maxLen){ best = emotion; maxLen = len; }
       }
     });
-    var symbols = { '?!':'surprise', '!?':'surprise', '~':'mischief' };
+    var symbols = { '?!':'excited', '!?':'excited' };
     Object.keys(symbols).forEach(function(sym){ var idx = text.lastIndexOf(sym); if (idx > maxIndex){ maxIndex = idx; best = symbols[sym]; } });
     return best;
   }
@@ -9719,7 +10011,7 @@ return window.weld.comments;
     function clearStatus(){ if (statusLine && statusLine.parentNode) statusLine.parentNode.removeChild(statusLine); statusLine = null; }
     Promise.resolve(paint({ prompt: prompt, resolution: args.resolution, guidanceScale: args.guidanceScale, removeBackground: !!args.removeBackground })).then(function(r){
       setThinking(false); clearStatus();   // the "drawing…" placeholder clears once the image resolves (or fails)
-      if (r && r.ok && r.value) soloSendImage(CH, String(r.value), prompt);
+      if (r && r.ok && r.value) soloSendImage(CH, String(r.value), prompt, r.blob);
       else renderSystemLine('(' + ((r && r.reason) || 'image failed') + ')');
     }, function(){ setThinking(false); clearStatus(); renderSystemLine('(image failed)'); });
   }
@@ -9925,6 +10217,7 @@ return window.weld.comments;
   }
 
   function sendUserMessage(){
+    noteUserActivity();   // resets the reaction worker's idle clock
     var inp = byId('input'); var text = inp.value.trim(); if (!text) return;
     if (handleComposerCommand(text)){ inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true; return; }
     inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true;
@@ -9976,7 +10269,7 @@ return window.weld.comments;
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; }
   // Context inspector: show what's in context per reply, priced with the same tokenizer the engine
   // uses (engine.estimateTokens), plus the authoritative totals.
   function renderContextBudget(){
@@ -10035,7 +10328,7 @@ return window.weld.comments;
     if (!t.__wired){ t.__wired = true; t.addEventListener('change', function(){ state.showEmotion = t.checked; persistState(); refreshEmotionCues(); }); }
   }
   function closeSettings(){ byId('settingsBg').classList.remove('open'); }
-  function openCharacters(){ byId('charactersBg').classList.add('open'); updateCharLabel(); renderRoster(); }
+  function openCharacters(){ byId('charactersBg').classList.add('open'); updateCharLabel(); renderRoster(); renderReactionGallery(); }
   function closeCharacters(){ byId('charactersBg').classList.remove('open'); }
   function exportSlotFile(s){
     var blob = new Blob([JSON.stringify({ format:'chloe-solo', version: s.version || SOLO_VERSION, data: s.data }, null, 0)], { type:'application/json' });
@@ -10172,6 +10465,7 @@ return window.weld.comments;
     var asm = byId('autoSaveMins'); if (asm) asm.addEventListener('change', function(){ state.autoSaveMins = Math.max(1, Math.min(180, parseInt(asm.value, 10) || 10)); persistState(); startAutoSave(); });
     var ask = byId('autoSaveKeep'); if (ask) ask.addEventListener('change', function(){ state.autoSaveKeep = Math.max(1, Math.min(50, parseInt(ask.value, 10) || 10)); persistState(); pruneAuto(); });
     var mlc = byId('matchLangChk'); if (mlc){ mlc.checked = state.matchDeviceLang !== false; mlc.addEventListener('change', function(){ state.matchDeviceLang = mlc.checked; persistState(); }); }
+    var bgi = byId('bgImageGenChk'); if (bgi){ bgi.checked = state.reactionPortraits !== false; bgi.addEventListener('change', function(){ state.reactionPortraits = bgi.checked; persistState(); var pc = byId('reactionPortraitsChk'); if (pc) pc.checked = bgi.checked; }); }
     var dr = byId('dialsReset'); if (dr) dr.addEventListener('click', resetDials);
     // behavior toggles are rendered + wired live in renderToggles() (openSettings)
     byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
@@ -10209,6 +10503,8 @@ return window.weld.comments;
     byId('loreImportBtn').addEventListener('click', function(){ byId('loreFile').click(); });
     byId('loreFile').addEventListener('change', function(){ var f = this.files && this.files[0]; if (f) importLore(f); this.value = ''; });
     // Her portrait (image plugin)
+    (function(){ var pc = byId('reactionPortraitsChk'); if (pc) pc.addEventListener('change', function(){ state.reactionPortraits = pc.checked; persistState(); renderReactionGallery(); });
+      var fc = byId('reactionFeedbackChk'); if (fc) fc.addEventListener('change', function(){ state.reactionFeedback = fc.checked; persistState(); }); })();
     byId('portraitBtn').addEventListener('click', function(){
       setText('portraitNote', 'painting\u2026');
       var who = state.character ? state.character.name : (state.botName||'Chloe');
@@ -10365,6 +10661,7 @@ return window.weld.comments;
     if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content, { mid: m.id }); }); }
     ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); autoMatchLang(); });
     setInterval(refreshClock, 60000);   // keep her clock + injections current across a long session
+    setInterval(reactionIdleTick, 12000);   // idle-time reaction-portrait worker (serial, off the reply path)
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 
