@@ -54,7 +54,10 @@
 
   .thread{text-align:left;flex:1;overflow-y:auto;padding:30px 26px 18px}
   .col{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
-  .msg{display:flex;flex-direction:column;max-width:88%}
+  .msg{display:flex;flex-direction:column;max-width:88%;position:relative}
+  .msg-del{position:absolute;top:2px;right:2px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:6px;width:22px;height:22px;font-size:11px;line-height:1;cursor:pointer;padding:0;opacity:0;transition:opacity .12s,color .12s,background .12s;z-index:2}
+  .msg:hover .msg-del{opacity:.85}
+  .msg-del:hover{opacity:1;color:#fff;background:var(--bad,#d9534f);border-color:var(--bad,#d9534f)}
   .msg .who{font-size:11px;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
   .msg.her{align-self:flex-start}
   .msg.her .body{font-family:var(--chat);font-size:15.5px;line-height:1.6;color:var(--ink);white-space:normal;word-wrap:break-word;overflow-wrap:anywhere}
@@ -117,12 +120,12 @@
   .send:hover{background:var(--accent-ink)} .send:disabled{background:#C6C3DE;cursor:default}
 
   /* ---- the mind drawer: cognition, streamed and paced ---- */
-  .mind{width:0;flex:none;background:var(--mind-bg);color:#fff;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:width .28s cubic-bezier(.4,0,.2,1)}
+  .mind{width:0;flex:none;background:var(--mind-bg,#1B1D26)!important;color:#fff!important;display:flex;flex-direction:column;overflow:hidden;position:relative;transition:width .28s cubic-bezier(.4,0,.2,1)}
   .mind.open{width:440px}
-  .mind-head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--mind-line)}
-  .mind-head .t{font-family:var(--sans);font-weight:700;font-size:15px;color:#EAECF2}
-  .mind-head .sub{font-size:11px;color:var(--mind-dim);letter-spacing:.04em}
-  .mind-x{margin-left:auto;border:1px solid var(--mind-line);background:transparent;color:var(--mind-dim);border-radius:7px;width:28px;height:28px;font-size:15px}
+  .mind-head{display:flex;align-items:center;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--mind-line,#2B2E3B)}
+  .mind-head .t{font-family:var(--sans);font-weight:700;font-size:15px;color:#EAECF2!important}
+  .mind-head .sub{font-size:11px;color:var(--mind-dim,#838AA0)!important;letter-spacing:.04em}
+  .mind-x{margin-left:auto;border:1px solid var(--mind-line,#2B2E3B);background:transparent;color:var(--mind-dim,#838AA0)!important;border-radius:7px;width:28px;height:28px;font-size:15px}
   .mind-x:hover{color:#E7E9F0;border-color:#3a3f50}
   .stream{flex:1;overflow-y:auto;padding:10px 14px 18px;font-family:var(--mono);font-size:12px;line-height:1.5}
   /* jump-to-latest pill — shown when auto-scroll is paused because the user scrolled up */
@@ -134,12 +137,12 @@
   .jumpMind:hover{filter:brightness(1.08)}
   .thought{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);animation:rise .26s ease}
   @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-  .thought .tag{flex:none;font-size:10px;letter-spacing:.04em;padding:1px 6px;border-radius:5px;height:fit-content;margin-top:1px;background:var(--mind-card);color:var(--mind-dim)}
+  .thought .tag{flex:none;font-size:10px;letter-spacing:.04em;padding:1px 6px;border-radius:5px;height:fit-content;margin-top:1px;background:var(--mind-card,#222531);color:var(--mind-dim,#838AA0)}
   .thought .tag.cog{background:#2a2752;color:#a8a4ee}.thought .tag.mem{background:#173331;color:#7ad6cc}
   .thought .tag.io{background:#332a17;color:#e0b878}.thought .tag.flow{background:#2a2433;color:#c9a8e0}.thought .tag.page{background:#222;color:#888}
-  .thought .txt{text-align:left;color:#fff;word-break:break-word;flex:1}
-  .stream .idle{color:var(--mind-dim);font-style:italic;padding:14px 2px}
-  .mind-tab{position:fixed;top:50%;right:0;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--mind-bg);color:#fff;border:none;border-radius:9px 0 0 9px;padding:16px 7px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;box-shadow:-2px 0 10px rgba(0,0,0,.12)}
+  .thought .txt{text-align:left;color:#fff!important;word-break:break-word;flex:1}
+  .stream .idle{color:var(--mind-dim,#838AA0)!important;font-style:italic;padding:14px 2px}
+  .mind-tab{position:fixed;top:50%;right:0;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--mind-bg,#1B1D26)!important;color:#fff!important;border:none;border-radius:9px 0 0 9px;padding:16px 7px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;box-shadow:-2px 0 10px rgba(0,0,0,.12)}
   .mind-tab .dot{display:block;width:7px;height:7px;border-radius:50%;background:#4a4f63;margin:0 auto 9px}
   .mind-tab.thinking .dot{background:var(--accent);animation:breathe 1.4s ease-in-out infinite}
   .mind.open ~ .mind-tab{display:none}
@@ -582,7 +585,7 @@
     <div class="panel" data-panel="about">
       <div class="card">
         <h3 id="aboutTitle">Chloe Solo</h3>
-        <div class="note">A standalone, in-browser AI companion built on the Chloe cognitive engine — facts, insights, episodic and semantic memory, reflection, and feedback learning, all running locally with no server and no account. On a Perchance page it speaks through the free ai-text and image plugins; opened on its own it runs in demo mode so you can see the machine work.</div>
+        <div class="note">My-Girl is a standalone, in-browser AI companion built on the Chloe-bot cognitive engine. It's a 'brain in a jar'. Default is "Chloe" ver 2.0, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft en entire adventuring party on an alien planet, this thing can do it. It each character will learn facts, insights, have seperate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
       </div>
       <div class="note">Open <b>Thoughts</b> any time to watch a character think, and slow the pace down to read along.</div>
       <div class="about-links">Built by therealwestninja &#183; <a href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt</a> &#183; <a href="https://github.com/therealwestninja" target="_blank" rel="noopener">GitHub</a></div>
@@ -3414,6 +3417,12 @@ return window.weld.comments;
       nameAliases().forEach(function (a) { if (a) c = c.replace(new RegExp('\\b' + escRe(a) + '\\b', 'ig'), ' '); });
       return c.replace(/\s+/g, ' ').trim();
     }
+    // Route image prompts through the app's single scrubber (defined in the panel glue, exposed on window);
+    // inline fallback keeps it safe if that isn't reachable.
+    function scrubImagePrompt(s) {
+      try { if (typeof window !== 'undefined' && window.__chloeScrubPrompt) return window.__chloeScrubPrompt(s); } catch (e) {}
+      return String(s == null ? '' : s).replace(/[{}\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    }
     function sanitizePromptForCaption(prompt, maxLen) {
       var t = scrubDiscordTokens(prompt);
       t = t.replace(/@(everyone|here)/gi, '$1');
@@ -5900,6 +5909,7 @@ return window.weld.comments;
       keepTypingWhile(function () { return paint.painting; });
       renumberQueue();                                                   // the rest of the line ticks down a place
       indicateTyping();
+      p.prompt = scrubImagePrompt(p.prompt);                             // resolve {a|b}/[a|b]/{N-M} once so the image and its caption agree (and no bracket reaches the backend)
       log('[chloe.img] painting for ' + p.authorName + ' (' + paint.queue.length + ' more queued): "' + p.prompt.slice(0, 60) + '" (' + p.resolution + (p.dm ? ', dm' : '') + ')');
       var paintArgs = { prompt: p.prompt, resolution: p.resolution };
       if (p.guidanceScale != null) paintArgs.guidanceScale = p.guidanceScale;
@@ -8299,12 +8309,19 @@ return window.weld.comments;
     return null;
   }
 
+  // Route image prompts through the app's single scrubber (defined in the panel glue, exposed on window).
+  // The inline fallback keeps things safe if it isn't reachable for any reason.
+  function scrubImagePrompt(s) {
+    try { if (typeof window !== 'undefined' && window.__chloeScrubPrompt) return window.__chloeScrubPrompt(s); } catch (e) {}
+    return String(s == null ? '' : s).replace(/[{}\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  }
+
   // paint(args) -> { ok, value:dataUrl }. Generation must run in the top-panel scope (see the DSL
   // page): we trigger root.paintImage, which awaits text-to-image there, extracts .dataUrl while the
   // boxed String is intact, and stashes the plain string on the shared-window Map window.__chloePaint
   // keyed by reqId. We poll that Map for the result. An empty prompt is refused (it would hang).
   function paint(args) {
-    var prompt = String((args && args.prompt) || '').trim();
+    var prompt = scrubImagePrompt(args && args.prompt);
     if (prompt.length < 2) return Promise.resolve({ ok: false, reason: 'empty prompt' });
     var resolution = String((args && args.resolution) || '768x768');
     if (resolution !== '512x512' && resolution !== '512x768' && resolution !== '768x512' && resolution !== '768x768') resolution = '768x768';
@@ -8871,8 +8888,9 @@ return window.weld.comments;
     setThinking(false);
     var text = scrubTokens(body);   // strip any leftover <@id>/<#id> tokens (reminders can carry one)
     if (text){
-      enqueue(BOT_ID, herName(), true, text);
-      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text); if (w){ w.setAttribute('data-cid', BOT_ID); if (isGroup() || state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); } }
+      var m = enqueue(BOT_ID, herName(), true, text);
+      if (liveActive && liveWrap) liveWrap.setAttribute('data-mid', m.id);
+      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text, { mid: m.id }); if (w){ w.setAttribute('data-cid', BOT_ID); if (isGroup() || state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); } }
     }
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
@@ -8998,10 +9016,39 @@ return window.weld.comments;
     } catch(e){ return null; }
   }
   function extractPrompt(caption){ var m = String(caption || '').match(/[\u201c"]([^\u201d"]+)[\u201d"]/); return m ? m[1] : ''; }
+  // The single image-prompt scrubber — the one place every prompt bound for the image backend passes
+  // through (the brain's paint(), the engine's caption builder, and the /img + portrait paths all route
+  // here). Perchance's image layer owns {…} and […] (random-pick / list refs) but lets (…) A1111 weights
+  // reach the model, so we resolve {a|b|c}/[a|b|c] to one option and {N-M}/[N-M] to a number, innermost-first,
+  // then drop any leftover square/curly bracket. Parentheses are left untouched.
+  function scrubImagePrompt(s){
+    s = String(s == null ? '' : s);
+    var guard = 0;
+    while (guard++ < 50 && /\{[^{}]*\}|\[[^\[\]]*\]/.test(s)){
+      s = s.replace(/\{([^{}]*)\}|\[([^\[\]]*)\]/g, function(m, c1, c2){
+        var inner = (c1 != null) ? c1 : c2;
+        if (inner.indexOf('|') !== -1){ var o = inner.split('|'); return o[Math.floor(Math.random()*o.length)]; }
+        var r = inner.match(/^\s*(-?\d+)\s*-\s*(-?\d+)\s*$/);
+        if (r){ var a=+r[1], b=+r[2]; if (a>b){ var t=a; a=b; b=t; } return String(a + Math.floor(Math.random()*(b-a+1))); }
+        return inner;
+      });
+    }
+    return s.replace(/[{}\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  }
+  try { window.__chloeScrubPrompt = scrubImagePrompt; } catch(e){}   // expose so the inlined brain + engine route through this same function
+  // Caption shown under an image: turn AICC placeholders into real names first (so {{user}} isn't eaten as
+  // brace syntax), then run the same scrub. The caption's random pick is independent of the prompt's, so a
+  // prompt using {a|b} may name a different option in its caption — cosmetic only.
+  function cleanImageText(s){
+    var t = String(s == null ? '' : s)
+      .replace(/\{\{\s*user\s*\}\}/gi, state.userName || 'You')
+      .replace(/\{\{\s*char\s*\}\}/gi, herName());
+    return scrubImagePrompt(t);
+  }
   function persistImage(dataUrl, caption){
     var d = String(dataUrl || '');
-    if (d.indexOf('data:image/') !== 0 || d.indexOf('data:image/svg') === 0) return;   // real raster generations only — skip SVG demo placeholders
-    var blob = dataUrlToBlob(dataUrl); if (!blob) return;
+    if (d.indexOf('data:image/') !== 0 || d.indexOf('data:image/svg') === 0) return;   // raster data URLs only (the engine only delivers data: URLs); skip the demo SVG placeholder
+    var blob = dataUrlToBlob(d); if (!blob) return;
     Gallery.init().then(function(){ return Gallery.store(blob, { prompt: extractPrompt(caption) }); })
       .then(function(){ toast('Saved to gallery', 'success'); if (galleryOpen) renderGallery(); }).catch(function(){});
   }
@@ -9009,9 +9056,11 @@ return window.weld.comments;
   function soloSendImage(chId, dataUrl, caption){
     setThinking(false);
     dropLiveOrphan();   // an image reply isn't streamed text; clear any half-open text bubble
-    renderMessage('her', herName(), String(caption||''), { image: dataUrl });
-    enqueue(BOT_ID, herName(), true, caption ? String(caption) : '(shared an image)');
-    persistImage(dataUrl, caption);   // -> IndexedDB gallery
+    var cap = cleanImageText(caption);
+    var m = enqueue(BOT_ID, herName(), true, cap || '(shared an image)');
+    var w = renderMessage('her', herName(), cap, { image: dataUrl, mid: m.id });
+    if (w) w.setAttribute('data-cid', BOT_ID);
+    persistImage(dataUrl, cap);   // -> IndexedDB gallery
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
   }
@@ -9075,6 +9124,10 @@ return window.weld.comments;
       factMinInteractions: 2, factProposeGapMs: 8000, factProposeMinNew: 2, consolidateMinFacts: 3,  // learn quickly in a 1:1
       // exact token accounting when the page tokenizer is available (else the engine uses chars/4)
       countTokens: pageCountTokens || undefined,
+      // budget the whole request from the model's real ideal context window minus an 800-token buffer that
+      // keeps a summary/memory update from busting DeepSeek's prefix cache on every send (the value comes
+      // from ai-text getMetaObject). Off-Perchance this is undefined, so the engine keeps its safe default.
+      requestTokenBudget: pageMaxContextTokens ? Math.max(2000, pageMaxContextTokens - 800) : undefined,
       // operator style dials (kindness/sarcasm/curiosity/playfulness/formality/verbosity), 0..1, 0.5 = neutral
       personality: state.personality || undefined,
       lullPatienceMs: 45000, lullMinGapMs: 120000,                 // break a silence after ~45s, at most ~1/2min
@@ -9183,7 +9236,7 @@ return window.weld.comments;
     return function(chId, body){
       setThinking(false);
       var text = scrubTokens(body);
-      if (text){ enqueue(c.id, c.name, true, text); var w = renderMessage('her', c.name, text); if (w){ w.setAttribute('data-cid', c.id); styleSpeaker(w, c.id, c.avatar); } }
+      if (text){ var m = enqueue(c.id, c.name, true, text); var w = renderMessage('her', c.name, text, { mid: m.id }); if (w){ w.setAttribute('data-cid', c.id); styleSpeaker(w, c.id, c.avatar); } }
       return Promise.resolve(true);
     };
   }
@@ -9363,9 +9416,9 @@ return window.weld.comments;
       var content = String((m && (m.content || m.message || m.text)) || '').trim();
       if (!content) return;
       if (author === 'ai' || author === 'assistant' || author === 'bot' || author === 'char' || author === 'character'){
-        renderMessage('her', herName(), content); enqueue(BOT_ID, herName(), true, content);
+        var hm = enqueue(BOT_ID, herName(), true, content); renderMessage('her', herName(), content, { mid: hm.id });
       } else if (author === 'system'){ renderSystemLine(content); }
-      else { renderMessage('you', userNameStr(), content); enqueue(USER_ID, userNameStr(), false, content); }
+      else { var um = enqueue(USER_ID, userNameStr(), false, content); renderMessage('you', userNameStr(), content, { mid: um.id }); }
     });
     scrollThread(true);
   }
@@ -9373,6 +9426,38 @@ return window.weld.comments;
     try { document.title = nm + ' Solo'; } catch(e){}
     var img = byId('herAvatar'); var av = state.herAvatar || (state.character && state.character.avatar);
     if (img){ if (av){ img.src = av; img.style.display = ''; } else { img.style.display = 'none'; } }
+    syncFavicon(av);   // push the avatar to the browser-tab favicon (Perchance relays a <link rel=icon> change to the parent tab)
+  }
+  // Browser-tab favicon = the character's avatar. Perchance's output page watches link[rel="icon"] and
+  // relays its href to the parent tab via a "changeFavicon" postMessage, so setting it here updates the
+  // real tab icon. Downscaled to 32px (center-cropped) and cached so a big portrait data URL isn't shipped
+  // as the icon, and so repeated updateCharLabel() calls don't re-render the canvas.
+  var _favSrc = null, _favOut = null;
+  function setFaviconHref(href){
+    try {
+      var link = document.querySelector('link[rel="icon"]');
+      if (!link){ link = document.createElement('link'); link.rel = 'icon'; (document.head || document.documentElement).appendChild(link); }
+      if (link.getAttribute('href') !== href) link.setAttribute('href', href);
+    } catch(e){}
+  }
+  function syncFavicon(av){
+    if (typeof av !== 'string' || !/^(data:image\/|https?:|blob:)/.test(av)) return;
+    if (av === _favSrc){ if (_favOut) setFaviconHref(_favOut); return; }
+    _favSrc = av;
+    try {
+      var im = new Image(); im.crossOrigin = 'anonymous';
+      im.onload = function(){
+        try {
+          var c = document.createElement('canvas'); c.width = c.height = 32; var ctx = c.getContext('2d');
+          var s = Math.min(im.width, im.height) || 32, sx = (im.width - s) / 2, sy = (im.height - s) / 2;
+          ctx.drawImage(im, sx, sy, s, s, 0, 0, 32, 32);
+          _favOut = c.toDataURL('image/png');
+        } catch(e){ _favOut = av; }   // tainted canvas (cross-origin avatar) -> fall back to the source href
+        setFaviconHref(_favOut);
+      };
+      im.onerror = function(){ _favOut = av; setFaviconHref(av); };
+      im.src = av;
+    } catch(e){ _favOut = av; setFaviconHref(av); }
   }
 
   /* ---- the mind drawer: a throttled thought stream (the signature feature) ---- */
@@ -9509,13 +9594,29 @@ return window.weld.comments;
     if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState = null; }
     var roleCls = role === 'her' ? 'her' : (role === 'system' ? 'system' : 'you');
     var wrap = document.createElement('div'); wrap.className = 'msg ' + roleCls + ((opts && opts.nar) ? ' nar' : '') + ((opts && opts.streaming) ? ' streaming' : '');
+    if (opts && opts.mid != null) wrap.setAttribute('data-mid', opts.mid);
     var w = document.createElement('div'); w.className = 'who'; w.textContent = who; wrap.appendChild(w);
     var b = document.createElement('div'); b.className = 'body'; setBody(b, text, role === 'her' && !(opts && opts.image)); wrap.appendChild(b);
     if (opts && opts.image){ var im = document.createElement('img'); im.className = 'avatar'; im.src = opts.image; wrap.appendChild(im); }
     var typing = byId('typingRow'); threadCol.insertBefore(wrap, typing);
     scrollThread(role === 'you');
     if (role === 'her' && !(opts && opts.image) && !(opts && opts.streaming) && text){ attachFeedback(wrap, text); applyEmotionCue(wrap, text); }
+    attachRemove(wrap);   // every message (incl. system / narration) gets a remove control
     return wrap;
+  }
+  // hover ✕ to remove a message from the thread (and the persisted transcript) — works for any message,
+  // including stuck images. The matching queue entry is dropped by its id so it doesn't return on reload.
+  function attachRemove(wrap){
+    if (!wrap || wrap.querySelector('.msg-del')) return;
+    var b = document.createElement('button'); b.className = 'msg-del'; b.type = 'button'; b.title = 'Remove this message'; b.textContent = '\u2715';
+    b.addEventListener('click', function(e){ e.stopPropagation(); removeMessage(wrap); });
+    wrap.appendChild(b);
+  }
+  function removeMessage(wrap){
+    if (!wrap) return;
+    var mid = wrap.getAttribute('data-mid');
+    if (mid){ for (var i = queue.length - 1; i >= 0; i--){ if (String(queue[i].id) === String(mid)) queue.splice(i, 1); } persistQueue(); }
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
   }
   // 👍/👎 on her replies -> engine.recordFeedback (feedbackLearning is on; this is the signal that activates it)
   function attachFeedback(wrap, text){
@@ -9542,7 +9643,7 @@ return window.weld.comments;
   }
   /* ===================== command layer: slash commands · JSON jobs · action toolbar ===================== */
   function userNameStr(){ return state.userName || 'You'; }
-  function renderSystemLine(text, nar){ renderMessage('system', '', String(text), { system:true, nar: !!nar }); }
+  function renderSystemLine(text, nar){ return renderMessage('system', '', String(text), { system:true, nar: !!nar }); }
   function herContext(){
     if (engine && typeof engine.assembleContext === 'function')
       return Promise.resolve(engine.assembleContext({ authorId: USER_ID, authorName: userNameStr(), content: '' }));
@@ -9582,12 +9683,13 @@ return window.weld.comments;
   function doImage(args){
     var prompt = String(args && args.prompt || '').trim();
     if (prompt.length < 2){ renderSystemLine('(give me something to draw, e.g. /img a red fox in snow)'); return; }
-    renderSystemLine('drawing: ' + prompt.slice(0,90), true); setThinking(true);
+    var statusLine = renderSystemLine('drawing: ' + prompt.slice(0,90), true); setThinking(true);
+    function clearStatus(){ if (statusLine && statusLine.parentNode) statusLine.parentNode.removeChild(statusLine); statusLine = null; }
     Promise.resolve(paint({ prompt: prompt, resolution: args.resolution, guidanceScale: args.guidanceScale, removeBackground: !!args.removeBackground })).then(function(r){
-      setThinking(false);
+      setThinking(false); clearStatus();   // the "drawing…" placeholder clears once the image resolves (or fails)
       if (r && r.ok && r.value) soloSendImage(CH, String(r.value), prompt);
       else renderSystemLine('(' + ((r && r.reason) || 'image failed') + ')');
-    }, function(){ setThinking(false); renderSystemLine('(image failed)'); });
+    }, function(){ setThinking(false); clearStatus(); renderSystemLine('(image failed)'); });
   }
   function addMemory(text){ text = String(text||'').trim();
     if (!text){ renderSystemLine('(what should the character remember? e.g. /mem I love sci-fi)'); return; }
@@ -9775,8 +9877,8 @@ return window.weld.comments;
     var inp = byId('input'); var text = inp.value.trim(); if (!text) return;
     if (handleComposerCommand(text)){ inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true; return; }
     inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true;
-    renderMessage('you', state.userName||'You', text);
-    enqueue(USER_ID, state.userName||'You', false, text);
+    var um = enqueue(USER_ID, state.userName||'You', false, text);
+    renderMessage('you', state.userName||'You', text, { mid: um.id });
     dropLiveOrphan(); replyExpected = true;   // a reply to this message is the only thing allowed to stream into chat
     setThinking(true);
     if (engine && engine.pollOnce) { try { engine.pollOnce(); } catch(e){} }   // read it immediately, don't wait for the poll timer
@@ -10208,7 +10310,7 @@ return window.weld.comments;
     wireComposer(); wireMind(); wireSettings(); wireToolbar(); wireGallery(); wireCommunity();
     if (state.mindOpen == null ? window.innerWidth > 880 : state.mindOpen) byId('mind').classList.add('open');   // remembered across refreshes (first run: open on wide screens)
     // restore the visible conversation
-    if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content); }); }
+    if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content, { mid: m.id }); }); }
     ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); });
     setInterval(refreshClock, 60000);   // keep her clock + injections current across a long session
   }

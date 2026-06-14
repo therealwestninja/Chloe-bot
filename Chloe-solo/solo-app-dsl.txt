@@ -1,8 +1,8 @@
 $meta
   title = My Girl
   description =  Your AI companion. Learns what you like, matches your energy and mood. Customizable, free. Full cognitive engine: memory, reflection, episodic & semantic recall, and feedback learning
-  tags = ai, character, image, generator, gen, generation, advanced, chat, perchance, girl, live, smart, learning, best, 2026
-  image = none
+  tags = ai, character, image, generator, imgen, gen, generation, advanced, chat, perchance, weld, plugin, free, fast, girl, live, smart, learning, best, 2026
+  image = https://user.uploads.dev/file/02e1cc58ac93f83b5a3e87967c0a6871.jpg
 
 aiTextPlugin = {import:ai-text-plugin}
 textToImagePlugin = {import:text-to-image-plugin}
