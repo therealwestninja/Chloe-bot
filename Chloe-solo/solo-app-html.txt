@@ -3827,6 +3827,51 @@ return window.weld.comments;
         .trim();
       var dm = /\b(dm|dms|privately|in private|direct message)\b/i.test(raw) || /\bin (a|my) dm\b/i.test(raw);
       if (dm) prompt = prompt.replace(/\b(in (a|my) )?(dm|dms|privately|in private|private|direct message)\b/ig, '').replace(/\s+/g, ' ').trim();
+      // Self-portrait: "draw yourself", "a selfie", "what you look like". The stripping above collapses these
+      // to "yourself"/empty, so the picture would otherwise be a random person. Build it from HER appearance
+      // instead — the same persona text her spoken self-description draws on — so the image matches who she is.
+      var wantsSelf = /\byour ?self\b|\bselfie\b|\bof you\b|\byour face\b|what you look like/i.test(body)
+                   || /^(you|yourself|your ?self|self|u)$/i.test(prompt);
+      if (wantsSelf) {
+        var appear = (cfg.character && cfg.character.instruction) ? String(cfg.character.instruction).replace(/\s+/g, ' ').trim() : '';
+        var nm = (cfg.character && cfg.character.name) || cfg.botName || 'her';
+        var extra = String(prompt).replace(/\b(you|yourself|your ?self|self|u|selfie|your face|face|what you look like|like)\b/ig, '').replace(/\s+/g, ' ').trim();
+        var sp = 'portrait of ' + nm + (appear ? (', ' + appear.slice(0, 240)) : '') + (extra ? (', ' + extra) : '') + ', soft natural light, head and shoulders';
+        return { prompt: sp.slice(0, 400), dm: dm, resolution: '512x768' };
+      }
+      // Appearance / self-variation requests: "show me a different outfit", "your hair down", "a new look".
+      // These are implicitly about HER, but the stripping above collapses them to a bare fragment, so the
+      // picture would otherwise be a random object. Two outcomes: if they named something concrete, draw her
+      // with it; if it's underspecified, return a clarify question instead of guessing. That clarify is the
+      // escape the brain reaches for when a request is image-shaped but too vague to answer honestly.
+      var APPEAR = /\b(outfit|outfits|clothes|clothing|dress|dressed|wear|wearing|hair|hairstyle|haircut|look|style|pose|costume)\b/i;
+      var otherSubject = /\b(a|an|the|some|that|this)\s+([a-z]+\s+){0,2}(woman|man|girl|boy|guy|person|people|someone|lady|model|character|cat|dog|animal|creature|landscape|scene|city|house|car|tree|robot|warrior|knight|princess)\b/i.test(body);
+      var asksAppearance = APPEAR.test(body) && !otherSubject
+                        && (/\b(you|your|yourself)\b/i.test(body) || /\b(show|see|gimme|give me)\b/i.test(body));
+      if (asksAppearance) {
+        var spec = body
+          .replace(new RegExp('^(?:can you |could you |would you |will you |please |pls |hey |go )*(?:' + verbs + ')\\b', 'i'), '')
+          .replace(/\b(me|us|a|an|the|your|yourself|you|show|see|let me see|gimme|give me|in|of|some|other|please|with|different|new|another|fresh)\b/ig, ' ')
+          .replace(/\s+/g, ' ').trim();
+        var specCore = spec.replace(APPEAR, ' ').replace(/\s+/g, ' ').trim();
+        if (specCore.replace(/[^a-z0-9]/ig, '').length >= 3) {
+          // a concrete descriptor survives ("red dress", "hair down") -> draw HER with it
+          var appearA = (cfg.character && cfg.character.instruction) ? String(cfg.character.instruction).replace(/\s+/g, ' ').trim() : '';
+          var nmA = (cfg.character && cfg.character.name) || cfg.botName || 'her';
+          var spA = 'portrait of ' + nmA + (appearA ? (', ' + appearA.slice(0, 200)) : '') + ', ' + spec + ', soft natural light, head and shoulders';
+          return { prompt: spA.slice(0, 400), dm: dm, resolution: '512x768' };
+        }
+        // underspecified ("a different outfit", "a new look") -> ask, don't invent
+        var appNoun = (body.match(APPEAR) || [''])[0].toLowerCase();
+        var q = /hair/.test(appNoun)
+              ? 'how would you like my hair \u2014 a colour, a style, up or down?'
+              : /(outfit|clothes|clothing|dress|wear|costume|style|look)/.test(appNoun)
+              ? 'what kind of outfit did you have in mind \u2014 a vibe, a colour, an occasion?'
+              : /pose/.test(appNoun)
+              ? 'what sort of pose were you picturing?'
+              : 'what would you like me to show you exactly? give me a little more to go on';
+        return { clarify: q };
+      }
       if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return null;  // no real description -> would hang
       return { prompt: prompt.slice(0, 400), dm: dm, resolution: pickResolution(prompt) };
     }
@@ -4809,6 +4854,14 @@ return window.weld.comments;
             }
             if (imageEnabled() && addressed && mayPaint(m)) {
               var imgReq = parseImageRequest(m.content);
+              if (imgReq && imgReq.clarify) {
+                // image-shaped but too vague to honour: she asks instead of inventing a picture. This returns
+                // before the reply is queued below, so the clarifying question stands alone (no double answer).
+                if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, imgReq.clarify); } catch (e) {} }
+                if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
+                imageReqName = m.author.username;
+                return;
+              }
               if (imgReq) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping request from ' + (m.author.username || m.author.id));
@@ -8092,6 +8145,7 @@ return window.weld.comments;
       setIntent: setIntent, getIntent: getIntent, clearIntent: clearIntent,
       estimateTokens: estimateTokens, packByTokens: packByTokens, cleanReply: cleanReply, attentionScore: attentionScore, chooseAttention: chooseAttention, selfKnowledgeText: selfKnowledgeText,
       parseImageJson: parseImageJson,
+      parseImageRequest: parseImageRequest,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
@@ -8340,6 +8394,7 @@ return window.weld.comments;
       out += '\nYour last few replies (do NOT repeat these phrasings, openers, or sentence shapes — say something fresh):\n' + recent + '\n';
     }
     out += '\nIf you must decline or cannot help with something, do it briefly and in character; never break character with phrases like "as an AI" or "I cannot as a language model." Stay in your own voice.\n';
+    out += 'If you genuinely cannot tell what they are asking for, ask one short, natural clarifying question in your own voice rather than guessing or pretending to understand.\n';
     return out;
   }
 
