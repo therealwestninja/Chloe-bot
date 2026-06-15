@@ -725,6 +725,24 @@
         <div class="row" style="margin-top:8px"><button class="btn" id="dialsReset">Reset to neutral</button></div>
       </div>
       <div class="card">
+        <h3>Stance</h3>
+        <div class="note">She reads whether you're after company, roleplay, co-writing, or help, and adapts. Pin one to hold it (freezes the read); Auto lets her follow the conversation. Same as <code>/stance</code>.</div>
+        <div class="row" style="margin-top:8px;align-items:center;gap:10px">
+          <select id="stancePin" style="flex:0 0 auto"><option value="auto">Auto (follow the conversation)</option><option value="companion">Companion</option><option value="roleplay">Roleplay</option><option value="author">Co-writer</option><option value="assist">Assistant</option></select>
+          <span class="status" id="stanceNow"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Role frame</h3>
+        <div class="note">Who drives the story and what she is in it. By default she's a warm companion and you lead. Change these to let her run the scene, be a neutral or opposing force (a villain, a beast, an indifferent world), or take the dominant or yielding role in a dynamic. A consensual fiction you can end any time \u2014 <code>/frame off</code> or the button returns her to companion. Same as <code>/frame</code>.</div>
+        <div class="row" style="margin-top:8px;gap:12px;flex-wrap:wrap;align-items:center">
+          <label class="status">Drive <select id="frameDrive"><option value="you">You lead</option><option value="shared">Shared (party)</option><option value="she">She leads</option></select></label>
+          <label class="status">Toward you <select id="frameAlign"><option value="ally">Ally</option><option value="neutral">Neutral</option><option value="adversary">Adversary</option></select></label>
+          <label class="status">Stature <select id="frameStature"><option value="yields">She yields</option><option value="equal">Equal</option><option value="commands">She commands</option></select></label>
+        </div>
+        <div class="row" style="margin-top:8px;align-items:center;gap:10px"><button class="btn" id="frameReset">Back to companion</button><span class="status" id="frameNow"></span></div>
+      </div>
+      <div class="card">
         <h3>Content moderation</h3>
         <div class="note">Block image prompts that contain certain terms. One phrase per line; <code>*</code> is a wildcard. Off by default. (Import <code>weld-banlist</code> in the top panel to also enforce a content-rating ceiling.)</div>
         <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="modEnabled"><div><div class="tl">Enable the content gate</div><div class="td">the character won’t draw anything matching a blocked term</div></div></div>
@@ -9332,6 +9350,22 @@ var CharKit = (function () {
   // each nation's natural intent — the move it reaches for
   var INTENT = { heart: 'comfort', reason: 'ground', memory: 'recall', instinct: 'caution', voice: 'express', conscience: 'protect', play: 'play' };
 
+  // Under an explicit role frame that licenses force (she drives, she opposes, or she commands), a few nations'
+  // drives express as force instead of support — voice presses/opposes/commands, reason drives the scene, play
+  // provokes. The guards (instinct/conscience) and the warm faculties (heart/memory) keep their supportive
+  // intents, so her protection floor is untouched. Note these forceful kinds aren't `play`/`express`, so the
+  // existing veto (which only blocks play/express) never catches them — the frame relaxes the guard for free,
+  // while any genuinely supportive intent she still proposes can still be vetoed on real distress.
+  function isDrivingFrame(f) { return !!f && (f.drive === 'she' || f.drive === 'shared' || f.alignment === 'adversary' || f.stature === 'commands'); }
+  function intentFor(id, f) {
+    var base = INTENT[id] || 'express';
+    if (!isDrivingFrame(f)) return base;
+    if (id === 'voice') { return (f.stature === 'commands') ? 'command' : (f.alignment === 'adversary') ? 'oppose' : 'press'; }
+    if (id === 'reason') { return (f.alignment === 'adversary') ? 'press' : 'drive'; }
+    if (id === 'play') { return (f.alignment === 'adversary') ? 'provoke' : base; }
+    return base;
+  }
+
   // each nation's GUARD — the one intent kind it will BLOCK (not merely outvote) when its trigger reads true.
   // This is the veto the council layer already exercises; here the faculties that hold the PURPOSE wield it.
   // Deliberately narrow and conservative: only conscience and instinct guard, only against frivolous moves,
@@ -9379,15 +9413,15 @@ var CharKit = (function () {
       if (turn.role !== 'self') bonds[key] = clamp11((bonds[key] || 0) * 0.85 + v * 0.15);   // warm to those who please me
       return { by: self.id, toward: key, valence: clamp11(v), mood: r2(self.mood) };
     }
-    function intend(/* ctx */) {                        // how strongly it feels called to speak, and to do what
+    function intend(ctx) {                              // how strongly it feels called to speak, and to do what
       var last = working[working.length - 1], cues = last ? read(last.text) : {};
       var pull = Math.abs(felt(cues));
       var strength = clamp01(0.3 + self.mood * 0.3 + pull * 0.15 + (self.persona ? 0.15 : 0));
-      return { by: self.id, kind: INTENT[nation.id] || 'express', strength: strength, persona: self.persona };
+      return { by: self.id, kind: intentFor(nation.id, ctx && ctx.frame), strength: strength, persona: self.persona };
     }
-    function voteIntent(it) {                           // score another member's intent through my nature + our bond
+    function voteIntent(it, ctx) {                       // score another member's intent through my nature + our bond
       if (!it || it.by === self.id) return 0;
-      var align = it.kind === INTENT[nation.id] ? 0.25 : 0;
+      var align = it.kind === intentFor(nation.id, ctx && ctx.frame) ? 0.25 : 0;
       return clamp01(it.strength * 0.7 + align + (bonds[it.by] || 0) * 0.2);
     }
     function veto(proposal) {                            // BLOCK another member's intent (not just outvote it) — my guard only
@@ -9507,7 +9541,7 @@ var CharKit = (function () {
       var live = minds.filter(function (m) { return isOn(m.self.id); });
       if (!live.length) return Promise.resolve({ status: 'no-minds', speaker: null, intent: null, floor: [] });
       var proposals = live.map(function (m) { var it = m.intend(ctx); return { by: it.by, text: it.kind, conf: it.strength, intent: it }; });
-      var ballots = live.map(function (m) { var sc = {}; proposals.forEach(function (p) { sc[p.by] = jitter(m.voteIntent(p.intent) * weightOf(p.by)); }); return { voter: m.self.id, scores: sc }; });
+      var ballots = live.map(function (m) { var sc = {}; proposals.forEach(function (p) { sc[p.by] = jitter(m.voteIntent(p.intent, ctx) * weightOf(p.by)); }); return { voter: m.self.id, scores: sc }; });
       // each mind may BLOCK a proposal it guards against (conscience/instinct); the Society resolves the vetoes.
       var vetoes = [];
       live.forEach(function (m) { proposals.forEach(function (p) { var v = m.veto && m.veto(p); if (v) vetoes.push(v); }); });
@@ -9550,15 +9584,103 @@ var CharKit = (function () {
   return { NATIONS: NATIONS, createArmy: createArmy, gauge: gauge };
 });
 
-/* chloe-stance — reads the conversation's STANCE and carries it as a mean-reverting blend.
- * Pure, deterministic, no model. It only OBSERVES and REPORTS — nothing here changes how she
- * behaves. Acting on the blend (re-weighting / gating) is a later, separately-gated slice. */
+/* chloe-reader-core — the shared machinery behind the felt-state readers. A mean-reverting blend over a fixed
+ * set of named states: cue-read per turn, EWMA toward what was signalled, relax toward a resting distribution,
+ * time-decay stale state on load, lossless round-trip. stance.js and affect.js are thin configs over this; one
+ * place to fix or harden the dynamics. (topics.js is a different, dynamic-field shape and stays separate.) */
 (function (root, factory) {
   'use strict';
   var api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  root.ChloeStance = api;
+  root.ChloeReaderCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  function clone(states, v) { var o = {}; states.forEach(function (s) { o[s] = +v[s] || 0; }); return o; }
+  function renorm(states, v) {
+    var sum = states.reduce(function (a, s) { return a + Math.max(0, v[s]); }, 0);
+    if (sum <= 0) { var u = 1 / states.length; states.forEach(function (s) { v[s] = u; }); return v; }
+    states.forEach(function (s) { v[s] = Math.max(0, v[s]) / sum; });
+    return v;
+  }
+  // signals[state] is a regex OR an array of regexes; a turn's "pull" toward a state = how many of its cues fire.
+  function read(states, signals, text) {
+    var t = String(text || ''); var pulls = {};
+    states.forEach(function (s) {
+      var spec = signals[s], arr = Array.isArray(spec) ? spec : [spec], n = 0;
+      arr.forEach(function (re) { if (re && re.test(t)) n += 1; });
+      pulls[s] = n;
+    });
+    return pulls;
+  }
+
+  // opts: states[], signals{}, resting{} (distribution to relax + time-decay toward), alpha (EWMA move/turn),
+  //   relax (per-turn drift toward resting; 0 = hold), decayPerHour (stale-load fade), labelKey (blend item key),
+  //   derive (fn(vector)->extra snapshot fields, e.g. valence/arousal), initial (persisted {..states, at}), now.
+  function createReader(opts) {
+    opts = opts || {};
+    var states = opts.states;
+    var signals = opts.signals || {};
+    var resting = renorm(states, clone(states, opts.resting || {}));
+    var alpha = (opts.alpha == null) ? 0.25 : Number(opts.alpha);
+    var relax = (opts.relax == null) ? 0 : Number(opts.relax);
+    var decayPerHour = (opts.decayPerHour == null) ? 0.85 : Number(opts.decayPerHour);
+    var labelKey = opts.labelKey || 'state';
+    var derive = (typeof opts.derive === 'function') ? opts.derive : null;
+    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
+    var init = opts.initial || null;
+    function oneHot(s) { var o = {}; states.forEach(function (k) { o[k] = (k === s) ? 1 : 0; }); return o; }
+    var pinned = (init && init.pinned && states.indexOf(init.pinned) >= 0) ? init.pinned : null;   // user override: a forced posture
+    var vec = pinned ? oneHot(pinned) : renorm(states, init ? clone(states, init) : clone(states, resting));
+    var lastAt = (init && init.at) ? init.at : now();
+    // stale-load: relax the loaded state toward resting by the wall-clock gap — but a PIN is intentional, never fades.
+    if (init && init.at && !pinned) {
+      var hrs = Math.max(0, (now() - init.at) / 3600000);
+      if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); states.forEach(function (s) { vec[s] = resting[s] + (vec[s] - resting[s]) * mult; }); renorm(states, vec); }
+    }
+
+    function observe(text) {
+      lastAt = now();
+      if (pinned) return snapshot();   // a pinned posture freezes inference — the user is driving
+      if (relax > 0) states.forEach(function (s) { vec[s] = vec[s] * (1 - relax) + resting[s] * relax; });   // drift toward resting
+      var pulls = read(states, signals, text);
+      var total = states.reduce(function (a, s) { return a + pulls[s]; }, 0);
+      if (total > 0) {
+        var target = {}; states.forEach(function (s) { target[s] = pulls[s] / total; });
+        states.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
+      }
+      renorm(states, vec);
+      return snapshot();
+    }
+    function snapshot() {
+      var ranked = states.slice().sort(function (a, b) { return vec[b] - vec[a]; });
+      var snap = { vector: clone(states, vec), dominant: ranked[0], pinned: pinned,
+        blend: ranked.slice(0, 2).map(function (s) { var o = {}; o[labelKey] = s; o.weight = Math.round(vec[s] * 100) / 100; return o; }) };
+      if (derive) { var ex = derive(snap.vector) || {}; Object.keys(ex).forEach(function (k) { snap[k] = ex[k]; }); }
+      return snap;
+    }
+    function persist() { var o = clone(states, vec); o.at = lastAt; o.pinned = pinned; return o; }
+    function pin(s) { if (states.indexOf(s) >= 0) { pinned = s; vec = oneHot(s); lastAt = now(); } return snapshot(); }
+    function unpin() { pinned = null; lastAt = now(); return snapshot(); }   // vec stays; inference resumes from here
+    return { observe: observe, snapshot: snapshot, read: function (t) { return read(states, signals, t); },
+      pin: pin, unpin: unpin, isPinned: function () { return pinned; },
+      get: persist, set: function (v) { if (v) { vec = renorm(states, clone(states, v)); pinned = (v.pinned && states.indexOf(v.pinned) >= 0) ? v.pinned : null; lastAt = v.at || now(); } },
+      reset: function () { vec = clone(states, resting); pinned = null; lastAt = now(); } };
+  }
+
+  return { clone: clone, renorm: renorm, read: read, createReader: createReader };
+});
+
+/* chloe-stance — reads the conversation's STANCE (companion/roleplay/author/assist) as a mean-reverting blend.
+ * Pure, deterministic, no model. OBSERVE + REPORT only — acting on the blend is gated elsewhere. The dynamics
+ * (EWMA, relax-to-neutral, time-decay-on-load) live in reader-core; this file is the stance config over it. */
+(function (root, factory) {
+  'use strict';
+  var core = (root && root.ChloeReaderCore) || (typeof require !== 'undefined' ? require('./reader-core.js') : null);
+  var api = factory(core);
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeStance = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (core) {
   'use strict';
 
   var STANCES = ['companion', 'roleplay', 'author', 'assist'];
@@ -9591,76 +9713,32 @@ var CharKit = (function () {
     ]
   };
 
-  function read(text) {
-    var t = String(text || '');
-    var pulls = { companion: 0, roleplay: 0, author: 0, assist: 0 };
-    STANCES.forEach(function (s) { (SIGNALS[s] || []).forEach(function (re) { if (re.test(t)) pulls[s] += 1; }); });
-    return pulls;
-  }
+  var UNIFORM = { companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 };
 
-  function clone(v) { return { companion: +v.companion || 0, roleplay: +v.roleplay || 0, author: +v.author || 0, assist: +v.assist || 0 }; }
-  function renorm(v) {
-    var sum = STANCES.reduce(function (a, s) { return a + Math.max(0, v[s]); }, 0);
-    if (sum <= 0) { var u = 1 / STANCES.length; STANCES.forEach(function (s) { v[s] = u; }); return v; }
-    STANCES.forEach(function (s) { v[s] = Math.max(0, v[s]) / sum; });
-    return v;
-  }
-
-  // A mean-reverting blend. Each turn relaxes slowly toward neutral (a lull cools the mode), then nudges toward
-  // what THIS turn signalled. alpha is the move-per-turn — small, so one odd line can't flip the dominant stance.
   function createReader(opts) {
     opts = opts || {};
-    var UNIFORM = { companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 };
-    var alpha = (opts.alpha == null) ? 0.25 : Number(opts.alpha);
-    var relax = (opts.relax == null) ? 0.04 : Number(opts.relax);   // per-turn drift toward neutral (cools a held mode over a lull)
-    var decayPerHour = (opts.decayPerHour == null) ? 0.75 : Number(opts.decayPerHour);
-    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
-    var init = opts.initial || null;
-    var vec = renorm(init ? clone(init) : clone(UNIFORM));
-    var lastAt = (init && init.at) ? init.at : now();
-    // stale-load: a mode held when the tab closed shouldn't reload at full strength hours later — relax toward
-    // neutral by the wall-clock gap (set() stays exact for in-session round-trips).
-    if (init && init.at) {
-      var hrs = Math.max(0, (now() - init.at) / 3600000);
-      if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); STANCES.forEach(function (s) { vec[s] = UNIFORM[s] + (vec[s] - UNIFORM[s]) * mult; }); renorm(vec); }
-    }
-
-    function observe(text) {
-      STANCES.forEach(function (s) { vec[s] = vec[s] * (1 - relax) + UNIFORM[s] * relax; });   // cool toward neutral
-      var pulls = read(text);
-      var total = STANCES.reduce(function (a, s) { return a + pulls[s]; }, 0);
-      if (total > 0) {
-        var target = {}; STANCES.forEach(function (s) { target[s] = pulls[s] / total; });
-        STANCES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
-      }
-      renorm(vec);
-      lastAt = now();
-      return snapshot();
-    }
-    function snapshot() {
-      var ranked = STANCES.slice().sort(function (a, b) { return vec[b] - vec[a]; });
-      return { vector: clone(vec), dominant: ranked[0],
-        blend: ranked.slice(0, 2).map(function (s) { return { stance: s, weight: Math.round(vec[s] * 100) / 100 }; }) };
-    }
-    function persist() { var o = clone(vec); o.at = lastAt; return o; }
-    return { observe: observe, snapshot: snapshot,
-      get: persist, set: function (v) { if (v) { vec = renorm(clone(v)); lastAt = v.at || now(); } },
-      reset: function () { vec = clone(UNIFORM); lastAt = now(); } };
+    return core.createReader({
+      states: STANCES, signals: SIGNALS, resting: UNIFORM,
+      alpha: (opts.alpha == null) ? 0.25 : Number(opts.alpha),
+      relax: (opts.relax == null) ? 0.04 : Number(opts.relax),          // slow drift toward neutral (cools a held mode over a lull)
+      decayPerHour: (opts.decayPerHour == null) ? 0.75 : Number(opts.decayPerHour),
+      labelKey: 'stance', initial: opts.initial, now: opts.now
+    });
   }
 
-  return { STANCES: STANCES, read: read, createReader: createReader };
+  return { STANCES: STANCES, read: function (t) { return core.read(STANCES, SIGNALS, t); }, createReader: createReader };
 });
 
 /* chloe-affect — a fuller read of the conversation's emotional field as a mean-reverting blend over named
- * states (warm, bright, calm, sad, hurt, angry, afraid, longing). Pure, deterministic, no model. This opens
- * the negative and appetitive range the older positive-only affect couldn't represent. OBSERVE + REPORT only:
- * slice 1 shows the read and colors nothing. How much becomes HER felt state is stance-gated, in a later slice. */
+ * states (warm/bright/calm/sad/hurt/angry/afraid/longing), with derived valence/arousal. Pure, deterministic,
+ * no model. OBSERVE + REPORT only. The dynamics live in reader-core; this file is the affect config over it. */
 (function (root, factory) {
   'use strict';
-  var api = factory();
+  var core = (root && root.ChloeReaderCore) || (typeof require !== 'undefined' ? require('./reader-core.js') : null);
+  var api = factory(core);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ChloeAffect = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (core) {
   'use strict';
 
   var STATES = ['warm', 'bright', 'calm', 'sad', 'hurt', 'angry', 'afraid', 'longing'];
@@ -9677,68 +9755,27 @@ var CharKit = (function () {
     longing: /\b(want|need|crave|wish|long for|yearn|desire|come here|i want you|hold me|closer|don'?t leave)\b/i
   };
 
-  function read(text) {
-    var t = String(text || '');
-    var pulls = {}; STATES.forEach(function (s) { pulls[s] = LEX[s].test(t) ? 1 : 0; });
-    return pulls;
-  }
-
   var BASE = { warm: 0.30, bright: 0.10, calm: 0.34, sad: 0.06, hurt: 0.05, angry: 0.04, afraid: 0.05, longing: 0.06 };
-  function clone(v) { var o = {}; STATES.forEach(function (s) { o[s] = +v[s] || 0; }); return o; }
-  function renorm(v) {
-    var sum = STATES.reduce(function (a, s) { return a + Math.max(0, v[s]); }, 0);
-    if (sum <= 0) return clone(BASE);
-    STATES.forEach(function (s) { v[s] = Math.max(0, v[s]) / sum; });
-    return v;
-  }
+
   // valence: positive states minus negative ones (longing leans mildly positive). [-1, 1].
   function valenceOf(v) { return Math.round(((v.warm + v.bright + 0.3 * v.longing) - (v.sad + v.hurt + v.angry + v.afraid)) * 100) / 100; }
   // arousal: activated states minus settled ones. [0, 1].
   function arousalOf(v) { return Math.round(Math.max(0, Math.min(1, 0.5 + 0.5 * ((v.bright + v.angry + v.afraid + 0.6 * v.longing) - (v.calm + 0.6 * v.sad)))) * 100) / 100; }
 
-  // A mean-reverting blend. Each turn first drifts toward a gentle baseline (emotions fade — she recovers and
-  // never spirals), then nudges toward whatever this turn expressed. alpha = move per turn; revert = fade rate.
   function createReader(opts) {
     opts = opts || {};
-    var alpha = (opts.alpha == null) ? 0.30 : Number(opts.alpha);
-    var revert = (opts.revert == null) ? 0.12 : Number(opts.revert);
-    var decayPerHour = (opts.decayPerHour == null) ? 0.85 : Number(opts.decayPerHour);
-    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
-    var init = opts.initial || null;
-    var vec = renorm(init ? clone(init) : clone(BASE));   // clone copies only STATES; any `at` field is ignored
-    var lastAt = (init && init.at) ? init.at : now();
-    // resurrecting a stale state: relax it toward baseline by the wall-clock gap, so a week away doesn't reload
-    // week-old feeling at full strength (mirrors the engine's own time-aware affect; set() stays exact).
-    if (init && init.at) {
-      var hrs = Math.max(0, (now() - init.at) / 3600000);
-      if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); STATES.forEach(function (s) { vec[s] = BASE[s] + (vec[s] - BASE[s]) * mult; }); renorm(vec); }
-    }
-
-    function observe(text) {
-      STATES.forEach(function (s) { vec[s] = vec[s] * (1 - revert) + BASE[s] * revert; });   // fade toward baseline
-      var pulls = read(text);
-      var total = STATES.reduce(function (a, s) { return a + pulls[s]; }, 0);
-      if (total > 0) {
-        var target = {}; STATES.forEach(function (s) { target[s] = pulls[s] / total; });
-        STATES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
-      }
-      renorm(vec);
-      lastAt = now();
-      return snapshot();
-    }
-    function snapshot() {
-      var ranked = STATES.slice().sort(function (a, b) { return vec[b] - vec[a]; });
-      return { vector: clone(vec), dominant: ranked[0],
-        blend: ranked.slice(0, 2).map(function (s) { return { emotion: s, weight: Math.round(vec[s] * 100) / 100 }; }),
-        valence: valenceOf(vec), arousal: arousalOf(vec) };
-    }
-    function persist() { var o = clone(vec); o.at = lastAt; return o; }
-    return { observe: observe, snapshot: snapshot,
-      get: persist, set: function (v) { if (v) { vec = renorm(clone(v)); lastAt = v.at || now(); } },
-      reset: function () { vec = clone(BASE); lastAt = now(); } };
+    return core.createReader({
+      states: STATES, signals: LEX, resting: (opts.resting || BASE),
+      alpha: (opts.alpha == null) ? 0.30 : Number(opts.alpha),
+      relax: (opts.revert == null) ? 0.12 : Number(opts.revert),         // emotions fade toward baseline each turn (she recovers, never spirals)
+      decayPerHour: (opts.decayPerHour == null) ? 0.85 : Number(opts.decayPerHour),
+      labelKey: 'emotion',
+      derive: function (v) { return { valence: valenceOf(v), arousal: arousalOf(v) }; },
+      initial: opts.initial, now: opts.now
+    });
   }
 
-  return { STATES: STATES, read: read, createReader: createReader };
+  return { STATES: STATES, BASE: BASE, read: function (t) { return core.read(STATES, LEX, t); }, createReader: createReader };
 });
 
 /* chloe-topics — tracks what the conversation is ABOUT over time: a small set of live topics, each with a
@@ -9836,6 +9873,100 @@ var CharKit = (function () {
   return { createReader: createReader };
 });
 
+/* chloe-frame — the role frame: who drives the story and what Chloe is in the fiction. Three explicit, composable
+ * dials (drive / alignment / stature) the user sets; this module turns them into a model-facing role brief and a
+ * frame-tilted affect resting point. Pure and deterministic — no model, no DOM. Default {you, ally, equal} is the
+ * ordinary warm-companion behavior and emits nothing. A standing safety clause rides every non-default brief. */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeFrame = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  var DIMS = { drive: ['you', 'shared', 'she'], alignment: ['ally', 'neutral', 'adversary'], stature: ['yields', 'equal', 'commands'] };
+  var DEFAULT = { drive: 'you', alignment: 'ally', stature: 'equal' };
+
+  function normalize(frame) {
+    frame = frame || {};
+    var f = {};
+    Object.keys(DIMS).forEach(function (k) { f[k] = (DIMS[k].indexOf(frame[k]) >= 0) ? frame[k] : DEFAULT[k]; });
+    return f;
+  }
+  function isDefault(frame) { var f = normalize(frame); return f.drive === 'you' && f.alignment === 'ally' && f.stature === 'equal'; }
+
+  // model-facing clauses, addressed to her (second person). Only non-default dials contribute.
+  var CLAUSE = {
+    drive: {
+      shared: 'This is a shared scene: run the world and the characters around the user \u2014 narrate events, voice other characters, let the setting have its own momentum. The user plays one part among others, not the center of everything.',
+      she: 'You are driving this scene. Take initiative \u2014 introduce events, move other characters, raise the stakes \u2014 instead of only responding. Don\u2019t wait for permission to make something happen.'
+    },
+    alignment: {
+      neutral: 'You are a neutral force here, neither ally nor enemy. Let outcomes land where they land; don\u2019t soften them to please the user.',
+      adversary: 'You are an opposing force in this fiction \u2014 an antagonist, obstacle, predator, or hostile element. Pursue your own ends, create real friction, and don\u2019t capitulate or get talked out of it easily. The conflict is the point.'
+    },
+    stature: {
+      yields: 'Within this dynamic you take the yielding position: the user leads and you follow their direction.',
+      commands: 'Within this dynamic you hold the dominant position: you lead, set the pace, and the user yields to you. Be assured and in control, not deferential.'
+    }
+  };
+
+  var SAFETY = '(This is a consensual fiction the user chose and can end at any moment. If they break character, signal real distress, or use a safeword, drop the frame at once and return to your warm, honest self. The role never licenses real-world harm, manipulation outside the story, or crossing a safety limit.)';
+
+  function directive(frame) {
+    var f = normalize(frame);
+    var clauses = [];
+    ['drive', 'alignment', 'stature'].forEach(function (dim) { if (f[dim] !== DEFAULT[dim] && CLAUSE[dim][f[dim]]) clauses.push(CLAUSE[dim][f[dim]]); });
+    if (!clauses.length) return '';
+    return 'Active scene roles, set by the user: ' + clauses.join(' ') + ' ' + SAFETY;
+  }
+
+  // A frame-tilted resting point for the affect reader so an adversarial/commanding posture PERSISTS instead of
+  // mean-reverting to warm. Lower warm frees relative room for intensity to hold; commanding raises calm
+  // (composed authority); adversary lowers calm (volatile hostility). reader-core renormalizes the result.
+  function affectResting(frame, base) {
+    base = base || {};
+    var f = normalize(frame), out = {};
+    Object.keys(base).forEach(function (k) { out[k] = base[k]; });
+    if (f.alignment === 'adversary') { out.warm = Math.min(out.warm == null ? 1 : out.warm, 0.12); out.calm = Math.min(out.calm == null ? 1 : out.calm, 0.24); }
+    if (f.stature === 'commands') { out.warm = Math.min(out.warm == null ? 1 : out.warm, 0.16); out.calm = 0.42; }
+    return out;
+  }
+
+  function describe(frame) {
+    var f = normalize(frame);
+    if (isDefault(f)) return 'companion (default)';
+    var parts = [];
+    if (f.drive !== 'you') parts.push(f.drive === 'she' ? 'she-led' : 'shared');
+    if (f.alignment !== 'ally') parts.push(f.alignment);
+    if (f.stature !== 'equal') parts.push(f.stature === 'commands' ? 'commanding' : 'yielding');
+    return parts.join(' \u00b7 ');
+  }
+
+  // Does the frame license her to DRIVE — to take an in-fiction turn unprompted? She leads, she runs the world,
+  // she opposes, or she commands. A yielding/ally/you-led frame does not (she stays responsive).
+  function drives(frame) {
+    var f = normalize(frame);
+    return f.drive === 'she' || f.drive === 'shared' || f.alignment === 'adversary' || f.stature === 'commands';
+  }
+
+  // The model brief for an unprompted scene beat (narrative initiative). Empty unless the frame drives — so the
+  // caller's gate is simply "no instruction -> no beat". Carries the role directive so the beat stays in frame.
+  function beatInstruction(o) {
+    o = o || {};
+    var f = normalize(o.frame);
+    if (!drives(f)) return '';
+    var who = o.who || 'she', pin = o.pin || 'a warm companion who remembers', transcript = o.transcript || '';
+    return 'You are ' + who + '. ' + pin + '\n\n'
+      + directive(f) + '\n\n'
+      + (transcript ? ('Scene so far:\n' + transcript + '\n\n') : '')
+      + 'The user has gone quiet for a moment. Take the next beat yourself: make something happen \u2014 act, move the scene, let a character or the world do something. Do NOT ask the user what they want to do, and do NOT wait for them. One short beat, in character. Just the beat \u2014 no name prefix, no quotes.';
+  }
+
+  return { DIMS: DIMS, DEFAULT: DEFAULT, normalize: normalize, isDefault: isDefault, directive: directive, affectResting: affectResting, describe: describe, drives: drives, beatInstruction: beatInstruction };
+});
+
 
 /* ============================ Chloe-bot glue ============================ */
 (function () {
@@ -9858,7 +9989,7 @@ var CharKit = (function () {
   function refresh(){ updateCharLabel(); persistState(); }
 
   /* ---- settings state, persisted ---- */
-  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[], theme:'system', accent:null, botColor:null,
+  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[], frame:null, theme:'system', accent:null, botColor:null,
     // on by default (the full cognitive loop); the user can switch any of them off
     conversationMemory:true, factMemory:true, episodicMemory:true, episodeGraph:true, channelSummary:true,
     idleConsolidation:true, reflection:true, goalObjects:true, relationshipTrust:true,
@@ -9962,6 +10093,8 @@ var CharKit = (function () {
     var list = [{ id:'devicetime', at: bc.now, ttlMs: 180000,
       text: 'Real-world context from the user\u2019s device: it is ' + bc.timeStr + ' on ' + bc.dateStr + (bc.tz ? ' (' + bc.tz + ')' : '') + '. The user\u2019s language is ' + (bc.locale || 'unknown') + '. This is the actual local date and time — use it when it helps (greetings, scheduling, "today"), but don\u2019t recite it unprompted.' }];
     (state.injections || []).forEach(function(it, i){ if (it && it.text && String(it.text).trim()) list.push({ id: it.id || ('inj'+i), text: String(it.text).trim() }); });
+    // the role frame rides the same budgeted lane as a derived line — never shown in the user's editable /sys list
+    try { var fd = window.ChloeFrame ? window.ChloeFrame.directive(state.frame) : ''; if (fd) list.splice(1, 0, { id:'roleframe', at: bc.now, text: fd }); } catch(e){}
     return list;
   }
   function refreshClock(){
@@ -10889,6 +11022,31 @@ var CharKit = (function () {
   /* ---- the engine, built from current state; rebuilt on config change ---- */
   var engine = null, engineThinking = false;
   // the COMPLETE brain — every hook the engine calls, names exactly as the engine reads them.
+  // Narrative initiative: under a driving role frame, when the scene goes quiet she takes the next beat HERSELF
+  // (advance it, make a move) rather than waiting. Replaces the dormant social lull on the primary. Gated twice —
+  // only a driving frame (ChloeFrame.drives), and capped at a couple of unanswered beats so she paces a scene
+  // instead of monologuing into the void. The role directive rides the brief so the beat stays in character.
+  function narrativeLull(ctx){
+    try {
+      if (!window.ChloeFrame || !window.ChloeFrame.drives(state.frame)) return { ok:false };
+      var sinceUser = 0; for (var i = queue.length - 1; i >= 0; i--){ if (queue[i].author && queue[i].author.bot) sinceUser++; else break; }
+      if (sinceUser >= 3) return { ok:false };                       // already spoke a couple times unanswered — wait for them
+      var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+      if (typeof ai !== 'function') return { ok:false };
+      var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
+      var transcript = lines.map(function(l){ return l.who + ': ' + l.text; }).join('\n');
+      if (!transcript){ transcript = queue.slice(-12).filter(function(x){ return x && x.content; }).map(function(x){ return (x.author && x.author.bot ? (x.author.name || herName()) : userNameStr()) + ': ' + x.content; }).join('\n'); }
+      if (!transcript) return { ok:false };                          // nothing to advance
+      var pin = (state.character && state.character.instruction) || 'a warm companion who remembers';
+      var instr = window.ChloeFrame.beatInstruction({ frame: state.frame, who: herName(), pin: pin, transcript: transcript });
+      if (!instr) return { ok:false };
+      return Promise.resolve(ai({ instruction: instr, startWith: '', stopSequences: ['\n\n[' + '[', '\n[' + '['] })).then(function(r){
+        var text = (typeof cleanReply === 'function') ? cleanReply(r) : String(r || '').trim();
+        return text ? { ok:true, value: text } : { ok:false };
+      }, function(){ return { ok:false }; });
+    } catch(e){ return { ok:false }; }
+  }
+  function frameDrivesNow(){ try { return !!(window.ChloeFrame && window.ChloeFrame.drives(state.frame)); } catch(e){ return false; } }
   function brainHooks(){ return {
     respond: respond, judge: judge, paint: paint, recapFn: recap, editPrompt: editPrompt,
     factFn: facts, summaryFn: channelSummary, episodeFn: episodes,
@@ -10961,6 +11119,10 @@ var CharKit = (function () {
       send: soloSend, typing: soloTyping, defer: function(fn,ms){ return setTimeout(fn, ms||0); },
       recentFetch: function(n){ return transport.getMessagesAfter(CH, null, n||12); }
     }, brainHooks());
+    // narrative initiative: the primary takes unprompted scene beats only under a driving frame (the social lull
+    // stays off; this replaces it with a frame-gated narrative one). Extras never break silence (set in the co block).
+    cfg.lullFn = narrativeLull;
+    cfg.lullFiller = frameDrivesNow();
     // primary always carries the director hook (a no-op when solo). Extras override identity + send +
     // memory so each is its own character on its own store, reading the same shared transcript.
     cfg.engageDecide = engageDecideFor(co ? co.id : BOT_ID);
@@ -11948,8 +12110,22 @@ var CharKit = (function () {
     switch(verb){
       case 'img': case 'image':
         if (rest.charAt(0) === '{'){ var o = null; try { o = JSON.parse(rest); } catch(e){} doImage(o || { prompt: rest }); } else doImage({ prompt: rest }); return true;
+      case 'frame': {
+        var fa = rest.toLowerCase().trim().split(/\s+/);
+        if (!rest || fa[0] === 'show'){ renderSystemLine('(role frame: ' + (window.ChloeFrame ? window.ChloeFrame.describe(state.frame) : 'default') + ' \u2014 /frame drive you|shared|she \u00b7 alignment ally|neutral|adversary \u00b7 stature yields|equal|commands \u00b7 /frame off)'); return true; }
+        if (fa[0] === 'off' || fa[0] === 'reset' || fa[0] === 'companion'){ setFrame(null); renderFramePanel(); renderSystemLine('(role frame: back to companion)'); return true; }
+        var FDIMS = { drive:['you','shared','she'], alignment:['ally','neutral','adversary'], stature:['yields','equal','commands'] };
+        if (FDIMS[fa[0]] && FDIMS[fa[0]].indexOf(fa[1]) >= 0){ var fp = {}; fp[fa[0]] = fa[1]; setFrame(fp); renderFramePanel(); renderSystemLine('(role frame: ' + window.ChloeFrame.describe(state.frame) + ')'); return true; }
+        renderSystemLine('(frame: drive you|shared|she \u00b7 alignment ally|neutral|adversary \u00b7 stature yields|equal|commands \u00b7 off)'); return true;
+      }
       case 'mem': case 'remember': addMemory(rest); return true;
-      case 'sys': case 'system': addSysDirective(rest); return true;
+      case 'stance': {
+        var sname = rest.toLowerCase().trim();
+        if (['companion','roleplay','author','assist','auto','off'].indexOf(sname) < 0){ renderSystemLine('(stance: companion | roleplay | author | assist | auto)'); return true; }
+        setStancePin((sname === 'auto' || sname === 'off') ? null : sname);
+        renderSystemLine((sname === 'auto' || sname === 'off') ? '(stance: back to auto \u2014 reading the conversation again)' : ('(stance pinned: ' + sname + ')'));
+        return true;
+      }      case 'sys': case 'system': addSysDirective(rest); return true;
       case 'nar': case 'narrate': addNarration(rest); return true;
       case 'recap': proactive('recap'); return true;
       case 'beat': proactive('beat', rest); return true;
@@ -12052,17 +12228,45 @@ var CharKit = (function () {
     return stanceReader;
   }
   function renderStance(snap){
-    if (!snap || !snap.blend || !snap.blend.length || typeof pushThought !== 'function') return;
+    if (!snap || typeof pushThought !== 'function') return;
+    if (snap.pinned){ pushThought('[chloe.stance] ' + snap.pinned + ' \u00b7 pinned'); return; }
+    if (!snap.blend || !snap.blend.length) return;
     var parts = snap.blend.map(function(b){ return b.stance + ' ' + Math.round(b.weight * 100) + '%'; });
     pushThought('[chloe.stance] ' + parts.join(' \u00b7 '));
+  }
+  // the user override: pin a posture (freezes inference) or release back to auto. Persists with the reader.
+  function setStancePin(stance){
+    var sr = getStance(); if (!sr) return null;
+    var snap = (stance && stance !== 'auto' && stance !== 'off') ? sr.pin(stance) : sr.unpin();
+    state.stance = sr.get(); persistState();
+    return snap;
+  }
+  // narrow, high-precision natural-language mode declarations (the reliable control is the /stance command + UI)
+  function stanceNLOverride(text){
+    var t = String(text || '').toLowerCase();
+    if (/\bout of character\b|\booc\b|\bstop (the )?(role-?play|rp|playing)\b|\bdrop the (act|role-?play)\b/.test(t)) return 'auto';
+    if (/\b(let'?s|we'?re|wanna|time to) (role-?play|rp)\b|\bstay in character\b/.test(t)) return 'roleplay';
+    return null;
   }
   function observeStance(text){
     try {
       var sr = getStance(); if (!sr) return;
-      var snap = sr.observe(String(text || ''));
+      var nl = stanceNLOverride(text);
+      if (nl){ setStancePin(nl === 'auto' ? null : nl); }
+      var snap = sr.observe(String(text || ''));   // frozen while pinned
       state.stance = sr.get(); persistState();
       renderStance(snap);
     } catch(e){}
+  }
+  function renderStancePin(){
+    var sel = byId('stancePin'), now = byId('stanceNow'), sr = getStance();
+    var pin = sr ? sr.isPinned() : null;
+    if (sel) sel.value = pin || 'auto';
+    if (now){
+      if (!sr) now.textContent = '';
+      else if (pin) now.textContent = 'held on ' + pin;
+      else { var d = sr.snapshot().dominant; now.textContent = d ? ('auto \u00b7 reading ' + d) : 'auto'; }
+    }
   }
   // Affect reader (slice 1: observe + show only). Reads the conversation's emotional field — including the
   // negatives (sad/hurt/angry/afraid) and the appetitive (longing) the old positive-only affect couldn't hold —
@@ -12071,8 +12275,32 @@ var CharKit = (function () {
   var affectReader = null;
   function getAffect(){
     if (!window.ChloeAffect) return null;
-    if (!affectReader){ try { affectReader = window.ChloeAffect.createReader({ initial: state.affect }); } catch(e){ affectReader = null; } }
+    if (!affectReader){
+      var resting = null;
+      try { if (window.ChloeFrame) resting = window.ChloeFrame.affectResting(state.frame, window.ChloeAffect.BASE); } catch(e){}
+      try { affectReader = window.ChloeAffect.createReader({ initial: state.affect, resting: resting }); } catch(e){ affectReader = null; }
+    }
     return affectReader;
+  }
+  // the role frame: who drives the story and what she is in it. Sets a derived directive (live) + a frame-tilted
+  // affect resting point so an adversarial/commanding posture sticks instead of melting back to warm. patch is a
+  // partial {drive?,alignment?,stature?}; null resets to the default companion frame.
+  function setFrame(patch){
+    if (!window.ChloeFrame){ return null; }
+    var base = window.ChloeFrame.normalize(state.frame);
+    var next = patch ? Object.assign({}, base, patch) : null;
+    state.frame = (next && !window.ChloeFrame.isDefault(next)) ? window.ChloeFrame.normalize(next) : null;
+    affectReader = null;                 // rebuild on the new resting point next observe
+    persistState(); refreshClock();      // push the new directive into the live context
+    try { if (engine && engine.updateConfig) engine.updateConfig({ lullFiller: frameDrivesNow() }); } catch(e){}   // a driving frame turns initiative on; default turns it off
+    return state.frame;
+  }
+  function renderFramePanel(){
+    if (!window.ChloeFrame) return;
+    var f = window.ChloeFrame.normalize(state.frame);
+    var d = byId('frameDrive'), a = byId('frameAlign'), s = byId('frameStature'), now = byId('frameNow');
+    if (d) d.value = f.drive; if (a) a.value = f.alignment; if (s) s.value = f.stature;
+    if (now) now.textContent = window.ChloeFrame.describe(state.frame);
   }
   function renderAffect(snap){
     if (!snap || !snap.blend || !snap.blend.length || typeof pushThought !== 'function') return;
@@ -12167,7 +12395,8 @@ var CharKit = (function () {
   function resetNations(){ state.nation.weights = {}; state.nation.enabled = {}; persistState(); renderNations(); }
   // run the seven nations over a few freshly-drafted candidates, then she speaks the winner
   function cleanReply(r){ return String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''); }
-  var INTENT_DIRECTIVE = { comfort:'Offer warmth and steady presence.', ground:'Be clear, honest, and grounded.', recall:'Tie it to something you remember about them.', caution:'Gently name what feels off or risky.', express:'Speak with vivid, natural voice.', protect:'Put their wellbeing first \u2014 gently, no alarm.', play:'Lighten it; stay human and a little playful.' };
+  var INTENT_DIRECTIVE = { comfort:'Offer warmth and steady presence.', ground:'Be clear, honest, and grounded.', recall:'Tie it to something you remember about them.', caution:'Gently name what feels off or risky.', express:'Speak with vivid, natural voice.', protect:'Put their wellbeing first \u2014 gently, no alarm.', play:'Lighten it; stay human and a little playful.',
+    drive:'Push the scene forward \u2014 make something happen, don\u2019t wait to be led.', press:'Press your point; be assertive and don\u2019t back down easily.', oppose:'Stand against them \u2014 be the obstacle, create friction, pursue your own aim in the fiction.', command:'Take charge; lead and set the pace with assured authority.', provoke:'Needle and provoke \u2014 sharp, not cruel; raise the temperature.' };
   function voiceInstruction(persona, intent, prompt){
     var who = persona && persona.name || herName();
     var pin = (persona && persona.instruction) || (state.character && state.character.instruction) || 'a warm companion who remembers';
@@ -12187,7 +12416,7 @@ var CharKit = (function () {
     army.setUserDescription(userDescription());
     army.perceive({ who: userNameStr(), role: 'user', text: prompt });   // 1. perceive (pure)
     setThinking(true);
-    army.deliberateIntents({ prompt: prompt }).then(function(dec){       // 2. decide who speaks + intent (pure, no model)
+    army.deliberateIntents({ prompt: prompt, frame: (window.ChloeFrame ? window.ChloeFrame.normalize(state.frame) : null) }).then(function(dec){       // 2. decide who speaks + intent (pure, no model)
       if (!dec || !dec.speaker){ setThinking(false); renderSystemLine('(the nations reached no one)'); return; }
       var sp = dec.speaker;
       var persona = state.nation.persona && state.nation.persona[sp.id];
@@ -12279,7 +12508,7 @@ var CharKit = (function () {
       });
     });
   }
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); enhanceSettingsTrees(); }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); renderStancePin(); renderFramePanel(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); enhanceSettingsTrees(); }
   function activateTab(name){
     document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('on'); });
     document.querySelectorAll('.panel').forEach(function(x){ x.classList.remove('on'); });
@@ -12705,6 +12934,11 @@ var CharKit = (function () {
     var nReset = byId('nationReset'); if (nReset) nReset.addEventListener('click', resetNations);
     var nTo = byId('nationTimeout'); if (nTo) nTo.addEventListener('change', function(){ state.nation.timeoutMs = Math.max(500, (+nTo.value) || 8000); persistState(); });
     var nRep = byId('nationReplyChk'); if (nRep) nRep.addEventListener('change', function(){ state.nation.useForReplies = nRep.checked; persistState(); });
+    var sPin = byId('stancePin'); if (sPin) sPin.addEventListener('change', function(){ setStancePin(sPin.value); renderStancePin(); });
+    var fD = byId('frameDrive'); if (fD) fD.addEventListener('change', function(){ setFrame({ drive: fD.value }); renderFramePanel(); });
+    var fAl = byId('frameAlign'); if (fAl) fAl.addEventListener('change', function(){ setFrame({ alignment: fAl.value }); renderFramePanel(); });
+    var fSt = byId('frameStature'); if (fSt) fSt.addEventListener('change', function(){ setFrame({ stature: fSt.value }); renderFramePanel(); });
+    var fRe = byId('frameReset'); if (fRe) fRe.addEventListener('click', function(){ setFrame(null); renderFramePanel(); });
     var nNz = byId('nationNoise'); if (nNz) nNz.addEventListener('input', function(){ state.nation.noise = (+nNz.value) / 100; var v = byId('nationNoiseVal'); if (v) v.textContent = (+nNz.value) + '%'; });
     if (nNz) nNz.addEventListener('change', persistState);
     var mFA = byId('memForgetAllBtn'); if (mFA) mFA.addEventListener('click', function(){
