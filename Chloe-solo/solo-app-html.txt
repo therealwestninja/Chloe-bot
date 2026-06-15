@@ -296,6 +296,11 @@
   .rxDesc{width:100%;border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-family:inherit;font-size:11px;color:var(--ink);background:var(--bg);resize:vertical;min-height:34px;box-sizing:border-box}
   .rxRegen{font-size:11px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer}
   .rxRegen:disabled{opacity:.5;cursor:default}
+  .learnList{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .learnChip{display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 6px 4px 11px;font-size:12px;color:var(--ink)}
+  .learnX{border:none;background:var(--bg);color:var(--ink);border-radius:50%;width:18px;height:18px;line-height:16px;text-align:center;cursor:pointer;font-size:13px;padding:0}
+  .learnEmpty{font-size:12px;color:#A9AFBB;margin-top:8px}
+  .learnInput{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-family:inherit;font-size:12px;color:var(--ink);background:var(--bg)}
 </style>
 
 <div class="app">
@@ -496,7 +501,7 @@
       </div>
       <div class="card">
         <h3>Start fresh</h3>
-        <div class="note">Erase the whole conversation and everything the characters have learned. This can't be undone.</div>
+        <div class="note">Erase the whole conversation and everything the characters have learned, and reset their reaction portraits and avatar to default. Your saved Gallery images and checkpoints are kept. This can't be undone.</div>
         <div class="row"><button class="btn danger" id="wipeBtn">Erase everything</button></div>
       </div>
     </div>
@@ -545,6 +550,16 @@
       <div class="card">
         <h3>Images</h3>
         <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="bgImageGenChk"><div><div class="tl">Generate reaction portraits in the background</div><div class="td">paint her VN-style emotion cutouts during idle time; turn off to stop all background image generation</div></div></div>
+        <div class="note" style="margin-top:14px">Looks she's learned from your feedback edits &mdash; folded into every portrait she paints. Remove any that aren't right, or teach her one directly.</div>
+        <div class="learnList" id="learnedLooksList"></div>
+        <div class="row" style="margin-top:8px"><input class="learnInput" id="learnNoteInput" placeholder="teach a look, e.g. silver hair, green eyes"><button class="btn" id="learnNoteAdd">Teach</button></div>
+      </div>
+
+      <div class="card">
+        <h3>How she sees herself</h3>
+        <div class="note">Her self-note &mdash; a short sense of who she is and how she carries herself, woven into every reply. Edit it to shape her; clear it (save empty) to let her grow into her own. Same note <code>/persona</code> sets.</div>
+        <textarea class="learnInput" id="personaNoteInput" rows="3" placeholder="e.g. warm, a little playful, remembers the small things" style="width:100%;box-sizing:border-box;margin-top:8px;resize:vertical"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn" id="personaNoteSave">Save self-note</button></div>
       </div>
       <div class="card">
         <h3>Always in context</h3>
@@ -4891,6 +4906,23 @@ return window.weld.comments;
     // Rolling recursive channel summary: fold recent activity into a running ≤W-word summary, feeding
     // the prior summary back in so it accretes the channel's arc rather than restarting. Gated to a
     // cadence (it's an AI call). No send — it's memory, not a message.
+    // Recursive summaries can degenerate into a loop (the same sentence repeating, each pass feeding
+    // the last back in). Collapse exact sentence-level repeats within a small sliding window before
+    // storing, so a loop can't compound across passes. (§8.8, self-contained — no extra model call.)
+    function collapseSummaryLoops(text) {
+      text = String(text || '').trim();
+      if (!text) return text;
+      var parts = text.match(/[^.!?]+[.!?]*/g) || [text];
+      var out = [], recent = [];
+      for (var k = 0; k < parts.length; k++) {
+        var s = parts[k].trim(); if (!s) continue;
+        var norm = s.toLowerCase().replace(/\s+/g, ' ');
+        if (recent.indexOf(norm) !== -1) continue;   // a repeat of something just said -> drop
+        out.push(s); recent.push(norm); if (recent.length > 3) recent.shift();
+      }
+      var joined = out.join(' ').trim();
+      return joined || text;
+    }
     function processChannelSummary() {
       if (!cfg.channelSummary || typeof cfg.summaryFn !== 'function') return Promise.resolve(null);
       return recentTranscript(40).then(function (lines) {
@@ -4900,6 +4932,7 @@ return window.weld.comments;
           return Promise.resolve(cfg.summaryFn({ prior: prior, lines: lines, words: cfg.channelSummaryWords || 60 })).then(function (r) {
             var text = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
             if (!text) return null;
+            text = collapseSummaryLoops(text);   // strip any runaway repetition before it compounds
             return store.set(CHANSUM_KEY, { text: text, at: clock.now() }).then(function () { log('[chloe.sum] channel summary updated (' + text.length + ' chars)'); return text; });
           });
         });
@@ -4949,6 +4982,85 @@ return window.weld.comments;
       if (na <= 0 || nb <= 0) return 0;
       return dot / (Math.sqrt(na) * Math.sqrt(nb));
     }
+    // Stopwords for keyword-overlap recall (the live path when no embedder loads). A fuller
+    // general + narrative-noise set than CONTRA_STOP — roleplay transcripts are dense with
+    // said/looked/felt/thought, which otherwise inflate overlap on filler. Kept separate from
+    // CONTRA_STOP because recall ignores negation, so it can drop not/no/never that the
+    // contradiction parser must preserve.
+    var STOPWORDS = new Set([
+      'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by',
+      'can', 'could', 'did', 'do', 'does', 'doing', 'done', 'for', 'from',
+      'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself',
+      'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it',
+      'its', 'itself', 'just', 'me', 'my', 'myself', 'no', 'nor', 'not',
+      'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours',
+      'out', 'over', 'own', 'same', 'she', 'should', 'so', 'some', 'still',
+      'such', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves',
+      'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to',
+      'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what',
+      'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with',
+      'would', 'you', 'your', 'yours', 'yourself', 'yourselves',
+      // narrative-specific noise words
+      'said', 'went', 'came', 'looked', 'seemed', 'felt', 'knew', 'thought',
+      'back', 'again', 'before', 'after', 'even', 'never', 'always'
+    ]);
+    // Topic labeler (ported from Memory-Hero). Prefers a proper noun (the actual subject — a name or
+    // place), falls back to the most frequent salient word, so a derived topic reads as "Kyoto" or
+    // "Captain Vex" rather than a clipped opening clause. extractSalientWords reuses STOPWORDS above.
+    var LABEL_LINKERS = new Set(['of', 'the', 'and', 'de', 'la', 'von', 'van', 'al', 'du', 'le']);
+    function labelSentenceStart(text, start) {
+      if (start === 0) return true;
+      var i = start - 1;
+      while (i >= 0 && /\s/.test(text[i])) i--;
+      if (i < 0) return true;
+      return /[.!?]/.test(text[i]);
+    }
+    // Maximal runs of mid-sentence capitalized tokens (sentence-initial caps are ambiguous, so skipped),
+    // optionally joined by lowercase linkers ("Captain of the Guard").
+    function extractProperNouns(text) {
+      if (!text) return [];
+      var tokens = [], re = /\S+/g, mm;
+      while ((mm = re.exec(text)) !== null) tokens.push({ word: mm[0], start: mm.index });
+      var out = [], i = 0;
+      while (i < tokens.length) {
+        var clean = tokens[i].word.replace(/[^A-Za-z'-]/g, '');
+        if (!/^[A-Z][a-zA-Z'-]*$/.test(clean) || labelSentenceStart(text, tokens[i].start)) { i++; continue; }
+        var phrase = [clean], j = i + 1;
+        while (j < tokens.length) {
+          var nextClean = tokens[j].word.replace(/[^A-Za-z'-]/g, '');
+          if (/^[A-Z][a-zA-Z'-]*$/.test(nextClean)) { phrase.push(nextClean); j++; }
+          else if (LABEL_LINKERS.has(nextClean.toLowerCase()) && j + 1 < tokens.length &&
+                   /^[A-Z][a-zA-Z'-]*$/.test(tokens[j + 1].word.replace(/[^A-Za-z'-]/g, ''))) {
+            phrase.push(nextClean.toLowerCase()); phrase.push(tokens[j + 1].word.replace(/[^A-Za-z'-]/g, '')); j += 2;
+          } else break;
+        }
+        out.push(phrase.join(' ')); i = j;
+      }
+      return out;
+    }
+    function extractSalientWords(text) {
+      if (!text) return [];
+      return String(text).toLowerCase().replace(/[^a-z0-9'\s]/g, ' ').split(/\s+/)
+        .filter(function (w) { return w && w.length >= 3 && !STOPWORDS.has(w); });
+    }
+    function tally(terms) {
+      var counts = {}, order = [];
+      terms.forEach(function (t) { if (counts[t] == null) { counts[t] = 0; order.push(t); } counts[t]++; });
+      return order.map(function (t) { return [t, counts[t]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    }
+    function bestLabelCandidates(text, opts) {
+      opts = opts || {}; var minCount = opts.minCount || 1, limit = opts.limit || 6;
+      if (!text || !String(text).trim()) return [];
+      var out = [];
+      tally(extractProperNouns(String(text))).forEach(function (p) { if (out.length < limit && p[1] >= minCount) out.push(p[0]); });
+      tally(extractSalientWords(String(text))).forEach(function (p) {
+        if (out.length >= limit || p[1] < minCount) return;
+        var titled = p[0].charAt(0).toUpperCase() + p[0].slice(1);
+        if (!out.some(function (x) { return x.toLowerCase() === titled.toLowerCase(); })) out.push(titled);
+      });
+      return out.slice(0, limit);
+    }
+    function bestLabel(text, opts) { var c = bestLabelCandidates(text, opts); return c.length ? c[0] : null; }
     // FSRS power forgetting curve (FSRS-4.5/5): R(t) = (1 + FACTOR·t/S)^DECAY, with the constants chosen
     // so R(S) = 0.9 — i.e. stability S is the elapsed time at which retrievability has fallen to 90%.
     var FSRS_DECAY = -0.5, FSRS_FACTOR = 0.2345679012345679;   // = 0.9^(1/DECAY) - 1
@@ -5005,6 +5117,9 @@ return window.weld.comments;
                           participants: Array.isArray(raw.who) ? raw.who.map(function (w) { return String(w).slice(0, 40); }).slice(0, 6) : [],
                           topics: Array.isArray(raw.topics) ? raw.topics.map(function (t) { return String(t).toLowerCase().slice(0, 24); }).slice(0, 6) : [],
                           importance: Math.max(1, Math.min(10, Math.round(Number(raw.i)) || 5)), relatesTo: null };
+              // no LLM-proposed topics -> backfill 1-2 anchors from the text (proper noun / salient word),
+              // so keyword recall has a curated handle and not only the raw 120-char text to match on.
+              if (!ep.topics.length) ep.topics = bestLabelCandidates(ep.text, { limit: 2 }).map(function (t) { return t.toLowerCase().slice(0, 24); });
               if (cfg.semanticRecall) { ep.stab = cfg.fsrsInitialStability || 4; ep.lastRecallAt = ep.at; }   // FSRS-lite seed
               ring.push(ep);
               linkEpisode(ring, ep);   // cheap edge to its strongest existing neighbor (no LLM)
@@ -6387,9 +6502,10 @@ return window.weld.comments;
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           if (!Array.isArray(ring) || !ring.length) return null;
           // Query tokens (always built — they're the fallback and they're free).
-          // Matching per DESIGN §7a: lowercase, punctuation-stripped, tokens ≥3 chars, exact overlap.
+          // Matching per DESIGN §7a: lowercase, punctuation-stripped, content tokens >=3 chars
+          // (stopwords dropped so overlap reflects what was actually said, not shared filler).
           function toks(s) {
-            return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
+            return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3 && !STOPWORDS.has(w); });
           }
           var qWords = [];
           toks(g.p && g.p.content).forEach(function (w) { qWords.push(w); });
@@ -6979,9 +7095,10 @@ return window.weld.comments;
     function workRefreshTopic(w, summaryText) {
       var now = clock.now();
       if (summaryText) {
-        // reuse: first sentence/clause of the rolling summary, clipped to a short phrase.
+        // prefer a named subject (proper noun, else top salient word); fall back to the opening clause.
         var first = String(summaryText).split(/[.!?\n]/)[0].trim().slice(0, 60);
-        if (first) { w.topic = first; w.topicAt = now; }
+        var topic = bestLabel(String(summaryText)) || first;
+        if (topic) { w.topic = topic; w.topicAt = now; }
         return Promise.resolve(w);
       }
       return Promise.resolve(w);   // no fresh summary -> leave topic as-is (it'll decay if it ages)
@@ -7714,6 +7831,7 @@ return window.weld.comments;
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
       processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
+      bestLabel: bestLabel, collapseSummaryLoops: collapseSummaryLoops,
       processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
@@ -9216,17 +9334,36 @@ return window.weld.comments;
   }
   // 'Provide feedback' on: an edit becomes a learned look she carries into every future portrait, and a fact
   // the engine keeps (so it surfaces in context too). The notes are deduped and capped.
-  function learnFromEdit(desc){
-    desc = String(desc||'').trim(); if (!desc) return;
+  // The learned image looks: deduped (case-insensitive), capped at 8. Returns true only when it adds something new.
+  function addStyleNote(desc){
+    desc = String(desc||'').trim(); if (!desc) return false;
     state.imageStyleNotes = state.imageStyleNotes || [];
     var norm = desc.toLowerCase();
-    if (!state.imageStyleNotes.some(function(n){ return String(n).toLowerCase() === norm; })){
-      state.imageStyleNotes.push(desc);
-      while (state.imageStyleNotes.length > 8) state.imageStyleNotes.shift();
-    }
-    persistState();
+    if (state.imageStyleNotes.some(function(n){ return String(n).toLowerCase() === norm; })) return false;
+    state.imageStyleNotes.push(desc);
+    while (state.imageStyleNotes.length > 8) state.imageStyleNotes.shift();
+    persistState(); return true;
+  }
+  function removeStyleNote(desc){ state.imageStyleNotes = (state.imageStyleNotes || []).filter(function(n){ return n !== desc; }); persistState(); }
+  // A feedback edit learns the look and keeps a matching self-fact the engine can surface in context.
+  function learnFromEdit(desc){
+    desc = String(desc||'').trim();
+    if (!addStyleNote(desc)) return;
     try { if (engine && engine.addFacts) engine.addFacts(USER_ID, [{ text: 'Prefers ' + herName() + ' portrayed as: ' + desc, importance: 6 }], 'image-feedback'); } catch(e){}
     pushThought('[chloe.learn] a look to keep in mind: ' + desc);
+  }
+  // The "looks she's learned" surface in Settings -> Images: review, forget (×), or teach directly.
+  function renderLearnedLooks(){
+    var box = byId('learnedLooksList'); if (!box) return;
+    var notes = state.imageStyleNotes || []; box.innerHTML = '';
+    if (!notes.length){ var e = document.createElement('div'); e.className = 'learnEmpty'; e.textContent = 'Nothing learned yet — turn on Provide feedback when you edit a reaction, or teach her a look below.'; box.appendChild(e); return; }
+    notes.forEach(function(n){
+      var chip = document.createElement('span'); chip.className = 'learnChip';
+      var t = document.createElement('span'); t.textContent = n; chip.appendChild(t);
+      var x = document.createElement('button'); x.className = 'learnX'; x.textContent = '×'; x.title = 'forget this look';
+      x.addEventListener('click', function(){ removeStyleNote(n); renderLearnedLooks(); });
+      chip.appendChild(x); box.appendChild(chip);
+    });
   }
   /* ============================ end reaction portraits phases 1-4 ============================ */
 
@@ -10110,7 +10247,20 @@ return window.weld.comments;
     if (/^clear$/i.test(rest)){ var cl = (engine && engine.clearPersonaNote) ? engine.clearPersonaNote() : store.del('persona:note'); Promise.resolve(cl).then(function(){ renderSystemLine('persona note cleared'); }); return; }
     if (!rest){ var g = (engine && engine.getPersonaNote) ? engine.getPersonaNote() : store.get('persona:note'); Promise.resolve(g).then(function(pn){ renderSystemLine((pn && pn.text) ? ('persona note: ' + pn.text) : '(no persona note \u2014 /persona <a style note> to set one)'); }); return; }
     // set a style note in the exact record shape assembleContext reads (-> base.personaNote on her next reply)
-    Promise.resolve(store.set('persona:note', { msgId: 'manual' + Date.now(), text: rest, by: userNameStr(), at: Date.now(), persona: null })).then(function(){ renderSystemLine('persona note set: ' + rest); });
+    Promise.resolve(store.set('persona:note', personaNoteRecord(rest))).then(function(){ renderSystemLine('persona note set: ' + rest); });
+  }
+  // Self-note (persona) surface in Settings: the same record /persona writes, made legible + editable + clearable.
+  function personaNoteRecord(text, by){ return { msgId: 'manual' + Date.now(), text: String(text||'').trim(), by: by || userNameStr(), at: Date.now(), persona: null }; }
+  function renderPersonaNote(){
+    var ta = byId('personaNoteInput'); if (!ta) return;
+    var g = (engine && engine.getPersonaNote) ? engine.getPersonaNote() : (typeof store !== 'undefined' ? store.get('persona:note') : null);
+    Promise.resolve(g).then(function(pn){ ta.value = (pn && pn.text) ? pn.text : ''; }).catch(function(){});
+  }
+  function savePersonaNote(){
+    var ta = byId('personaNoteInput'); if (!ta) return;
+    var v = ta.value.trim();
+    if (!v){ var cl = (engine && engine.clearPersonaNote) ? engine.clearPersonaNote() : store.del('persona:note'); Promise.resolve(cl).then(function(){ toast('Self-note cleared', 'success'); pushThought('[chloe.learn] cleared how I describe myself'); }); return; }
+    Promise.resolve(store.set('persona:note', personaNoteRecord(v))).then(function(){ toast('Self-note saved', 'success'); pushThought('[chloe.learn] updated how I see myself: ' + v); });
   }
   function parseDur(s){ var m = String(s||'').trim().match(/^(\d+)\s*([mhd])$/i); if (!m) return null; var n = +m[1], u = m[2].toLowerCase(); return u === 'm' ? n : (u === 'h' ? n*60 : n*1440); }
   function remindCmd(rest){ rest = String(rest||'').trim();
@@ -10269,7 +10419,7 @@ return window.weld.comments;
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); }
   // Context inspector: show what's in context per reply, priced with the same tokenizer the engine
   // uses (engine.estimateTokens), plus the authoritative totals.
   function renderContextBudget(){
@@ -10466,6 +10616,8 @@ return window.weld.comments;
     var ask = byId('autoSaveKeep'); if (ask) ask.addEventListener('change', function(){ state.autoSaveKeep = Math.max(1, Math.min(50, parseInt(ask.value, 10) || 10)); persistState(); pruneAuto(); });
     var mlc = byId('matchLangChk'); if (mlc){ mlc.checked = state.matchDeviceLang !== false; mlc.addEventListener('change', function(){ state.matchDeviceLang = mlc.checked; persistState(); }); }
     var bgi = byId('bgImageGenChk'); if (bgi){ bgi.checked = state.reactionPortraits !== false; bgi.addEventListener('change', function(){ state.reactionPortraits = bgi.checked; persistState(); var pc = byId('reactionPortraitsChk'); if (pc) pc.checked = bgi.checked; }); }
+    var lna = byId('learnNoteAdd'); if (lna){ lna.addEventListener('click', function(){ var inp = byId('learnNoteInput'); var v = inp.value.trim(); if (!v) return; if (addStyleNote(v)){ toast('Learned: ' + v, 'success'); inp.value = ''; renderLearnedLooks(); } else toast('She already knows that look', 'info'); }); }
+    var pns = byId('personaNoteSave'); if (pns){ pns.addEventListener('click', savePersonaNote); }
     var dr = byId('dialsReset'); if (dr) dr.addEventListener('click', resetDials);
     // behavior toggles are rendered + wired live in renderToggles() (openSettings)
     byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
@@ -10516,14 +10668,16 @@ return window.weld.comments;
     });
     // data tab
     byId('wipeBtn').addEventListener('click', function(){
-      if (!confirm('Erase the whole conversation and everything the character has learned? This cannot be undone.')) return;
+      if (!confirm('Erase the whole conversation and everything the character has learned, and reset their portraits to default? Your saved Gallery images and checkpoints are kept. This cannot be undone.')) return;
       var del = []; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0) del.push(key); } } catch(e){}
       del.forEach(function(key){ try { localStorage.removeItem(key); } catch(e){} });
       queue = []; state = Object.assign({}, DEF_STATE); persistState();
+      try { ReactionStore.clear(); } catch(e){}   // reset the VN reaction history to default (the Gallery is deliberately kept)
       threadCol.innerHTML=''; threadCol.appendChild(emptyTemplate()); emptyState = byId('emptyState');
       var tr = document.createElement('div'); tr.className='typing'; tr.id='typingRow'; tr.innerHTML='<i></i><i></i><i></i>'; threadCol.appendChild(tr);
       streamEl.innerHTML = '<div class="idle">Her thoughts will appear here as she works.</div>'; lastIdle = true;
       ensureUserPartition().then(buildEngine); updateCharLabel(); refreshMemStats(); renderFactList(); renderRoster();
+      try { renderReactionGallery(); } catch(e){}   // the grid shows the empty/default state again
     });
     byId('exportBtn').addEventListener('click', function(){
       var dump = {}; try { for (var i=0;i<localStorage.length;i++){ var key = localStorage.key(i); if (key && key.indexOf(NS)===0) dump[key] = localStorage.getItem(key); } } catch(e){}
