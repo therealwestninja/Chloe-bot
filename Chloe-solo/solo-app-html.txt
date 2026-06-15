@@ -9588,21 +9588,35 @@ var CharKit = (function () {
     return v;
   }
 
-  // A mean-reverting blend. Each turn nudges the vector toward what THIS turn signalled; a neutral turn
-  // (no signal) holds. alpha is the move-per-turn — small, so one odd line can't flip the dominant stance.
+  // A mean-reverting blend. Each turn relaxes slowly toward neutral (a lull cools the mode), then nudges toward
+  // what THIS turn signalled. alpha is the move-per-turn — small, so one odd line can't flip the dominant stance.
   function createReader(opts) {
     opts = opts || {};
+    var UNIFORM = { companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 };
     var alpha = (opts.alpha == null) ? 0.25 : Number(opts.alpha);
-    var vec = renorm(opts.initial ? clone(opts.initial) : { companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 });
+    var relax = (opts.relax == null) ? 0.04 : Number(opts.relax);   // per-turn drift toward neutral (cools a held mode over a lull)
+    var decayPerHour = (opts.decayPerHour == null) ? 0.75 : Number(opts.decayPerHour);
+    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
+    var init = opts.initial || null;
+    var vec = renorm(init ? clone(init) : clone(UNIFORM));
+    var lastAt = (init && init.at) ? init.at : now();
+    // stale-load: a mode held when the tab closed shouldn't reload at full strength hours later — relax toward
+    // neutral by the wall-clock gap (set() stays exact for in-session round-trips).
+    if (init && init.at) {
+      var hrs = Math.max(0, (now() - init.at) / 3600000);
+      if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); STANCES.forEach(function (s) { vec[s] = UNIFORM[s] + (vec[s] - UNIFORM[s]) * mult; }); renorm(vec); }
+    }
 
     function observe(text) {
+      STANCES.forEach(function (s) { vec[s] = vec[s] * (1 - relax) + UNIFORM[s] * relax; });   // cool toward neutral
       var pulls = read(text);
       var total = STANCES.reduce(function (a, s) { return a + pulls[s]; }, 0);
       if (total > 0) {
         var target = {}; STANCES.forEach(function (s) { target[s] = pulls[s] / total; });
         STANCES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
-        renorm(vec);
       }
+      renorm(vec);
+      lastAt = now();
       return snapshot();
     }
     function snapshot() {
@@ -9610,9 +9624,10 @@ var CharKit = (function () {
       return { vector: clone(vec), dominant: ranked[0],
         blend: ranked.slice(0, 2).map(function (s) { return { stance: s, weight: Math.round(vec[s] * 100) / 100 }; }) };
     }
+    function persist() { var o = clone(vec); o.at = lastAt; return o; }
     return { observe: observe, snapshot: snapshot,
-      get: function () { return clone(vec); }, set: function (v) { if (v) vec = renorm(clone(v)); },
-      reset: function () { vec = renorm({ companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 }); } };
+      get: persist, set: function (v) { if (v) { vec = renorm(clone(v)); lastAt = v.at || now(); } },
+      reset: function () { vec = clone(UNIFORM); lastAt = now(); } };
   }
 
   return { STANCES: STANCES, read: read, createReader: createReader };
@@ -9669,7 +9684,17 @@ var CharKit = (function () {
     opts = opts || {};
     var alpha = (opts.alpha == null) ? 0.30 : Number(opts.alpha);
     var revert = (opts.revert == null) ? 0.12 : Number(opts.revert);
-    var vec = renorm(opts.initial ? clone(opts.initial) : clone(BASE));
+    var decayPerHour = (opts.decayPerHour == null) ? 0.85 : Number(opts.decayPerHour);
+    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
+    var init = opts.initial || null;
+    var vec = renorm(init ? clone(init) : clone(BASE));   // clone copies only STATES; any `at` field is ignored
+    var lastAt = (init && init.at) ? init.at : now();
+    // resurrecting a stale state: relax it toward baseline by the wall-clock gap, so a week away doesn't reload
+    // week-old feeling at full strength (mirrors the engine's own time-aware affect; set() stays exact).
+    if (init && init.at) {
+      var hrs = Math.max(0, (now() - init.at) / 3600000);
+      if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); STATES.forEach(function (s) { vec[s] = BASE[s] + (vec[s] - BASE[s]) * mult; }); renorm(vec); }
+    }
 
     function observe(text) {
       STATES.forEach(function (s) { vec[s] = vec[s] * (1 - revert) + BASE[s] * revert; });   // fade toward baseline
@@ -9680,6 +9705,7 @@ var CharKit = (function () {
         STATES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
       }
       renorm(vec);
+      lastAt = now();
       return snapshot();
     }
     function snapshot() {
@@ -9688,9 +9714,10 @@ var CharKit = (function () {
         blend: ranked.slice(0, 2).map(function (s) { return { emotion: s, weight: Math.round(vec[s] * 100) / 100 }; }),
         valence: valenceOf(vec), arousal: arousalOf(vec) };
     }
+    function persist() { var o = clone(vec); o.at = lastAt; return o; }
     return { observe: observe, snapshot: snapshot,
-      get: function () { return clone(vec); }, set: function (v) { if (v) vec = renorm(clone(v)); },
-      reset: function () { vec = clone(BASE); } };
+      get: persist, set: function (v) { if (v) { vec = renorm(clone(v)); lastAt = v.at || now(); } },
+      reset: function () { vec = clone(BASE); lastAt = now(); } };
   }
 
   return { STATES: STATES, read: read, createReader: createReader };
@@ -9739,22 +9766,39 @@ var CharKit = (function () {
     var bump  = (opts.bump  == null) ? 0.45 : Number(opts.bump);    // interest added on mention (accumulates -> returns-to win)
     var cap   = (opts.cap   == null) ? 6 : (opts.cap | 0);          // live-topic ceiling
     var floor = (opts.floor == null) ? 0.08 : Number(opts.floor);   // drop below this
+    var decayPerHour = (opts.decayPerHour == null) ? 0.80 : Number(opts.decayPerHour);
+    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
     function clone(o) { var c = {}; Object.keys(o || {}).forEach(function (k) { c[k] = o[k]; }); return c; }
+    // sanitize a loaded field: keep only finite, positive interests, clamped to <= 1 — the load floor/ceiling
+    // (a corrupt persisted 5 or NaN can't survive to dominate the ranking).
+    function sanitize(o) { var c = {}; Object.keys(o || {}).forEach(function (k) { var v = +o[k]; if (isFinite(v) && v > 0) c[k] = Math.min(1, v); }); return c; }
     var field = {};            // { topic: interest in (0,1] }
     var lastSeen = null;       // most-recently-bumped topic (the "current" one)
-    if (opts.initial && opts.initial.field) { field = clone(opts.initial.field); lastSeen = opts.initial.current || null; }
+    var lastAt = now();
+    if (opts.initial && opts.initial.field) {
+      field = sanitize(opts.initial.field);
+      lastSeen = opts.initial.current || null;
+      lastAt = opts.initial.at || now();
+      // stale-load: fade interest by the wall-clock gap so day-old topics don't reload hot.
+      if (opts.initial.at) {
+        var hrs = Math.max(0, (now() - opts.initial.at) / 3600000);
+        if (hrs > 0) { var mult = Math.pow(decayPerHour, hrs); Object.keys(field).forEach(function (k) { field[k] *= mult; }); }
+      }
+    }
 
     function prune() {
-      Object.keys(field).forEach(function (k) { if (field[k] < floor) delete field[k]; });
+      Object.keys(field).forEach(function (k) { if (!(field[k] >= floor)) delete field[k]; });   // also drops NaN
       var ranked = Object.keys(field).sort(function (a, b) { return field[b] - field[a]; });
       ranked.slice(cap).forEach(function (k) { delete field[k]; });   // keep only the top `cap`
     }
+    prune();   // apply floor/cap to the (sanitized, possibly faded) loaded field
     function observe(text) {
       Object.keys(field).forEach(function (k) { field[k] *= decay; });      // age everything
       var found = extract(text);
       found.forEach(function (w) { field[w] = Math.min(1, (field[w] || 0) + bump); });
       if (found.length) lastSeen = found[0];
       prune();
+      lastAt = now();
       return snapshot();
     }
     function snapshot() {
@@ -9766,9 +9810,9 @@ var CharKit = (function () {
       };
     }
     return { observe: observe, snapshot: snapshot, extract: extract,
-      get: function () { return { field: clone(field), current: lastSeen }; },
-      set: function (s) { if (s && s.field) { field = clone(s.field); lastSeen = s.current || null; } },
-      reset: function () { field = {}; lastSeen = null; } };
+      get: function () { return { field: clone(field), current: lastSeen, at: lastAt }; },
+      set: function (s) { if (s && s.field) { field = clone(s.field); lastSeen = s.current || null; lastAt = s.at || now(); } },
+      reset: function () { field = {}; lastSeen = null; lastAt = now(); } };
   }
 
   return { createReader: createReader };
