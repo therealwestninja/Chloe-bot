@@ -9618,6 +9618,162 @@ var CharKit = (function () {
   return { STANCES: STANCES, read: read, createReader: createReader };
 });
 
+/* chloe-affect — a fuller read of the conversation's emotional field as a mean-reverting blend over named
+ * states (warm, bright, calm, sad, hurt, angry, afraid, longing). Pure, deterministic, no model. This opens
+ * the negative and appetitive range the older positive-only affect couldn't represent. OBSERVE + REPORT only:
+ * slice 1 shows the read and colors nothing. How much becomes HER felt state is stance-gated, in a later slice. */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeAffect = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  var STATES = ['warm', 'bright', 'calm', 'sad', 'hurt', 'angry', 'afraid', 'longing'];
+
+  // Pure cue lexicon — each match is a pull toward a named emotional state. Inspectable on purpose; no model.
+  var LEX = {
+    warm:    /\b(love|care|here for you|thank|thanks|appreciate|glad|sweet|dear|hug|miss you|proud of you)\b/i,
+    bright:  /\b(haha+|lol|lmao|yay|woohoo|awesome|amazing|excited|thrilled|wonderful|can'?t wait|let'?s go)\b|!!/i,
+    calm:    /\b(okay|ok|fine|alright|relax|chill|rest|quiet|peace|calm|no worries|np|sure|steady)\b/i,
+    sad:     /\b(sad|lonely|alone|cry|crying|miss|lost|empty|hopeless|down|grief|mourn|heartbroken|sigh)\b/i,
+    hurt:    /\b(hurt|why would you|you don'?t|you never|ignored|rejected|betrayed|let me down|disappointed|unfair)\b/i,
+    angry:   /\b(angry|mad|furious|rage|raging|hate|stupid|shut up|annoying|annoyed|pissed|damn it|wtf|enough)\b/i,
+    afraid:  /\b(scared|afraid|terrified|panic|panicking|anxious|nervous|worried|fear|dread|what if|freaking out)\b/i,
+    longing: /\b(want|need|crave|wish|long for|yearn|desire|come here|i want you|hold me|closer|don'?t leave)\b/i
+  };
+
+  function read(text) {
+    var t = String(text || '');
+    var pulls = {}; STATES.forEach(function (s) { pulls[s] = LEX[s].test(t) ? 1 : 0; });
+    return pulls;
+  }
+
+  var BASE = { warm: 0.30, bright: 0.10, calm: 0.34, sad: 0.06, hurt: 0.05, angry: 0.04, afraid: 0.05, longing: 0.06 };
+  function clone(v) { var o = {}; STATES.forEach(function (s) { o[s] = +v[s] || 0; }); return o; }
+  function renorm(v) {
+    var sum = STATES.reduce(function (a, s) { return a + Math.max(0, v[s]); }, 0);
+    if (sum <= 0) return clone(BASE);
+    STATES.forEach(function (s) { v[s] = Math.max(0, v[s]) / sum; });
+    return v;
+  }
+  // valence: positive states minus negative ones (longing leans mildly positive). [-1, 1].
+  function valenceOf(v) { return Math.round(((v.warm + v.bright + 0.3 * v.longing) - (v.sad + v.hurt + v.angry + v.afraid)) * 100) / 100; }
+  // arousal: activated states minus settled ones. [0, 1].
+  function arousalOf(v) { return Math.round(Math.max(0, Math.min(1, 0.5 + 0.5 * ((v.bright + v.angry + v.afraid + 0.6 * v.longing) - (v.calm + 0.6 * v.sad)))) * 100) / 100; }
+
+  // A mean-reverting blend. Each turn first drifts toward a gentle baseline (emotions fade — she recovers and
+  // never spirals), then nudges toward whatever this turn expressed. alpha = move per turn; revert = fade rate.
+  function createReader(opts) {
+    opts = opts || {};
+    var alpha = (opts.alpha == null) ? 0.30 : Number(opts.alpha);
+    var revert = (opts.revert == null) ? 0.12 : Number(opts.revert);
+    var vec = renorm(opts.initial ? clone(opts.initial) : clone(BASE));
+
+    function observe(text) {
+      STATES.forEach(function (s) { vec[s] = vec[s] * (1 - revert) + BASE[s] * revert; });   // fade toward baseline
+      var pulls = read(text);
+      var total = STATES.reduce(function (a, s) { return a + pulls[s]; }, 0);
+      if (total > 0) {
+        var target = {}; STATES.forEach(function (s) { target[s] = pulls[s] / total; });
+        STATES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
+      }
+      renorm(vec);
+      return snapshot();
+    }
+    function snapshot() {
+      var ranked = STATES.slice().sort(function (a, b) { return vec[b] - vec[a]; });
+      return { vector: clone(vec), dominant: ranked[0],
+        blend: ranked.slice(0, 2).map(function (s) { return { emotion: s, weight: Math.round(vec[s] * 100) / 100 }; }),
+        valence: valenceOf(vec), arousal: arousalOf(vec) };
+    }
+    return { observe: observe, snapshot: snapshot,
+      get: function () { return clone(vec); }, set: function (v) { if (v) vec = renorm(clone(v)); },
+      reset: function () { vec = clone(BASE); } };
+  }
+
+  return { STATES: STATES, read: read, createReader: createReader };
+});
+
+/* chloe-topics — tracks what the conversation is ABOUT over time: a small set of live topics, each with a
+ * decaying INTEREST weight (engagement + returns-to). Pure, deterministic, no model — salient words per turn
+ * bump their interest, everything else ages. OBSERVE + REPORT only: it shows the topic field and changes
+ * nothing. Ideas + her-own-goals (later slices) draw on this interest model. */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeTopics = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  // common words that are never topics (kept compact; extend freely)
+  var STOP = ('the a an and or but if then so of to in on at for with from by as is are was were be been being ' +
+    'do does did have has had i you he she it we they me him her us them my your his its our their this that these ' +
+    'those what which who whom whose when where why how not no yes ok okay just really very too also can could ' +
+    'would should will shall may might must about into over under out up down off than them then there here ' +
+    'get got going gonna wanna like want need know think feel make made say said tell told thing things lot ' +
+    'good bad nice cool yeah yep nope hey hi hello thanks thank please sorry well right sure now today ' +
+    'anyway anyhow actually basically literally honestly seriously obviously definitely probably maybe perhaps ' +
+    'however though although because since while whatever somehow stuff kinda sorta gotta lemme okay').split(/\s+/)
+    .reduce(function (m, w) { m[w] = 1; return m; }, {});
+
+  // salient candidate topics from one line: proper-noun-ish (Capitalized) first, then long content words.
+  function extract(text) {
+    var raw = String(text || '');
+    var proper = (raw.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || []).map(function (w) { return w.toLowerCase(); });
+    var words = (raw.toLowerCase().match(/\b[a-z][a-z'-]{3,}\b/g) || []);
+    var out = [], seen = {};
+    proper.concat(words).forEach(function (w) {
+      w = w.replace(/['-]+$/, '');
+      if (w.length < 4 || STOP[w] || seen[w]) return;
+      seen[w] = 1; out.push(w);
+    });
+    return out.slice(0, 4);   // a few most-salient per turn
+  }
+
+  function createReader(opts) {
+    opts = opts || {};
+    var decay = (opts.decay == null) ? 0.82 : Number(opts.decay);   // per-turn interest fade
+    var bump  = (opts.bump  == null) ? 0.45 : Number(opts.bump);    // interest added on mention (accumulates -> returns-to win)
+    var cap   = (opts.cap   == null) ? 6 : (opts.cap | 0);          // live-topic ceiling
+    var floor = (opts.floor == null) ? 0.08 : Number(opts.floor);   // drop below this
+    function clone(o) { var c = {}; Object.keys(o || {}).forEach(function (k) { c[k] = o[k]; }); return c; }
+    var field = {};            // { topic: interest in (0,1] }
+    var lastSeen = null;       // most-recently-bumped topic (the "current" one)
+    if (opts.initial && opts.initial.field) { field = clone(opts.initial.field); lastSeen = opts.initial.current || null; }
+
+    function prune() {
+      Object.keys(field).forEach(function (k) { if (field[k] < floor) delete field[k]; });
+      var ranked = Object.keys(field).sort(function (a, b) { return field[b] - field[a]; });
+      ranked.slice(cap).forEach(function (k) { delete field[k]; });   // keep only the top `cap`
+    }
+    function observe(text) {
+      Object.keys(field).forEach(function (k) { field[k] *= decay; });      // age everything
+      var found = extract(text);
+      found.forEach(function (w) { field[w] = Math.min(1, (field[w] || 0) + bump); });
+      if (found.length) lastSeen = found[0];
+      prune();
+      return snapshot();
+    }
+    function snapshot() {
+      var ranked = Object.keys(field).sort(function (a, b) { return field[b] - field[a]; });
+      return {
+        current: (lastSeen && field[lastSeen]) ? lastSeen : (ranked[0] || null),
+        topics: ranked.map(function (k) { return { topic: k, interest: Math.round(field[k] * 100) / 100 }; }),
+        field: clone(field)
+      };
+    }
+    return { observe: observe, snapshot: snapshot, extract: extract,
+      get: function () { return { field: clone(field), current: lastSeen }; },
+      set: function (s) { if (s && s.field) { field = clone(s.field); lastSeen = s.current || null; } },
+      reset: function () { field = {}; lastSeen = null; } };
+  }
+
+  return { createReader: createReader };
+});
+
 
 /* ============================ Chloe-bot glue ============================ */
 (function () {
@@ -9658,6 +9814,8 @@ var CharKit = (function () {
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 },
     nation:{ weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 },   // the Seven Nations (Settings > Brain)
     stanceActs:false,   // opt-in: let inferred stance steer behavior (currently the roleplay image yes-and). Default off.
+    affect:null,   // persisted affect vector (warm/bright/calm/sad/hurt/angry/afraid/longing) — observed + shown only; colors nothing yet
+    topics:null,   // persisted topic+interest field — observed + shown only; foundation for ideas + her-own-goals (later)
     stance:null };   // persisted stance vector (companion/roleplay/author/assist) — observed + shown only; nothing acts on it unless stanceActs is on
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
@@ -11089,7 +11247,7 @@ var CharKit = (function () {
   var CATMAP = { ctx:'cog', T0:'flow', T1:'flow', T2:'flow', T3:'flow', tok:'cog', lock:'flow', poll:'io',
     fact:'mem', episode:'mem', mem:'mem', summary:'mem', goal:'mem', trust:'mem', reflect:'mem', consolidate:'mem', semantic:'mem',
     persona:'cog', character:'cog', think:'cog', affect:'cog', mood:'cog', intent:'cog', feedback:'cog',
-    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page', stance:'cog' };
+    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page', stance:'cog', topics:'mem' };
   function renderThought(line){
     if (!streamEl) return;
     if (lastIdle){ streamEl.innerHTML = ''; lastIdle = false; }
@@ -11790,6 +11948,8 @@ var CharKit = (function () {
     var um = enqueue(USER_ID, state.userName||'You', false, text);
     renderMessage('you', state.userName||'You', text, { mid: um.id });
     observeStance(text);   // read the conversation's stance (observe + show only; nothing acts on it)
+    observeAffect(text);   // read the conversation's emotional field, full range (observe + show only; colors nothing)
+    observeTopics(text);   // track what we're talking about over time (observe + show only; foundation for ideas/her-goals)
     dropLiveOrphan(); replyExpected = true;   // a reply to this message is the only thing allowed to stream into chat
     if (state.nation && state.nation.useForReplies && window.ChloeNation){ replyExpected = false; runNation(text); return; }   // the Seven Nations answer instead
     setThinking(true);
@@ -11840,6 +12000,52 @@ var CharKit = (function () {
       var snap = sr.observe(String(text || ''));
       state.stance = sr.get(); persistState();
       renderStance(snap);
+    } catch(e){}
+  }
+  // Affect reader (slice 1: observe + show only). Reads the conversation's emotional field — including the
+  // negatives (sad/hurt/angry/afraid) and the appetitive (longing) the old positive-only affect couldn't hold —
+  // as a blended, mean-reverting vector, and logs it to the Thoughts drawer. It colors NO reply and does not
+  // touch the engine's ownAffect/mood. Stance-gated coloring is a later slice. Glue-only and fully try/caught.
+  var affectReader = null;
+  function getAffect(){
+    if (!window.ChloeAffect) return null;
+    if (!affectReader){ try { affectReader = window.ChloeAffect.createReader({ initial: state.affect }); } catch(e){ affectReader = null; } }
+    return affectReader;
+  }
+  function renderAffect(snap){
+    if (!snap || !snap.blend || !snap.blend.length || typeof pushThought !== 'function') return;
+    var sign = snap.valence > 0.05 ? '+' : (snap.valence < -0.05 ? '\u2212' : '\u00b7');
+    var parts = snap.blend.map(function(b){ return b.emotion + ' ' + Math.round(b.weight * 100) + '%'; });
+    pushThought('[chloe.affect] ' + sign + ' ' + parts.join(' \u00b7 '));
+  }
+  function observeAffect(text){
+    try {
+      var ar = getAffect(); if (!ar) return;
+      var snap = ar.observe(String(text || ''));
+      state.affect = ar.get(); persistState();
+      renderAffect(snap);
+    } catch(e){}
+  }
+  // Topic + interest reader (slice 1: observe + show only). Tracks what the conversation is about over time as
+  // a decaying interest field — the foundation the later ideas + her-own-goals faculties draw on. It changes no
+  // behavior and doesn't touch the engine's work.topic. Glue-only and fully try/caught.
+  var topicReader = null;
+  function getTopics(){
+    if (!window.ChloeTopics) return null;
+    if (!topicReader){ try { topicReader = window.ChloeTopics.createReader({ initial: state.topics }); } catch(e){ topicReader = null; } }
+    return topicReader;
+  }
+  function renderTopics(snap){
+    if (!snap || !snap.topics || !snap.topics.length || typeof pushThought !== 'function') return;
+    var parts = snap.topics.slice(0, 3).map(function(t){ return t.topic + ' ' + t.interest; });
+    pushThought('[chloe.topics] ' + parts.join(' \u00b7 '));
+  }
+  function observeTopics(text){
+    try {
+      var tr = getTopics(); if (!tr) return;
+      var snap = tr.observe(String(text || ''));
+      state.topics = tr.get(); persistState();
+      renderTopics(snap);
     } catch(e){}
   }
   function getArmy(){
