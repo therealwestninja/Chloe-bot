@@ -2625,6 +2625,7 @@ return window.weld.comments;
       // beyond what's in flight wait in a global FIFO queue (no per-author cooldown for images).
       imageCooldownMs: 2000,  // courtesy gap between images (generation time is the real spacing)
       imageQueueMax: 8,       // global image queue depth (adjustable); extra requests are dropped with a note
+      imgClarifyTtlMs: 300000,// how long (5m) a "what kind of outfit?" stays open: her next-message answer completes the picture; after this it's a normal message again
       // Image memory + natural-language iteration (DESIGN: "the bot knows what it generated, and you
       // can ask for changes in plain language"). When imageMemory is on, each delivered image is
       // recorded on the user's partition (prompt, resolution, when), capped to a small ring, so the
@@ -3489,6 +3490,7 @@ return window.weld.comments;
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
     var paint = { queue: [], painting: false, lastJob: null };  // global image FIFO; one in flight at a time
+    var imgClarify = {};   // authorId -> { noun, at }: an image clarify is awaiting the user's detail (TTL'd)
     var lastPaintAt = 0;                 // last image delivery (image clock — independent of the text clock)
     var engageMode = (cfg.engageMode === 'locked' || cfg.engageMode === 'open') ? cfg.engageMode : 'normal';
     var lastCmdAt = {};                  // per-command last-run clock (for entry.cooldownMs)
@@ -3806,6 +3808,26 @@ return window.weld.comments;
 
     // body opens with an image verb ("draw a cat") or names an image noun ("a picture of a cat").
     // Empty prompts hang the plugin forever, so we refuse anything without real description text.
+    // One place that turns "a detail" into a portrait of HER: her appearance (the same persona text her
+    // spoken self-description uses) plus the requested detail, framed head-and-shoulders. Shared by the
+    // "draw yourself" path, the appearance-variation path, and the clarify completion so they can't drift.
+    function selfPortraitPrompt(detail) {
+      var appear = (cfg.character && cfg.character.instruction) ? String(cfg.character.instruction).replace(/\s+/g, ' ').trim() : '';
+      var nm = (cfg.character && cfg.character.name) || cfg.botName || 'her';
+      var d = String(detail || '').replace(/\s+/g, ' ').trim();
+      return ('portrait of ' + nm + (appear ? (', ' + appear.slice(0, 220)) : '') + (d ? (', ' + d) : '') + ', soft natural light, head and shoulders').slice(0, 400);
+    }
+    // Weave a short clarify answer ("a red one") back onto what was being clarified ("outfit") -> "red outfit",
+    // so the follow-up to her own question actually completes the picture instead of dead-ending.
+    function clarifyDetailToSpec(noun, answer) {
+      var d = String(answer || '')
+        .replace(/^[\s,:;.!?-]+/, '')
+        .replace(/\b(a|an|the|some|just|maybe|like|something|please|one|ones|kind of|sort of|how about|i want|i'd like|i think|make it|lets|let's|do)\b/ig, ' ')
+        .replace(/\s+/g, ' ').trim();
+      var n = String(noun || '').trim();
+      if (n && d && d.toLowerCase().indexOf(n) < 0) d = d + ' ' + n;
+      return d || n;
+    }
     function parseImageRequest(content) {
       if (!imageEnabled()) return null;
       var raw = String(content || '');
@@ -3833,11 +3855,8 @@ return window.weld.comments;
       var wantsSelf = /\byour ?self\b|\bselfie\b|\bof you\b|\byour face\b|what you look like/i.test(body)
                    || /^(you|yourself|your ?self|self|u)$/i.test(prompt);
       if (wantsSelf) {
-        var appear = (cfg.character && cfg.character.instruction) ? String(cfg.character.instruction).replace(/\s+/g, ' ').trim() : '';
-        var nm = (cfg.character && cfg.character.name) || cfg.botName || 'her';
         var extra = String(prompt).replace(/\b(you|yourself|your ?self|self|u|selfie|your face|face|what you look like|like)\b/ig, '').replace(/\s+/g, ' ').trim();
-        var sp = 'portrait of ' + nm + (appear ? (', ' + appear.slice(0, 240)) : '') + (extra ? (', ' + extra) : '') + ', soft natural light, head and shoulders';
-        return { prompt: sp.slice(0, 400), dm: dm, resolution: '512x768' };
+        return { prompt: selfPortraitPrompt(extra), dm: dm, resolution: '512x768' };
       }
       // Appearance / self-variation requests: "show me a different outfit", "your hair down", "a new look".
       // These are implicitly about HER, but the stripping above collapses them to a bare fragment, so the
@@ -3856,10 +3875,7 @@ return window.weld.comments;
         var specCore = spec.replace(APPEAR, ' ').replace(/\s+/g, ' ').trim();
         if (specCore.replace(/[^a-z0-9]/ig, '').length >= 3) {
           // a concrete descriptor survives ("red dress", "hair down") -> draw HER with it
-          var appearA = (cfg.character && cfg.character.instruction) ? String(cfg.character.instruction).replace(/\s+/g, ' ').trim() : '';
-          var nmA = (cfg.character && cfg.character.name) || cfg.botName || 'her';
-          var spA = 'portrait of ' + nmA + (appearA ? (', ' + appearA.slice(0, 200)) : '') + ', ' + spec + ', soft natural light, head and shoulders';
-          return { prompt: spA.slice(0, 400), dm: dm, resolution: '512x768' };
+          return { prompt: selfPortraitPrompt(spec), dm: dm, resolution: '512x768' };
         }
         // underspecified ("a different outfit", "a new look") -> ask, don't invent
         var appNoun = (body.match(APPEAR) || [''])[0].toLowerCase();
@@ -3870,7 +3886,7 @@ return window.weld.comments;
               : /pose/.test(appNoun)
               ? 'what sort of pose were you picturing?'
               : 'what would you like me to show you exactly? give me a little more to go on';
-        return { clarify: q };
+        return { clarify: q, noun: appNoun };
       }
       if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return null;  // no real description -> would hang
       return { prompt: prompt.slice(0, 400), dm: dm, resolution: pickResolution(prompt) };
@@ -4819,6 +4835,43 @@ return window.weld.comments;
               return;
             }
             var addressed = isAddressed(m.content) || (engageMode === 'open');
+            // A pending image clarify (she asked "what kind of outfit?" last turn): complete the picture from
+            // their answer instead of dead-ending it. A fresh full request supersedes; a still-vague answer
+            // re-asks; an off-topic reply, a command, or an expired wait drops the pending and flows on.
+            if (imageEnabled() && addressed && mayPaint(m) && imgClarify[m.author.id]) {
+              var pend = imgClarify[m.author.id];
+              if ((now - pend.at) >= (cfg.imgClarifyTtlMs || 300000)) {
+                delete imgClarify[m.author.id];
+              } else {
+                var probe = parseImageRequest(m.content);
+                if (probe && probe.clarify) {                 // still too vague -> ask again, keep waiting
+                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, probe.clarify); } catch (e) {} }
+                  imgClarify[m.author.id] = { noun: probe.noun || pend.noun, at: now };
+                  if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
+                  imageReqName = m.author.username;
+                  return;
+                } else if (probe) {                           // a full fresh request -> the normal block handles it
+                  delete imgClarify[m.author.id];
+                } else {                                       // no image verb -> treat as the answer to her question
+                  var ans = stripAddressing(m.content).trim();
+                  var plausible = ans && !/^[\/!]/.test(ans) && ans.split(/\s+/).length <= 8 && !/\?$/.test(ans)
+                               && !/^(nevermind|never ?mind|forget it|stop|cancel|no|nah|actually|wait|what|why|how|who|when|where|hold on)\b/i.test(ans);
+                  if (plausible && paint.queue.length < cfg.imageQueueMax) {
+                    delete imgClarify[m.author.id];
+                    var spec2 = clarifyDetailToSpec(pend.noun, ans);
+                    var qC = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: selfPortraitPrompt(spec2), resolution: '512x768', dm: false, at: now };
+                    paint.queue.push(qC);
+                    if (paint.painting || paint.queue.length > 1) setQueueAck(qC, queueEmojiFor(paint.queue.length));
+                    if (reply.queue[m.author.id]) delete reply.queue[m.author.id];
+                    if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
+                    imageReqName = m.author.username;
+                    log('[chloe.img] clarify completed for ' + (m.author.username || m.author.id) + ': \u201c' + spec2.slice(0, 40) + '\u201d');
+                    return;
+                  }
+                  delete imgClarify[m.author.id];             // off-topic / queue full -> let the normal reply happen
+                }
+              }
+            }
             if (imageEnabled() && addressed && mayPaint(m) && cfg.imageMemory) {
               var partForEdit = parts[authorIds.indexOf(m.author.id)];
               var lastImg = partForEdit && partForEdit.lastImage;
@@ -4857,7 +4910,9 @@ return window.weld.comments;
               if (imgReq && imgReq.clarify) {
                 // image-shaped but too vague to honour: she asks instead of inventing a picture. This returns
                 // before the reply is queued below, so the clarifying question stands alone (no double answer).
+                // Remember what she asked about so the user's next message can finish the picture.
                 if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, imgReq.clarify); } catch (e) {} }
+                imgClarify[m.author.id] = { noun: imgReq.noun || '', at: now };
                 if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
                 imageReqName = m.author.username;
                 return;
@@ -8146,6 +8201,8 @@ return window.weld.comments;
       estimateTokens: estimateTokens, packByTokens: packByTokens, cleanReply: cleanReply, attentionScore: attentionScore, chooseAttention: chooseAttention, selfKnowledgeText: selfKnowledgeText,
       parseImageJson: parseImageJson,
       parseImageRequest: parseImageRequest,
+      selfPortraitPrompt: selfPortraitPrompt,
+      clarifyDetailToSpec: clarifyDetailToSpec,
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
