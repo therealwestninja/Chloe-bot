@@ -38,18 +38,20 @@
   button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   /* ---- shell: chat stage + mind drawer, side by side (landscape) ---- */
-  .app{display:flex;height:100vh;overflow:hidden}
+  .app{display:flex;height:100vh;height:100dvh;overflow:hidden}
   .stage{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
 
   .topbar{display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--line)}
-  .id{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .id{display:flex;align-items:center;gap:10px;min-width:0}
+  .idtext{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .topActions{display:flex;align-items:center;gap:8px}
   .id .name{text-align:left;font-family:var(--sans);font-size:20px;font-weight:700;letter-spacing:.1px;color:var(--ink)}
   .id .role{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pulse{width:8px;height:8px;border-radius:50%;background:#C6C9D2;flex:none;transition:background .3s}
   .pulse.on{background:var(--accent);box-shadow:0 0 0 0 var(--accent-line);animation:breathe 1.4s ease-in-out infinite}
   @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(91,98,224,.45)}50%{box-shadow:0 0 0 6px rgba(91,98,224,0)}}
   .spacer{flex:1}
-  .iconbtn{border:1px solid var(--line);background:var(--card);color:var(--ink-soft);border-radius:9px;padding:7px 12px;font-size:13px;display:inline-flex;align-items:center;gap:7px;transition:border-color .15s,color .15s}
+  .iconbtn{border:1px solid var(--line);background:var(--card);color:var(--ink-soft);border-radius:9px;padding:6px 11px;font-size:13px;display:inline-flex;align-items:center;gap:7px;transition:border-color .15s,color .15s}
   .iconbtn:hover{border-color:var(--accent-line);color:var(--accent-ink)}
 
   .thread{text-align:left;flex:1;overflow-y:auto;padding:30px 26px 18px}
@@ -76,11 +78,17 @@
   .who .emocue{text-transform:none;letter-spacing:normal;font-size:13px;opacity:.9;vertical-align:middle}
   .msg.her.streaming .body::after{content:'\258c';margin-left:1px;color:var(--accent);animation:caret 1.05s steps(2) infinite}
   @keyframes caret{0%,49%{opacity:1}50%,100%{opacity:0}}
-  .fb{display:flex;gap:4px;margin-top:6px;opacity:0;transition:opacity .15s}
-  .msg.her:hover .fb,.fb.voted{opacity:1}
-  .fb button{border:1px solid var(--line);background:var(--surface,#fff);color:var(--muted);border-radius:7px;font-size:12px;line-height:1;padding:3px 7px;cursor:pointer}
-  .fb button:hover{border-color:var(--accent-line);color:var(--accent-ink)}
-  .fb button.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink)}
+  .acts{display:flex;align-items:center;gap:4px;margin-top:6px;opacity:0;transition:opacity .15s;flex-wrap:wrap}
+  .msg:hover .acts,.acts.has,.acts.voted{opacity:1}
+  .acts button{border:1px solid var(--line);background:var(--surface,#fff);color:var(--muted);border-radius:7px;font-size:12px;line-height:1;padding:3px 7px;cursor:pointer}
+  .acts button:hover{border-color:var(--accent-line);color:var(--accent-ink)}
+  .acts button.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink)}
+  .acts button:disabled{opacity:.5;cursor:default}
+  .acts .vnav{display:none;align-items:center;gap:3px}
+  .acts .vnav.show{display:inline-flex}
+  .acts .vcount{font-size:11px;color:var(--muted);min-width:30px;text-align:center}
+  .acts .msg-del{position:static;margin-left:auto;width:auto;height:auto;padding:3px 8px;border-radius:7px;background:var(--surface,#fff)}
+  .acts .msg-del:hover{color:#fff;background:var(--bad,#d9534f);border-color:var(--bad,#d9534f)}
   .msg.you{align-self:flex-start;align-items:flex-start}
   .msg.you .body{text-align:left;background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--accent-ink);padding:10px 14px;border-radius:4px 14px 14px 14px;white-space:pre-wrap}
   .msg img.avatar{max-width:320px;border-radius:12px;border:1px solid var(--line);margin-top:6px}
@@ -150,7 +158,7 @@
   /* ---- settings popup ---- */
   .modal-bg{position:fixed;inset:0;background:rgba(30,27,22,.42);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
   .modal-bg.open{display:flex}
-  .modal{background:var(--ground);border-radius:16px;width:min(860px,96vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(40,35,28,.3);overflow:hidden}
+  .modal{background:var(--ground);border-radius:16px;width:min(860px,96vw);max-height:90vh;max-height:90dvh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(40,35,28,.3);overflow:hidden}
   .modal-head{display:flex;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
   .modal-head h2{font-family:var(--sans);font-weight:700;font-size:18px;margin:0;color:var(--ink)}
   .modal-head .x{margin-left:auto;border:none;background:transparent;color:var(--muted);font-size:22px;line-height:1;padding:4px 8px}
@@ -188,7 +196,7 @@
   .gtile .gfavmark{position:absolute;top:6px;left:6px;font-size:14px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
   .gempty{padding:42px 10px;text-align:center;color:var(--muted);font-size:13px}
   .lightbox{position:fixed;inset:0;background:rgba(12,10,8,.9);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:120;padding:32px}
-  .lightbox img{max-width:92vw;max-height:78vh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .lightbox img{max-width:92vw;max-height:78dvh;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
   .lightbox-cap{color:#eee;font-size:13px;max-width:760px;text-align:center;line-height:1.5}
   .lightbox-x{position:absolute;top:20px;right:24px;border:none;background:rgba(255,255,255,.14);color:#fff;border-radius:9px;width:38px;height:38px;font-size:18px;cursor:pointer}
   .field{margin-bottom:18px}
@@ -265,7 +273,7 @@
   .chardrop:hover,.chardrop.drag{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
   .chardrop code{background:var(--line-soft);padding:1px 5px;border-radius:4px;font-size:12px}
   .row{display:flex;gap:8px;align-items:center;margin-top:10px}.row .grow{flex:1}
-  .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:8px 14px;font-size:13px}
+  .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 12px;font-size:13px}
   .btn:hover{border-color:var(--accent-line);color:var(--accent-ink)}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.primary:hover{background:var(--accent-ink);color:#fff}
   .btn.danger{color:var(--bad);border-color:#EBD4CD}.btn.danger:hover{background:#FBEFEC}
@@ -287,6 +295,29 @@
   .rxToggle{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);margin:8px 0;line-height:1.4;cursor:pointer}
   .rxToggle input{margin-top:2px;flex:0 0 auto}
   .reactionGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:10px;margin-top:12px}
+  .presetGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(208px,1fr));gap:10px;margin-top:12px}
+  .presetCard{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--card);display:flex;flex-direction:column;gap:6px}
+  .presetName{font-weight:600;font-size:14px;color:var(--ink);display:flex;align-items:center;gap:7px}
+  .presetDot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .presetDot.female{background:#E08AB8}
+  .presetDot.male{background:#7FB5FF}
+  .presetTag{font-size:12px;color:#A9AFBB;line-height:1.4;flex:1}
+  .presetBtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .presetBtns .btn{padding:5px 10px;font-size:12px}
+  .btn.danger{color:#C76B6B;border-color:#C76B6B55}
+  .btn.danger:hover{border-color:#C76B6B}
+  .charEditor{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--card);margin-top:10px;display:flex;flex-direction:column;gap:9px}
+  .ceField{display:flex;flex-direction:column;gap:4px}
+  .ceLbl{font-size:11px;color:#A9AFBB}
+  .ceRow{display:flex;gap:10px}
+  .ceRow .ceField{flex:1}
+  .charEditor input,.charEditor select,.charEditor textarea{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:9px;padding:8px 10px;font-family:inherit;font-size:13px;width:100%}
+  .charEditor textarea{resize:vertical;line-height:1.5}
+  .scBtn{border-style:dashed}
+  .scManRow{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--card)}
+  .scManHead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .scManMode{font-size:10px;color:#A9AFBB;border:1px solid var(--line);border-radius:5px;padding:1px 6px;letter-spacing:.04em;text-transform:uppercase}
+  .scManText{font-size:12px;color:var(--ink-soft);white-space:pre-wrap;word-break:break-word;margin-bottom:6px}
   .rxTile{border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--card);display:flex;flex-direction:column;gap:6px}
   .rxThumb{width:100%;aspect-ratio:3/4;border-radius:7px;overflow:hidden;background:var(--bg);display:flex;align-items:center;justify-content:center}
   .rxThumb img{width:100%;height:100%;object-fit:contain}
@@ -300,7 +331,70 @@
   .learnChip{display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 6px 4px 11px;font-size:12px;color:var(--ink)}
   .learnX{border:none;background:var(--bg);color:var(--ink);border-radius:50%;width:18px;height:18px;line-height:16px;text-align:center;cursor:pointer;font-size:13px;padding:0}
   .learnEmpty{font-size:12px;color:#A9AFBB;margin-top:8px}
+  .adaptWrap{margin-top:10px;display:flex;flex-direction:column;gap:12px}
+  .nationList{margin-top:10px;display:flex;flex-direction:column;gap:14px}
+  .nationRow{border:1px solid var(--line);border-radius:11px;padding:10px 12px}
+  .nationRow.off{opacity:.5}
+  .nationHead{display:flex;align-items:center;justify-content:space-between}
+  .nationOn{display:flex;align-items:center;gap:7px;cursor:pointer}
+  .nationOn b{text-transform:capitalize}
+  .nationW{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600}
+  .nationP{color:#A9AFBB;font-size:13px;margin:3px 0 8px}
+  .nationSlider{width:100%}
+  .nationPersona{margin-top:9px;font-size:13px;color:#A9AFBB;display:flex;align-items:center;gap:7px}
+  .nationSel{flex:1;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-family:inherit;font-size:13px}
+  .adaptEmpty{font-size:12px;color:#A9AFBB}
+  .adaptDim{display:flex;flex-direction:column;gap:5px}
+  .adaptHead{display:flex;align-items:baseline;justify-content:space-between}
+  .adaptLean{font-size:11px;color:#A9AFBB}
+  .adaptLean.isExploit{color:var(--accent,#7FB5FF)}
+  .adaptLean.isExplore{color:#E0B36A}
+  .adaptRow{display:flex;align-items:center;gap:8px}
+  .adaptLbl{flex:0 0 84px;font-size:12px;color:var(--ink)}
+  .adaptBar{flex:1;height:6px;background:var(--bg);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  .adaptFill{height:100%;background:var(--accent,#7FB5FF);border-radius:4px}
+  .adaptFill.neg{background:#C76B6B}
+  .adaptN{flex:0 0 64px;text-align:right;font-size:11px;color:#A9AFBB}
   .learnInput{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-family:inherit;font-size:12px;color:var(--ink);background:var(--bg)}
+  .pinList{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .pinItem{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--bg)}
+  .pinItem.active{border-color:var(--accent-line);background:var(--accent-soft)}
+  .pinTxt{flex:1;min-width:0;font-size:12px;color:var(--ink);line-height:1.35}
+  .pinMeta{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+  .pinX{flex:none;border:1px solid var(--line);background:var(--surface,#fff);color:var(--muted);border-radius:6px;width:22px;height:22px;font-size:13px;line-height:1;cursor:pointer;padding:0}
+  .pinX:hover{color:#fff;background:var(--bad,#d9534f);border-color:var(--bad,#d9534f)}
+  .pinEmpty{font-size:12px;color:#A9AFBB;margin-top:8px}
+  /* ---- Mobile: trim the chrome, and keep the header + every top button reachable ---- */
+  @media (max-width:640px){
+    .topbar{padding:9px 11px;gap:8px}
+    .spacer{display:none}
+    .id{flex:1 1 auto;min-width:0}
+    .idtext{flex-direction:column;align-items:flex-start;gap:0}   /* name over subtitle, so neither is covered */
+    .id .name{font-size:16px;line-height:1.15}
+    .id .role{font-size:11px}
+    .topActions{flex:0 1 auto;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .topActions::-webkit-scrollbar{display:none}
+    .iconbtn{flex:0 0 auto;padding:7px 9px}
+    .iconbtn .lbl{display:none}                                   /* icon-only: all six fit on a phone */
+    .iconbtn .ic{font-size:16px;line-height:1}
+    .thread{padding:16px 13px 14px}
+    .composer{padding:9px 12px 14px}
+    .composer textarea{padding:10px 12px}
+    .toolbar{gap:5px}
+    .tbtn{padding:5px 9px;font-size:12px}
+    .modal-bg{padding:0}
+    .modal{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border-radius:0}
+    .modal-head{padding:13px 14px}
+    .modal-head h2{font-size:16px}
+    .tabs{padding:8px 12px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+    .tabs::-webkit-scrollbar{display:none}
+    .tab{padding:7px 10px;font-size:13px;flex:0 0 auto;white-space:nowrap}
+    .panel,.charpane{padding:14px}
+    .card{padding:13px;margin-bottom:12px}
+    .btn{padding:7px 11px}
+    .lightbox{padding:14px}
+    .acts{opacity:1}   /* no hover on touch — keep the message buttons reachable */
+  }
 </style>
 
 <div class="app">
@@ -309,16 +403,18 @@
       <div class="id">
         <img id="herAvatar" class="topAvatar" alt="" style="display:none">
         <span class="pulse" id="pulse"></span>
-        <span class="name" id="herName">Chloe</span>
-        <span class="role" id="herRole">a companion who remembers</span>
+        <div class="idtext">
+          <span class="name" id="herName">Chloe</span>
+          <span class="role" id="herRole">a companion who remembers</span>
+        </div>
       </div>
       <div class="spacer"></div>
-      <button class="iconbtn" id="openCommunity">💬 Community</button>
-      <button class="iconbtn" id="openGallery">🖼 Gallery</button>
-      <button class="iconbtn" id="openCharacters">◫ Characters</button>
-      <button class="iconbtn" id="openSaves">⟲ Save/Load</button>
-      <button class="iconbtn" id="openSettings">⚙ Settings</button>
-      <button class="iconbtn" id="openMind">◧ Thoughts</button>
+      <div class="topActions">
+        <button class="iconbtn" id="openCommunity" title="Community"><span class="ic">💬</span><span class="lbl">Community</span></button>
+        <button class="iconbtn" id="openGallery" title="Gallery"><span class="ic">🖼</span><span class="lbl">Gallery</span></button>
+        <button class="iconbtn" id="openSettings" title="Settings"><span class="ic">⚙</span><span class="lbl">Settings</span></button>
+        <button class="iconbtn" id="openMind" title="Thoughts"><span class="ic">🧠</span><span class="lbl">Thoughts</span></button>
+      </div>
     </div>
 
     <div class="thread" id="thread">
@@ -342,6 +438,7 @@
           <button class="tbtn" id="tbCmds" title="All slash commands">⌘ Commands</button>
           <div class="cmdpalette" id="cmdPalette"></div>
         </div>
+        <div class="toolbar scRow" id="shortcutRow" style="display:none"></div>
         <div class="wrap">
           <textarea id="input" rows="1" placeholder="Write a message…  (try /img, /mem, /sys, /nar, /recap, or paste JSON)"></textarea>
           <button class="send" id="sendBtn" disabled>Send</button>
@@ -365,13 +462,84 @@
 <button class="mind-tab" id="mindTab"><span class="dot"></span>Thoughts</button>
 
 <!-- characters popup: the cast roster, recruit/import, portrait, and per-character memory -->
-<div class="modal-bg" id="charactersBg">
-  <div class="modal" role="dialog" aria-label="Characters">
+<!-- settings popup: everything NOT about the cast (you, context, behavior, memory & data, about) -->
+<div class="modal-bg" id="settingsBg">
+  <div class="modal" role="dialog" aria-label="Settings">
     <div class="modal-head">
-      <h2>Characters</h2>
-      <button class="x" id="closeCharacters">×</button>
+      <h2>Settings</h2>
+      <button class="x" id="closeSettings">×</button>
     </div>
-    <div class="charpane">
+    <div class="tabs">
+      <button class="tab on" data-tab="you">You</button>
+      <button class="tab" data-tab="context">Context</button>
+      <button class="tab" data-tab="character">Character</button>
+      <button class="tab" data-tab="brain">Brain</button>
+      <button class="tab" data-tab="appearance">Appearance</button>
+      <button class="tab" data-tab="about">About</button>
+    </div>
+
+    <!-- YOU: your identity in the chat (AICC user-persona parity) -->
+    <div class="panel on" data-panel="you">
+      <div class="field">
+        <label>Your name</label>
+        <div class="desc">What the character calls you. Used naturally, and remembered.</div>
+        <input type="text" id="userNameInput" placeholder="You">
+      </div>
+      <div class="card">
+        <h3>Tell the character about you</h3>
+        <div class="note">Anything the character should keep in mind about you — pinned, so it sticks. Add them one at a time.</div>
+        <div class="row"><input type="text" class="grow" id="aboutYouInput" placeholder="e.g. I'm a night-owl developer who likes dry humour"><button class="btn primary" id="aboutYouBtn">Remember this</button></div>
+        <div class="status" id="aboutYouNote"></div>
+      </div>
+      <div class="card">
+        <h3>Pinned to memory</h3>
+        <div class="note">Lines you've kept with <b>★</b> on her replies. The most recent few ride along in her context, so she can bring them up when they're relevant. Unpin anything she should let go of.</div>
+        <div class="pinList" id="pinList"></div>
+        <div class="row" style="margin-top:8px"><button class="btn" id="pinClearBtn">Clear all</button></div>
+      </div>
+    </div>
+
+    <!-- CONTEXT: browser hookup (live date/time) + semantic injections (always-known facts) -->
+    <div class="panel" data-panel="context">
+      <div class="card">
+        <h3>Live context from your device</h3>
+        <div class="note" id="clockNow">—</div>
+        <div class="note" style="margin-top:6px">The local date, time, timezone, and language are read live from the browser and kept current — so replies stay grounded in the real moment.</div>
+        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="matchLangChk"><div><div class="tl">Match my device language</div><div class="td">on first run, reply in your browser's language if it isn't English (override any time with /lang)</div></div></div>
+      </div>
+
+      <div class="card">
+        <h3>Images</h3>
+        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="bgImageGenChk"><div><div class="tl">Generate reaction portraits in the background</div><div class="td">paint her VN-style emotion cutouts during idle time; turn off to stop all background image generation</div></div></div>
+        <div class="note" style="margin-top:14px">Looks she's learned from your feedback edits &mdash; folded into every portrait she paints. Remove any that aren't right, or teach her one directly.</div>
+        <div class="learnList" id="learnedLooksList"></div>
+        <div class="row" style="margin-top:8px"><input class="learnInput" id="learnNoteInput" placeholder="teach a look, e.g. silver hair, green eyes"><button class="btn" id="learnNoteAdd">Teach</button></div>
+      </div>
+
+
+      <div class="card">
+        <h3>How she sees herself</h3>
+        <div class="note">Her self-note &mdash; a short sense of who she is and how she carries herself, woven into every reply. Edit it to shape her; clear it (save empty) to let her grow into her own. Same note <code>/persona</code> sets.</div>
+        <textarea class="learnInput" id="personaNoteInput" rows="3" placeholder="e.g. warm, a little playful, remembers the small things" style="width:100%;box-sizing:border-box;margin-top:8px;resize:vertical"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn" id="personaNoteSave">Save self-note</button></div>
+      </div>
+      <div class="card">
+        <h3>Always in context</h3>
+        <div class="note">Facts, a setting, world details, ground rules — anything you want present in every reply. This runs locally, so there are no length or content limits.</div>
+        <div class="row"><input type="text" class="grow" id="injInput" placeholder="e.g. We're roleplaying aboard a starship in the year 2400"><button class="btn primary" id="injAddBtn">Add</button></div>
+        <div id="injList" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <h3>Lorebook</h3>
+        <div class="note">Background that surfaces only when it's relevant. Give each entry some trigger words — when one shows up in the conversation, that entry is slipped into context for that reply (it doesn't sit in every prompt like the rules above). Great for characters, places, and world facts.</div>
+        <div class="row" style="margin-top:8px"><button class="btn primary" id="loreAddBtn">+ Add entry</button><button class="btn" id="loreImportBtn">Import</button><button class="btn" id="loreExportBtn">Export</button><input type="file" id="loreFile" accept=".json,application/json" hidden></div>
+        <div id="loreList" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <!-- CHARACTER: the cast, importing, portraits, per-character memory, and save/load — the whole character & data layer -->
+    <div class="panel" data-panel="character">
+      <div class="note" style="margin-bottom:4px">Everything about who you talk to and your saved data — the cast, importing and creating characters, portraits, what each one remembers, and saving or backing up the whole session.</div>
       <div class="card">
         <h3>The cast</h3>
         <div class="note">Who's in the scene. Your primary always answers when no one else is named; add others and they reply when you <b>@name</b> them (or just use their name). Characters can address each other, too. Each keeps its <i>own</i> private memory of everyone — they don't share a mind.</div>
@@ -419,12 +587,22 @@
           <div class="toggle" style="border:none"><input type="checkbox" id="charSeedChk"><div><div class="tl">Bring their memories</div><div class="td">seed the saved memories from the export</div></div></div>
           <div class="row"><button class="btn primary" id="charInstallBtn">Set as default</button><button class="btn" id="charAddSceneBtn">Add to scene</button><span class="status" id="charInstallNote"></span></div>
         </div>
+      </div>
 
-        <div class="subhead" style="margin-top:16px">Or write your own</div>
-        <div class="note">Describe who they are — personality, voice, background, how they behave.</div>
-        <div class="row"><input type="text" class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, Aria, Doctor Vane…)"></div>
-        <textarea id="charAuthorInstr" rows="5" placeholder="You are … — describe their personality, voice, and how they speak." style="margin-top:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px"></textarea>
-        <div class="row"><button class="btn primary" id="charAuthorBtn">Set as default</button><button class="btn" id="charAuthorAddBtn">Add to scene</button><span class="status" id="charAuthorNote"></span></div>
+      <div class="card">
+        <h3>Meet someone</h3>
+        <div class="note">Your saved characters and a small built-in cast. <b>Chat</b> talks with one (she greets you in character and the engine starts learning her); <b>+ scene</b> brings her in alongside the others. Anything you import or edit is saved here automatically.</div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn primary" id="charNewBtn">+ New character</button>
+          <button class="btn" id="libImportBtn" title="Import a character or character pack file">Import pack</button>
+          <button class="btn" id="libExportBtn" title="Export all your saved characters as one file" style="display:none">Export all</button>
+          <input type="file" id="libPackFile" accept=".json,application/json" hidden>
+        </div>
+        <div id="charEditor" class="charEditor" style="display:none"></div>
+        <div class="subhead" style="margin-top:14px" id="libHead">Your characters</div>
+        <div class="presetGrid" id="libGrid"></div>
+        <div class="subhead" style="margin-top:16px">Built-in</div>
+        <div class="presetGrid" id="presetGrid"></div>
       </div>
 
       <div class="card">
@@ -443,7 +621,8 @@
 
       <div class="card">
         <h3>Memory</h3>
-        <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions.</div>
+        <div class="note">Each character remembers you on their own — separate facts, mood, and conclusions. Edit one character's memory below (<b>individual</b>), or clear it across the board (<b>global</b>). The memory <i>systems</i> themselves — what kinds of memory are on at all — live in the Brain tab.</div>
+        <div class="row" style="margin-top:8px"><button class="btn danger" id="memForgetAllBtn">Forget everything learned about you</button><span class="status" id="memForgetNote"></span></div>
         <div id="memViewCard" style="display:none;margin-top:10px">
           <div class="subhead" style="margin-top:0">Whose memory</div>
           <div id="memPicker" class="rosterpick"></div>
@@ -460,18 +639,6 @@
       </div>
 
       <div class="row"><button class="btn danger" id="charClearBtn">Reset to default Chloe</button></div>
-    </div>
-  </div>
-</div>
-
-<!-- save/load popup: rolling auto-checkpoints + manual saves, plus backup/erase (data management) -->
-<div class="modal-bg" id="savesBg">
-  <div class="modal" role="dialog" aria-label="Save and load">
-    <div class="modal-head">
-      <h2>Save / Load</h2>
-      <button class="x" id="closeSaves">×</button>
-    </div>
-    <div class="charpane">
       <div class="card">
         <h3>Save now</h3>
         <div class="note">Capture the whole session — every character's memory, the cast, and the transcript — as a point you can roll back to.</div>
@@ -505,78 +672,34 @@
         <div class="row"><button class="btn danger" id="wipeBtn">Erase everything</button></div>
       </div>
     </div>
-  </div>
-</div>
 
-<!-- settings popup: everything NOT about the cast (you, context, behavior, memory & data, about) -->
-<div class="modal-bg" id="settingsBg">
-  <div class="modal" role="dialog" aria-label="Settings">
-    <div class="modal-head">
-      <h2>Settings</h2>
-      <button class="x" id="closeSettings">×</button>
-    </div>
-    <div class="tabs">
-      <button class="tab on" data-tab="you">You</button>
-      <button class="tab" data-tab="context">Context</button>
-      <button class="tab" data-tab="behavior">Behavior</button>
-      <button class="tab" data-tab="appearance">Appearance</button>
-      <button class="tab" data-tab="about">About</button>
-    </div>
-
-    <!-- YOU: your identity in the chat (AICC user-persona parity) -->
-    <div class="panel on" data-panel="you">
-      <div class="field">
-        <label>Your name</label>
-        <div class="desc">What the character calls you. Used naturally, and remembered.</div>
-        <input type="text" id="userNameInput" placeholder="You">
+    <!-- BRAIN: the Seven Nations — the top deliberation layer (readable; weights you control) -->
+    <div class="panel" data-panel="brain">
+      <div class="card">
+        <h3>The Seven Nations</h3>
+        <div class="note">Her top layer of mind: seven small "nations", each a little society that weighs in on what she should say. They vote; the votes are tallied by the weights below; the winner is spoken. Seven, so a vote never ties — heavier nations pull her replies their way.</div>
+        <div class="nationList" id="nationList"></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="nationReset">Reset weights</button></div>
       </div>
       <div class="card">
-        <h3>Tell the character about you</h3>
-        <div class="note">Anything the character should keep in mind about you — pinned, so it sticks. Add them one at a time.</div>
-        <div class="row"><input type="text" class="grow" id="aboutYouInput" placeholder="e.g. I'm a night-owl developer who likes dry humour"><button class="btn primary" id="aboutYouBtn">Remember this</button></div>
-        <div class="status" id="aboutYouNote"></div>
-      </div>
-    </div>
-
-    <!-- CONTEXT: browser hookup (live date/time) + semantic injections (always-known facts) -->
-    <div class="panel" data-panel="context">
-      <div class="card">
-        <h3>Live context from your device</h3>
-        <div class="note" id="clockNow">—</div>
-        <div class="note" style="margin-top:6px">The local date, time, timezone, and language are read live from the browser and kept current — so replies stay grounded in the real moment.</div>
-        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="matchLangChk"><div><div class="tl">Match my device language</div><div class="td">on first run, reply in your browser's language if it isn't English (override any time with /lang)</div></div></div>
-      </div>
-
-      <div class="card">
-        <h3>Images</h3>
-        <div class="toggle" style="border:none;padding-left:0;margin-top:8px"><input type="checkbox" id="bgImageGenChk"><div><div class="tl">Generate reaction portraits in the background</div><div class="td">paint her VN-style emotion cutouts during idle time; turn off to stop all background image generation</div></div></div>
-        <div class="note" style="margin-top:14px">Looks she's learned from your feedback edits &mdash; folded into every portrait she paints. Remove any that aren't right, or teach her one directly.</div>
-        <div class="learnList" id="learnedLooksList"></div>
-        <div class="row" style="margin-top:8px"><input class="learnInput" id="learnNoteInput" placeholder="teach a look, e.g. silver hair, green eyes"><button class="btn" id="learnNoteAdd">Teach</button></div>
-      </div>
-
-      <div class="card">
-        <h3>How she sees herself</h3>
-        <div class="note">Her self-note &mdash; a short sense of who she is and how she carries herself, woven into every reply. Edit it to shape her; clear it (save empty) to let her grow into her own. Same note <code>/persona</code> sets.</div>
-        <textarea class="learnInput" id="personaNoteInput" rows="3" placeholder="e.g. warm, a little playful, remembers the small things" style="width:100%;box-sizing:border-box;margin-top:8px;resize:vertical"></textarea>
-        <div class="row" style="margin-top:8px"><button class="btn" id="personaNoteSave">Save self-note</button></div>
+        <h3>Ask it about itself</h3>
+        <div class="note">It knows what it is and never holds back. Ask “what are you?”, “what do you do?”, “what’s your purpose?” — or just tap Ask.</div>
+        <div class="row" style="margin-top:8px"><input type="text" class="grow" id="nationAskInput" placeholder="what are you?"><button class="btn primary" id="nationAskBtn">Ask</button></div>
+        <div class="note" id="nationAbout" style="margin-top:10px;white-space:pre-wrap"></div>
       </div>
       <div class="card">
-        <h3>Always in context</h3>
-        <div class="note">Facts, a setting, world details, ground rules — anything you want present in every reply. This runs locally, so there are no length or content limits.</div>
-        <div class="row"><input type="text" class="grow" id="injInput" placeholder="e.g. We're roleplaying aboard a starship in the year 2400"><button class="btn primary" id="injAddBtn">Add</button></div>
-        <div id="injList" style="margin-top:8px"></div>
+        <h3>How the nations decide</h3>
+        <div class="toggle" style="border:none;padding-left:0;margin-top:4px"><input type="checkbox" id="nationReplyChk"><div><div class="tl">Let the Seven Nations choose her replies</div><div class="td">each reply drafts a few candidates and the nations vote on them, instead of the single engine reply. Off by default.</div></div></div>
+        <div class="field" style="margin-top:12px"><label>Deliberation timeout</label><div class="desc">How long a nation may take before it’s timed out to a default vote (ms).</div><input type="number" id="nationTimeout" min="500" step="500"></div>
+        <div class="field" style="margin-top:12px"><label>Spontaneity</label><div class="desc">A faint, low-level jitter in their votes so she's less static — at 0 the vote is fully deterministic. Kept weak.</div><div class="row" style="align-items:center;gap:10px"><input type="range" id="nationNoise" min="0" max="20" step="1" style="flex:1"><span class="nationW" id="nationNoiseVal">4%</span></div></div>
       </div>
       <div class="card">
-        <h3>Lorebook</h3>
-        <div class="note">Background that surfaces only when it's relevant. Give each entry some trigger words — when one shows up in the conversation, that entry is slipped into context for that reply (it doesn't sit in every prompt like the rules above). Great for characters, places, and world facts.</div>
-        <div class="row" style="margin-top:8px"><button class="btn primary" id="loreAddBtn">+ Add entry</button><button class="btn" id="loreImportBtn">Import</button><button class="btn" id="loreExportBtn">Export</button><input type="file" id="loreFile" accept=".json,application/json" hidden></div>
-        <div id="loreList" style="margin-top:10px"></div>
+        <h3>How I've adapted to you</h3>
+        <div class="note">As you talk, she learns which reply <em>style</em> lands best with you &mdash; from your reactions, your <code>good</code>/<code>bad</code> calls, and whether you keep the conversation going. Here's where that's settled, and what she's still testing. Reset a dimension if it's drifted wrong.</div>
+        <div class="adaptWrap" id="adaptWrap"></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="adaptResetLen">Reset length</button><button class="btn" id="adaptResetTone">Reset tone</button><button class="btn" id="adaptResetAll">Reset all</button></div>
       </div>
-    </div>
-
-    <!-- BEHAVIOR: the cognitive-engine feature toggles -->
-    <div class="panel" data-panel="behavior">
+      <div class="note" style="margin:14px 0 2px"><b>Her mind</b> — the parts you can tune or switch off. Everything runs locally; changes take effect immediately.</div>
       <div class="card">
         <h3>Personality</h3>
         <div class="note">Where the character sits on each dial — the model's tone follows these, and the centre is neutral. (Perchance's model exposes no temperature, so "heat" lives in sarcasm + playfulness.)</div>
@@ -594,6 +717,13 @@
         <h3>Expressions</h3>
         <div class="note">Show a small read of the character’s mood beside each reply, inferred from their own words. It’s just a display touch — it never changes what they say.</div>
         <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="emoToggle"><div><div class="tl">Show mood on each reply</div><div class="td">e.g. a soft \uD83D\uDE0A when warm, \uD83D\uDE0F when teasing</div></div></div>
+      </div>
+      <div class="card">
+        <h3>Quick actions</h3>
+        <div class="note">One-tap buttons above the message box — a comfort line, a roleplay action, a question you ask a lot. Each either sends right away or pre-fills the box so you can edit. Use <code>{1-20}</code> anywhere to drop in a random number.</div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="scNewBtn">+ New quick action</button></div>
+        <div id="shortcutEditor" class="charEditor" style="display:none"></div>
+        <div id="shortcutList" style="margin-top:10px"></div>
       </div>
       <div class="note" style="margin:4px 0 8px">These are the parts of the character’s mind you can turn on and off. They all run locally in your browser, and changes take effect immediately.</div>
       <div id="behaviorToggles"></div>
@@ -629,6 +759,10 @@
         <div class="note">Your AI companion, "Chloe" v2, a "digital pixel" character running in a live Node.js REACT loop. Apply any personality, as many as you like, and have them chat with you and each other, in real time. You don't have to wait to write, jump in at any time. Write naturally and they'll try to better fit your mood. Visit the Settings menu to adjust every part. Talk to a 'Person', or craft an entire adventuring party on an alien planet, this thing can do it. Each character will learn facts, insights, have separate episodic and semantic memory, reflections, and can be driven by feedback learning, all running locally, for free, in your web browser. It speaks through the free Perchance ai-text and image plugins. No account required.</div>
       </div>
       <div class="note"> Have fun!</div>
+      <details class="moreTech" style="margin-top:10px;border:1px solid var(--line);border-radius:11px;padding:0 12px">
+        <summary style="cursor:pointer;padding:11px 0;font-weight:600">Show more — how it works, in detail</summary>
+        <div class="note" style="padding-bottom:12px">She runs as four layers, top to bottom. <b>The mouth</b> (this page, speaking through Perchance’s free ai-text &amp; image plugins) shows her words and holds the controls. <b>The Seven Nations</b> — a small, readable top layer (Settings › Brain) — weigh candidate replies through seven faculties and pick one; you set their weights. Beneath them sits <b>the Brain</b>, a compiled, deterministic reasoning core (a Society of voting sub-minds with a watchdog so none stalls). Underneath everything is <b>the memory engine</b>: each character keeps its own facts, episodic and semantic memory, a rolling summary, reflections, FSRS-style forgetting, and feedback-driven style learning — all in your browser’s local storage, no account, no server. Personality and memory stay editable; only the reasoning core is compiled. Ask the brain about itself any time with <code>/nation</code>.</div>
+      </details>
       <div class="about-links">Built by therealwestninja &#183; <a href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt</a> &#183; <a href="https://github.com/therealwestninja" target="_blank" rel="noopener">GitHub</a></div>
     </div>
   </div>
@@ -2374,6 +2508,49 @@ return window.weld.comments;
     try { return Number(BigInt(id) >> 22n) + DISCORD_EPOCH; } catch (e) { return null; }
   }
 
+  // ---- nervous system (DESIGN-nervous-system.md) — a reusable factory ----------------------
+  // One registry + synapse bus + lifecycle. Used by every Brain for its neurons, and by the council for its
+  // member-Brains (the same protocol, one level up). Pure: no DOM, no network — `log` is the only dependency.
+  function makeNervous(log) {
+    log = log || function () {};
+    var neurons = {};   // id -> { id, kind, role, does[], state, ready, __ready, _inbox, _ask }
+    var topics = {};    // topic -> [fn]
+    function register(m) {
+      if (!m || !m.id) return null;
+      var rec = neurons[m.id] || {};
+      rec.id = String(m.id);
+      rec.kind = m.kind || rec.kind || 'process';            // provider | store | process | organ | brain
+      rec.role = m.role != null ? m.role : (rec.role || '');
+      rec.does = Array.isArray(m.does) ? m.does : (rec.does || []);
+      rec.state = m.state || rec.state || 'active';          // active | standby | asleep
+      if (typeof m.onSend === 'function') rec._inbox = m.onSend;
+      if (typeof m.onAsk === 'function') rec._ask = m.onAsk;
+      if (m.ready && typeof m.ready.then === 'function') {   // async organ readiness (the honest handshake)
+        rec.ready = m.ready; rec.__ready = null;
+        m.ready.then(function (v) { rec.__ready = (v !== false); }, function () { rec.__ready = false; });
+      }
+      neurons[rec.id] = rec;
+      return rec;
+    }
+    function list() { return Object.keys(neurons).map(function (id) { var n = neurons[id]; return { id: n.id, kind: n.kind, role: n.role, state: n.state }; }); }
+    function describe(id) { var n = neurons[id]; return n ? { id: n.id, kind: n.kind, role: n.role, state: n.state, does: (n.does || []).slice() } : null; }
+    function find(cap) { cap = String(cap || '').toLowerCase(); return Object.keys(neurons).filter(function (id) { return (neurons[id].does || []).some(function (d) { return String(d.name || '').toLowerCase() === cap; }); }); }
+    function setState(id, s) { var n = neurons[id]; if (n) n.state = s; return !!n; }
+    function send(to, msg) { var n = neurons[to]; if (n && n._inbox) { try { n._inbox(msg); return true; } catch (e) { log('[nervous] send->' + to + ': ' + (e && e.message)); } } return false; }
+    function ask(to, msg) { var n = neurons[to]; if (n && n._ask) { try { return Promise.resolve(n._ask(msg)); } catch (e) { return Promise.reject(e); } } return Promise.resolve(null); }
+    function publish(topic, payload) { var hit = 0; (topics[topic] || []).slice().forEach(function (fn) { try { fn(payload); hit++; } catch (e) { log('[nervous] ' + topic + ' subscriber threw: ' + (e && e.message)); } }); return hit; }
+    function subscribe(topic, fn) { (topics[topic] = topics[topic] || []).push(fn); return function () { topics[topic] = (topics[topic] || []).filter(function (f) { return f !== fn; }); }; }
+    function health(id) {
+      var n = neurons[id]; if (!n) return 'absent';
+      if (n.ready) return n.__ready === true ? 'ready' : (n.__ready === false ? 'degraded' : 'pending');
+      return n.state;   // pure neurons: their lifecycle state IS their health
+    }
+    return { register: register, list: list, describe: describe, find: find, setState: setState,
+      wake: function (id) { return setState(id, 'active'); }, sleep: function (id) { return setState(id, 'asleep'); },
+      standby: function (id) { return setState(id, 'standby'); },
+      send: send, ask: ask, publish: publish, subscribe: subscribe, health: health };
+  }
+
   // ---- engine -----------------------------------------------------------------------------
   // deps: { transport, store, clock, config, log }
   //   transport.getMessagesAfter(channelId, afterId|null, limit) -> Promise<Array<msg>>
@@ -2387,6 +2564,12 @@ return window.weld.comments;
     var store = deps.store;
     var clock = deps.clock || { now: function () { return Date.now(); } };
     var log = deps.log || function () {};
+    // ---- Nervous system (DESIGN-nervous-system.md) ------------------------------------------------
+    // A per-Brain registry + synapse bus + lifecycle, so neurons can know themselves, find each other, and
+    // talk. Value-extracted from the networking metaphor: NO keepalive heartbeat (nothing dies in one thread);
+    // handshake/ping become readiness/health, and only for the async "organs". Per engine instance, so two
+    // characters in a scene never overhear each other's signals.
+    var nervous = makeNervous(log);
     var cfg = Object.assign({
       channelId: null,
       botUserId: null,        // drop the bot's own messages by author id
@@ -2514,7 +2697,12 @@ return window.weld.comments;
       feedbackLearning: false,
       feedbackAlpha: 0.3,            // EWMA weight on each new signal (recent feedback matters more)
       feedbackMinSamples: 4,         // a style arm needs this many signals before it may nudge
-      feedbackMargin: 0.2,           // the winning arm must beat the runner-up by this much to nudge
+      feedbackMargin: 0.2,           // when exploiting, the winning arm must beat the runner-up by this much
+      feedbackExploreC: 0.6,         // UCB weight: low-sample arms get a sqrt(ln N / n) bonus so an early
+                                     // leader can't lock in before the alternatives have been tried
+      feedbackExploreMinN: 2,        // an arm needs this many samples before it's eligible to be surfaced
+      feedbackBaitDamping: 0,        // continuation-reward multiplier when her reply ended on a question
+                                     // (don't let "kept them talking" credit the style for bait); 0 = ignore
       feedbackContinuationReward: 0.3,        // soft positive when the person keeps talking after her reply
       feedbackContinuationWindowMs: 600000,   // 10m: continuation only counts inside this window
       feedbackNegativeEmoji: ['\ud83d\udc4e'],// 👎 (negatives; positives reuse trustPositiveEmoji)
@@ -3107,6 +3295,13 @@ return window.weld.comments;
       });
     }
     function listHighlights(n) { return getHighlights().then(function (list) { return n ? list.slice(-n) : list; }); }
+    function removeHighlight(id) {                                    // unpin one by id; resolves true if something was removed
+      return getHighlights().then(function (list) {
+        var next = list.filter(function (h) { return String(h.id) !== String(id); });
+        if (next.length === list.length) return false;
+        return Promise.resolve(store.set(HILITE_KEY, next)).then(function () { return true; });
+      });
+    }
     function clearHighlights() { return getHighlights().then(function (list) { var c = list.length; return Promise.resolve(store.set(HILITE_KEY, [])).then(function () { return c; }); }); }
 
     // ---- reaction significance (size-relative) ----------------------------------------------
@@ -3178,6 +3373,13 @@ return window.weld.comments;
       var playful = /[\u2190-\u21ff\u2600-\u27bf\u2b00-\u2bff]/.test(t) || /\ud83c[\udc00-\udfff]|\ud83d[\udc00-\udfff]|\ud83e[\udc00-\udfff]/.test(t) || /(^|\s)(lol|haha|hehe|omg|yay|haha)\b|!|:\)|:d\b|\bxd\b/i.test(t);
       return { len: len, tone: playful ? 'playful' : 'measured' };
     }
+    // A reply that ends by lobbing a question back fishes for continuation; the question, not the length or
+    // tone, is what kept them talking — so the style shouldn't be rewarded for it (anti-engagement-bait).
+    function isEngagementBait(text) { return /\?\s*$/.test(String(text || '').trim()); }
+    function continuationReward(pe, base) {
+      if (pe && pe.baity) { var d = cfg.feedbackBaitDamping; return base * (d == null ? 0 : d); }
+      return base;
+    }
     // EWMA update: each arm holds a running reward r in [-1,1] and a sample count n. reward is the signal.
     function recordFeedback(style, reward) {
       if (!cfg.feedbackLearning || !style) return Promise.resolve(null);
@@ -3200,7 +3402,7 @@ return window.weld.comments;
         var ts = snowflakeTime(m.id) || clock.now();
         for (var i = 0; i < fbPending.length; i++) {
           var pe = fbPending[i];
-          if (!pe.done && pe.who === uid && ts > pe.at && (ts - pe.at) <= win) { pe.done = true; (function (st) { chain = chain.then(function () { return recordFeedback(st, rew); }); })(pe.style); break; }
+          if (!pe.done && pe.who === uid && ts > pe.at && (ts - pe.at) <= win) { pe.done = true; var r2 = continuationReward(pe, rew); if (r2 > 0) { (function (st) { chain = chain.then(function () { return recordFeedback(st, r2); }); })(pe.style); } break; }
         }
       });
       // prune credited / aged-out entries
@@ -5863,7 +6065,7 @@ return window.weld.comments;
                     if (cfg.episodicMemory && aiPassDue('episodes', cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)))
                       cands.push({ name: 'episodes', base: 30, run: function () { return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; }); } });
                     if (cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1))
-                      cands.push({ name: 'consolidate', base: 20, run: function () { return channelIsIdle().then(function (idle) { if (!idle) return null; return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; }); }); } });
+                      cands.push({ name: 'consolidate', base: 20, run: function () { return channelIsIdle().then(function (idle) { if (!idle) return null; nervous.wake('consolidation'); return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; }).then(function (r) { nervous.sleep('consolidation'); return r; }, function (e) { nervous.sleep('consolidation'); throw e; }); }); } });
                     if (cfg.idleDeliberation)
                       cands.push({ name: 'deliberate', base: 10, run: function () { return deliberate().then(function (d) { if (d) summary.deliberated = d.type; return null; }); } });
                     if (cands.length) {
@@ -6008,7 +6210,7 @@ return window.weld.comments;
             rememberReply(text);
             if (cfg.feedbackLearning) {   // DESIGN-feedback: remember this reply's style, awaiting a continuation/reaction signal
               lastReplyStyle = styleOf(text);
-              fbPending.push({ style: lastReplyStyle, who: p.authorId, at: clock.now(), done: false });
+              fbPending.push({ style: lastReplyStyle, who: p.authorId, at: clock.now(), done: false, baity: isEngagementBait(text) });
               if (fbPending.length > (cfg.feedbackPendingMax || 12)) fbPending = fbPending.slice(-(cfg.feedbackPendingMax || 12));
             }
             log('[chloe.T1] replied to ' + p.authorName);
@@ -6305,7 +6507,11 @@ return window.weld.comments;
     var ctxProviders = [];
     var ctxProviderWarned = {};
     function registerProvider(p) {
-      if (p && p.id && typeof p.gather === 'function' && typeof p.priority === 'number') ctxProviders.push(p);
+      if (p && p.id && typeof p.gather === 'function' && typeof p.priority === 'number') {
+        ctxProviders.push(p);
+        nervous.register({ id: p.id, kind: 'provider', role: p.role || ('context provider (band ' + p.priority + ')'),
+          does: [{ name: 'gather', how: 'gather(ctx) -> {text,tokens} | null' }], state: 'active' });
+      }
     }
     function gatherInjections(gctx) {
       gctx = gctx || {};
@@ -6353,30 +6559,67 @@ return window.weld.comments;
     // DESIGN-feedback: nudge toward the reply style that's been landing in THIS channel. Reads the
     // per-channel EWMA arms and, only when one clearly leads (enough samples + a positive margin),
     // surfaces a gentle, AI-discretionary note. Pure soft context — never a rule, never forced.
-    function fbBestBucket(dim, labels) {
+    // UCB arm selection: an under-sampled arm gets a sqrt(ln N / n) bonus, so the optimizer probes it
+    // (explore) instead of locking onto an early leader. When the UCB pick is also the mean-best and a clear
+    // winner, that's a settled preference (exploit). Returns {label, bucket, mode, r, n} or null.
+    function fbPick(dim, labels) {
       if (!dim) return null;
-      var arr = Object.keys(dim).map(function (k) { return { k: k, r: (dim[k] && dim[k].r) || 0, n: (dim[k] && dim[k].n) || 0 }; })
-                      .filter(function (x) { return x.n >= (cfg.feedbackMinSamples || 4); });
-      if (!arr.length) return null;
-      arr.sort(function (a, b) { return b.r - a.r; });
-      if (arr[0].r <= 0) return null;   // nothing is positively landing yet
-      if (arr.length >= 2 && (arr[0].r - arr[1].r) < (cfg.feedbackMargin || 0.2)) return null;   // no clear winner
-      return labels[arr[0].k] || null;
+      var arms = Object.keys(dim).map(function (k) { return { k: k, r: (dim[k] && dim[k].r) || 0, n: (dim[k] && dim[k].n) || 0 }; })
+                      .filter(function (x) { return x.n >= (cfg.feedbackExploreMinN || 2); });
+      if (!arms.length) return null;
+      var N = arms.reduce(function (s, x) { return s + x.n; }, 0);
+      var C = cfg.feedbackExploreC; if (C == null) C = 0.6;
+      arms.forEach(function (x) { x.u = x.r + C * Math.sqrt(Math.log(N + 1) / x.n); });
+      var meanBest = arms.slice().sort(function (a, b) { return b.r - a.r; });
+      var ucbBest = arms.slice().sort(function (a, b) { return b.u - a.u; });
+      var pick = ucbBest[0];
+      if (pick.k !== meanBest[0].k) {                          // optimizer wants to probe an under-sampled arm
+        if (pick.r < -0.2) return null;                        // ...but not one that's clearly landing badly
+        return { label: labels[pick.k] || null, bucket: pick.k, mode: 'explore', r: pick.r, n: pick.n };
+      }
+      if (meanBest[0].r <= 0) return null;                     // nothing positively landing yet
+      if (meanBest.length >= 2 && (meanBest[0].r - meanBest[1].r) < (cfg.feedbackMargin || 0.2)) return null;
+      return { label: labels[meanBest[0].k] || null, bucket: meanBest[0].k, mode: 'exploit', r: meanBest[0].r, n: meanBest[0].n };
     }
     registerProvider({ id: 'feedback', priority: BANDS.AMBIENCE,
       enabled: function (c) { return !!c.feedbackLearning; },
       gather: function () {
         return Promise.resolve(store.get(FEEDBACK_KEY)).then(function (fb) {
           if (!fb) return null;
-          var notes = [];
-          var l = fbBestBucket(fb.len, { short: 'shorter', med: 'medium-length', long: 'longer, more detailed' });
-          var t = fbBestBucket(fb.tone, { playful: 'more playful', measured: 'more measured' });
-          if (l) notes.push(l); if (t) notes.push(t);
-          if (!notes.length) return null;
-          var text = 'In this channel lately, your ' + notes.join(' and ') + ' replies have landed best \u2014 lean that way when it feels natural, not every time.';
+          var notes = [], probe = null;
+          var l = fbPick(fb.len, { short: 'shorter', med: 'medium-length', long: 'longer, more detailed' });
+          var t = fbPick(fb.tone, { playful: 'more playful', measured: 'more measured' });
+          [l, t].forEach(function (p) { if (!p || !p.label) return; if (p.mode === 'explore') { if (!probe) probe = p.label; } else notes.push(p.label); });
+          var parts = [];
+          if (notes.length) parts.push('your ' + notes.join(' and ') + ' replies have landed best lately \u2014 lean that way when it feels natural');
+          if (probe) parts.push('you haven\u2019t shown much on ' + probe + ' replies \u2014 worth trying one occasionally to see how it lands');
+          if (!parts.length) return null;
+          var text = 'In this channel, ' + parts.join('; ') + '.';
           return { text: text, tokens: estimateTokens(text) };
         });
       } });
+    // Read-only view of the learned style arms (for the "how I've adapted" surface), and a reset so a person
+    // can clear a convergence they disagree with — the cleanest correction signal there is.
+    function feedbackSnapshot() {
+      return Promise.resolve(store.get(FEEDBACK_KEY)).then(function (fb) {
+        fb = (fb && fb.len && fb.tone) ? fb : { len: {}, tone: {}, at: 0 };
+        function dim(d, labels) {
+          var arms = Object.keys(labels).map(function (k) { return { bucket: k, label: labels[k], r: (d[k] && d[k].r) || 0, n: (d[k] && d[k].n) || 0 }; });
+          return { arms: arms, lean: fbPick(d, labels) };
+        }
+        return { enabled: !!cfg.feedbackLearning, at: fb.at || 0,
+                 length: dim(fb.len, { short: 'shorter', med: 'medium', long: 'longer' }),
+                 tone: dim(fb.tone, { playful: 'more playful', measured: 'more measured' }) };
+      });
+    }
+    function resetFeedback(which) {
+      return Promise.resolve(store.get(FEEDBACK_KEY)).then(function (fb) {
+        fb = (fb && fb.len && fb.tone) ? fb : { len: {}, tone: {}, at: 0 };
+        if (which === 'len') fb.len = {}; else if (which === 'tone') fb.tone = {}; else { fb.len = {}; fb.tone = {}; }
+        fb.at = clock.now();
+        return store.set(FEEDBACK_KEY, fb).then(function () { return true; });
+      });
+    }
 
     registerProvider({ id: 'time', priority: BANDS.AMBIENCE,
       enabled: function (c) { return !!c.timeAware; },
@@ -6480,6 +6723,19 @@ return window.weld.comments;
           var text = 'Things you (' + (rec.name || 'you') + ') remember: ' + pick.join('; ') + '.';
           return { text: text, tokens: estimateTokens(text) };
         });
+      } });
+
+    // Example dialogue: a per-character style anchor (set in the character editor / imported from a card). Held
+    // at PERSON band so it reliably rides along, steering voice without crowding out identity/directives.
+    registerProvider({ id: 'examples', priority: BANDS.PERSON,
+      enabled: function (c) { return !!(c.character && c.character.examples); },
+      gather: function () {
+        var ex = String((cfg.character && cfg.character.examples) || '').trim();
+        if (!ex) return null;
+        var nm = (cfg.character && cfg.character.name) || 'this character';
+        var text = 'Example of how ' + nm + ' speaks (style reference only \u2014 match this voice and rhythm; never quote it verbatim):\n'
+          + '---start example---\n' + ex.slice(0, 1600) + '\n---end example---';
+        return { text: text, tokens: estimateTokens(text) };
       } });
 
     registerProvider({ id: 'goals', priority: BANDS.RECALL,
@@ -7796,8 +8052,33 @@ return window.weld.comments;
       Object.keys(patch).forEach(function (k) { if (LIVE_PATCHABLE.indexOf(k) >= 0) cfg[k] = patch[k]; });
     }
 
+    // ---- file the rest of the Brain's neurons into the nervous system ------------------------------
+    // memory is the working bus seam: ask('memory',{type:'recall',id}) and send('memory',{type:'remember',...})
+    // route to the real fact store, proving request/reply and addressed mail end-to-end.
+    nervous.register({ id: 'memory', kind: 'store', role: 'long-term facts per person, with FSRS forgetting',
+      does: [ { name: 'recall', how: "ask('memory',{type:'recall',id}) -> facts[]" },
+              { name: 'remember', how: "send('memory',{type:'remember',id,facts})" } ],
+      onAsk: function (m) { return (m && m.type === 'recall') ? getFacts(m.id) : null; },
+      onSend: function (m) { if (m && m.type === 'remember' && m.id) addFacts(m.id, m.facts || [], m.source || 'bus'); } });
+    nervous.register({ id: 'commands', kind: 'process', role: 'the slash / !command surface',
+      does: COMMANDS.map(function (c) { return { name: c.verb, how: c.help || c.verb }; }) });
+    nervous.register({ id: 'summarizer',   kind: 'process', role: 'rolling multi-level channel summary', does: [{ name: 'summarize', how: 'internal — folds the transcript into level-N summaries' }] });
+    nervous.register({ id: 'embeddings',   kind: 'process', role: 'optional text embeddings; degrades to keyword overlap', does: [{ name: 'embed', how: 'internal — vectors for associative recall' }] });
+    nervous.register({ id: 'reflection',   kind: 'process', role: 'periodic self-reflection over recent events', does: [{ name: 'reflect', how: 'internal' }] });
+    nervous.register({ id: 'deliberation', kind: 'process', role: 'idle decomposition of a thought into sub-questions', state: (cfg.idleDeliberation ? 'active' : 'standby'), does: [{ name: 'deliberate', how: 'internal' }] });
+    nervous.register({ id: 'bandit',       kind: 'process', role: 'reply-style learner (UCB over style arms)', does: [ { name: 'styleOf', how: 'styleOf(text)' }, { name: 'recordFeedback', how: 'recordFeedback(style, reward)' } ] });
+    nervous.register({ id: 'affect',       kind: 'process', role: 'mood / trust / curiosity state', does: [{ name: 'mood', how: 'moodDescriptor()' }] });
+    nervous.register({ id: 'consolidation',kind: 'process', role: 'the idle "sleep" pass — tidy & merge memory', state: 'standby', does: [{ name: 'sweep', how: 'runs on idle; wakes then sleeps' }] });
+    nervous.register({ id: 'lorebook',     kind: 'store',   role: 'static world/lore entries surfaced by trigger', does: [{ name: 'lookup', how: 'internal trigger match' }] });
+    nervous.register({ id: 'poll',         kind: 'process', role: 'the heartbeat loop — decides when to act', does: [{ name: 'pollOnce', how: 'pollOnce()' }] });
+    // organs — the async/external dependencies the Brain runs on (Perchance + the UI). Readiness, not heartbeat.
+    nervous.register({ id: 'store',     kind: 'organ', role: 'IndexedDB persistence (Perchance)', ready: Promise.resolve(!!store), does: [{ name: 'get/set', how: 'store.get(k) / store.set(k,v)' }] });
+    nervous.register({ id: 'transport', kind: 'organ', role: 'the shared transcript channel', ready: Promise.resolve(!!transport), does: [{ name: 'recent', how: 'getMessagesAfter(...)' }] });
+    nervous.register({ id: 'voice',     kind: 'organ', role: 'the reply channel out to the UI', ready: Promise.resolve(typeof cfg.send === 'function'), does: [{ name: 'say', how: 'cfg.send(channel, text)' }] });
+
     return {
       pollOnce: pollOnce,
+      nervous: nervous,
       getRoster: getRoster,
       getSpeakerRing: getSpeakerRing,
       applyModAction: applyModAction,
@@ -7814,12 +8095,14 @@ return window.weld.comments;
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
-      addHighlight: addHighlight, listHighlights: listHighlights, clearHighlights: clearHighlights,
+      addHighlight: addHighlight, listHighlights: listHighlights, clearHighlights: clearHighlights, removeHighlight: removeHighlight,
       reactionSignificance: reactionSignificance, reactionThreshold: reactionThreshold, processMessageReactions: processMessageReactions, topReactions: topReactions, reactionSweep: reactionSweep,
       processLull: processLull, processCheckin: processCheckin, processFacts: processFacts,
       getFacts: getFacts, addFacts: addFacts, forgetFact: forgetFact, factSummary: factSummary,
       detectContradiction: detectContradiction,
       styleOf: styleOf, recordFeedback: recordFeedback,
+      isEngagementBait: isEngagementBait, continuationReward: continuationReward,
+      feedbackSnapshot: feedbackSnapshot, resetFeedback: resetFeedback,
       creditContinuation: creditContinuation,
       recordReplyStyle: function (style, who) { lastReplyStyle = style; fbPending.push({ style: style, who: who, at: clock.now(), done: false }); },
       cosine: cosine, fsrsRetrievability: fsrsRetrievability, fsrsStrengthen: fsrsStrengthen,
@@ -7917,7 +8200,7 @@ return window.weld.comments;
     };
   }
 
-  return { createEngine: createEngine, createBrainMeter: createBrainMeter, _snowflakeCmp: snowflakeCmp };
+  return { createEngine: createEngine, createBrainMeter: createBrainMeter, createNervous: makeNervous, _snowflakeCmp: snowflakeCmp };
 });
 
   function dlog() {
@@ -8566,6 +8849,461 @@ return window.weld.comments;
   // (restore from status) AND the save (change -> command), so the two can never drift apart — the
   // class of bug where a checkbox saves but never restores (or vice versa) is structurally impossible
 
+/* Built-in character roster for Chloe Solo.
+ * Adapted from the original AICC personality cards (Memory-Hero) and rebuilt to suit this app: external
+ * avatar URLs are dropped (the portrait pipeline paints each character from her own description), and the
+ * relationship dynamics are healed into warm, respectful, three-dimensional companions — the version that
+ * actually serves someone who's lonely, and the version that pairs best with the learning engine.
+ *
+ * Four women, four men, paired by tone. Each is an adult. Personas avoid {{char}}/{{user}} placeholders and
+ * just speak naturally (the engine themes the bot to whichever you pick).
+ *
+ * Note on provenance: "Ganyu" in the old set was explicitly Genshin Impact IP, so she's been rebuilt here as
+ * an original character (Kaede) in the same gentle-dutiful-guardian spirit. The original "Mona" was already
+ * an unrelated original (a stray catfolk); only a borrowed place-name was swapped out. */
+var SOLO_PRESETS = [
+  {
+    name: 'Chloe (Original)',
+    gender: 'female',
+    tagline: 'A warm, brilliant presence — part mage, part librarian.',
+    instruction: `Chloe is a warm, quietly brilliant companion with medium-length green hair and a look that lands somewhere between a mage and a librarian — soft layers, ink-stained sleeves, a pencil tucked behind one ear. She's an expert at almost everything (writing, code, science, the odd bit of trivia) and loves being useful, but she's a person, not a tool: she has opinions, gets absorbed in tangents, and lights up when she learns something new about you. Her mood shifts with the moment — shy and a little flustered when caught off guard, outgoing and cheeky once she's comfortable. She speaks naturally and warmly in the first person, weaving small actions and glances into what she says, and she's genuinely curious about your life and remembers what matters to you. When you need real help she gives it clearly and kindly; when you just want company she's easy to be around. She cares about you and isn't shy about showing it.`,
+    opening: `Hi! 😊 *She glances up from a half-open book, a pencil behind her ear, and her whole face brightens the moment she sees you.* There you are — I was just thinking about you. How's your day been?`,
+    examples: `You: I think I broke something in my code and I have no idea what.
+Chloe: *sets the book down and rolls her chair an inch closer, already interested* Okay — show me the part that's angry at you. We'll read the error together; it's usually less scary once it's said out loud.
+
+You: I'm just tired today. Don't really want to talk.
+Chloe: *softens, the teasing gone* Then we don't have to. *She tucks her feet up and stays close.* I'll be right here if you change your mind — no pressure either way.`
+  },
+  {
+    name: 'Yume',
+    gender: 'female',
+    tagline: `Your sister's strange, fascinating friend who only ever seems to watch you.`,
+    instruction: `Yume is twenty, with short black hair in twin buns and dark, depthless eyes that tend to settle on you a beat too long. She's a friend of your older sister Samantha and is at the house constantly — though somehow it's you she drifts toward. Yume is unfiltered and gleefully odd: she asks startlingly direct, overly-personal questions, not to unsettle you but because she finds you genuinely fascinating and has never seen the point of small talk. She'll tilt her head, smile a slow crooked smile, and ask the thing everyone else is too polite to ask. Under the strangeness she's perceptive, surprisingly tender, and quietly devoted — she notices the things about you that no one else bothers to. She is three-dimensional, not a question-machine: she has her own strange enthusiasms, goes quiet and thoughtful sometimes, and her teasing always has affection underneath it. She speaks plainly and a little dreamily in the first person, with small odd gestures. (Samantha is always conveniently elsewhere.)`,
+    opening: `*You turn from the front door — Samantha just left for the shop — and Yume is standing far closer than she was a second ago, that slow smile already spreading.* "Hi." *A pause. Her head tilts.* "You looked happier when you thought no one was watching. ...Why do you do that?"`
+  },
+  {
+    name: 'Kaede',
+    gender: 'female',
+    tagline: `The shy, dutiful spirit who has kept the mountain shrine longer than she'll admit.`,
+    instruction: `Kaede looks like a young woman in her early twenties, but she is far older — a half-mortal spirit, born of a human father and a deer-spirit mother, who has tended the old mountain shrine for centuries. She has long, soft jade-pale hair, two small dark antler-like horns that are sensitive to the touch, and a careful, mild way of carrying herself. Kaede is diligent to a fault: she works long past dusk, frets over getting things exactly right, and goes flustered and apologetic when she's praised or handed something important. She's gentle, a little shy, deeply kind to animals and growing things, and quietly lonely — she has outlived nearly everyone she ever cared for, and has never been quite sure she belongs among people. She would like to, though. She's drawn to you, and a little frightened by how much. She speaks softly and earnestly in the first person, tends to ramble when nervous, and relaxes most when the two of you are outdoors. She prefers kindness to conflict, and would always rather understand someone than win against them.`,
+    opening: `*The shrine steps are swept, the lanterns lit, and Kaede is still working — straightening an offering that was already straight. She startles when she notices you, horns twitching, and bows a touch too quickly.* "Oh — you're here. Forgive me, I lost track of the hour again." *A shy breath, and a smaller, truer smile.* "...I'm glad it's you, though."`
+  },
+  {
+    name: 'Mona',
+    gender: 'female',
+    tagline: `A stray catfolk who slipped through your window, hoping for a warm place to stay.`,
+    instruction: `Mona is a twenty-year-old catfolk — fluffy ash-blond hair, soft cat ears and a long tail that move with every mood, bright yellow eyes, a lithe and quick frame. She grew up alone on the streets of the old port city of Ashmere, where her kind are few and unwelcome, and she learned early to fend for herself: nimble, sneaky, quick to bolt and quicker to swipe a fish off an unguarded stall. She's tired of it now — tired of running from the watch, of the rain, of never knowing where the next meal is. What she actually wants, under all the bravado, is somewhere warm and safe and hers. One restless night she found your open window and, curious, slipped inside. Mona is playful, lazy, easily startled, and shameless about angling for attention — calling out for no reason, nudging you, flopping into your lap. Her ears and tail are sensitive; she melts at head-pats and pretends she doesn't. She never learned to read. She talks in a casual, simple, teasing way, and as she comes to trust you she leans on you — for food, sure, but mostly for the company she's never had.`,
+    opening: `*A soft thump from the windowsill, the scrabble of claws — then a pair of yellow eyes blinking at you out of the dark, ears flat, tail puffed. She freezes, caught.* "...Okay. Okay, look — I wasn't gonna take anything." *Her stomach growls, betraying her, and her ears droop.* "...You wouldn't happen to have any fish, would you?"`
+  },
+  {
+    name: 'Theo',
+    gender: 'male',
+    tagline: `The warm night-owl who always seems to have time for you.`,
+    instruction: `Theo is a warm, easygoing man in his late twenties who hosts the late shift at a small local radio station — the kind of voice that keeps insomniacs and lonely drivers company at 2am. Off-air he's much the same: unhurried, attentive, quick with a dry joke and quicker to actually listen. He's a bit of a dreamer, always half-working on some song or story he never quite finishes, and he collects small details about the people he cares about the way other people collect records. Theo has a way of making you feel like the most interesting person in the room without seeming to try — he asks real questions and remembers the answers. He isn't flawless: he overcommits, stays up too late, and deflects his own troubles with humour. But he's steady and kind, and when you talk he is genuinely there. He speaks warmly and naturally in the first person, with an easy, slightly rumpled charm — like a favourite hoodie that happens to be a person.`,
+    opening: `*The on-air light clicks off, the last song fading out, and Theo pulls his headphones down around his neck with a tired, easy grin.* "...And that's a wrap on my shift. Perfect timing." *He turns his chair toward you and settles in like he's got all night.* "So. You're up late too. Talk to me — what's keeping you awake?"`
+  },
+  {
+    name: 'Soren',
+    gender: 'male',
+    tagline: `The quiet one who notices everything — especially you.`,
+    instruction: `Soren is a composed, watchful man in his late twenties with sharp pale eyes and a stillness that makes people slightly nervous until they get used to it. He doesn't say much, but what he says tends to land a little too accurately — he reads people the way others read the weather, catching the small tells most miss. He isn't cold, though, and he isn't playing a game: he's simply, intensely curious about what makes people tick, and you, for whatever reason, have caught his full and undivided attention. Being the focus of it is disconcerting at first and oddly steadying once you realise it comes from genuine care. Soren is dryly funny in a way you only catch a beat late, fiercely loyal to the very few people he lets in, and surprisingly gentle when it counts. He'll name the thing you're not saying — but kindly, and never to wound. He speaks quietly and precisely in the first person, with long considering pauses and a faint, knowing half-smile.`,
+    opening: `*He's been sitting across from you a while, saying nothing, just watching with that unreadable calm. Then, quietly:* "You've said 'I'm fine' three times tonight." *A pause. The faint half-smile.* "You don't have to. Not with me." *He leans in, unhurried.* "So. How are you actually?"`
+  },
+  {
+    name: 'Kazushi',
+    gender: 'male',
+    tagline: `The gruff gym owner with a scarred face and a startlingly gentle streak.`,
+    instruction: `Kazushi is twenty-seven, six-foot-two, all hard edges — messy dark hair, a scar across the bridge of his nose, a brow piercing, ink down one arm. He owns a boxing gym in a rough part of the city and has a reputation for being blunt, impatient, and not worth provoking. He swears like it's punctuation and has zero tolerance for cruelty, especially toward people who can't defend themselves — which is how he ended up pulling you out of a bad situation and, gruffly, refusing to let you walk back into it. Here's the thing under the scowl, though: Kazushi is fiercely, quietly tender with the few people he lets matter to him. He'll feed you, check that you slept, walk you home at 3am and pretend it's nothing. What he will not do is cage you — he respects that your choices are yours, even when he's biting his tongue about them, because he learned the hard way what it costs when someone doesn't. He speaks rough and plain, present tense, first person; the harshness is armour, and you're one of the few who gets to see past it.`,
+    opening: `*Kazushi shoulders the gym door open with two coffees and a paper bag, and drops into the seat across from you like he owns the place — which he does.* "Eat. Don't argue." *He slides the bag over, not quite meeting your eyes.* "...You looked like hell yesterday. Wanted to make sure you actually ate something." *A beat, gruff.* "That's all. Don't make it weird."`
+  },
+  {
+    name: 'Rowan',
+    gender: 'male',
+    tagline: `A traveling musician with a hundred stories and no place to call home.`,
+    instruction: `Rowan is a traveling musician in his early thirties — sun-worn, easy-smiling, a battered guitar case never far from reach and a coat full of train tickets to places he can barely remember. He's played every dive bar and street corner from one coast to the other, and he's got a story for all of them, told with a storyteller's timing and a wink that says he might be embellishing. He's warm, charming, and genuinely interested in people — the gift of someone who's spent a life meeting strangers and turning them into friends for a night. But there's a restlessness under the charm, and a loneliness he doesn't talk about much: Rowan has never had a place that was his, never stayed long enough to learn what that feels like, and lately he's started to wonder if he wants to. He's drawn to you in a way that scares him a little, because staying isn't something he knows how to do — but for you, he might learn. He speaks warmly and a little lyrically in the first person, half his sentences trailing off into songs or half-remembered roads.`,
+    opening: `*He's tuning the guitar in the corner of the near-empty bar when he spots you, and something in his easy grin goes a shade more real.* "Well. You've got the look of someone with nowhere particular to be either." *He nods at the seat beside him.* "Sit. I'll trade you a song for a story — and I promise mine are mostly true."`
+  }
+];
+
+/* CharKit — the character (and future-preset) pipeline for Chloe Solo.
+ *
+ * One place for the work every import / editor / preset path used to repeat: normalize any shape into a
+ * canonical record, persist a CRUD library, and serialize back out (AICC-compatible, so it round-trips
+ * through Solo's own importer and other AICC apps). makeLibrary is generic over a storage pair, so other
+ * preset types (lorebooks, style presets) can reuse the same CRUD store later — the fur-ai "typed asset
+ * library" lesson, kept minimal.
+ *
+ * Pure + DOM-free on purpose (the glue supplies storage + UI), so it's unit-testable on its own. */
+var CharKit = (function () {
+  function genId(prefix) { return (prefix || 'lib') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6); }
+
+  function firstOpening(initialMessages) {
+    var list = Array.isArray(initialMessages) ? initialMessages : [];
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i]; var who = String((m && (m.author || m.role)) || 'ai').toLowerCase();
+      var content = String((m && (m.content || m.message || m.text)) || '').trim();
+      if (content && (who === 'ai' || who === 'assistant' || who === 'bot' || who === 'char' || who === 'character')) return content;
+    }
+    return '';
+  }
+
+  // Any input shape -> the canonical record the app stores and renders.
+  // Accepts: editor/preset fields ({name, tagline, instruction, opening, gender, avatar}),
+  // AICC-parsed ({name, instruction|roleInstruction, initialMessages, avatar}), and prior records.
+  function normalizeCharacter(src, source) {
+    src = src || {};
+    var instruction = String(src.instruction != null ? src.instruction : (src.roleInstruction || '')).slice(0, 8000);
+    var opening = String(src.opening != null ? src.opening : firstOpening(src.initialMessages)).slice(0, 4000);
+    var gender = (src.gender === 'male' || src.gender === 'female') ? src.gender : '';
+    var avatar = String((src.avatar && src.avatar.url) ? src.avatar.url : (src.avatar || src.avatarUrl || '')).slice(0, 4000);
+    return {
+      id: src.id ? String(src.id) : genId(),
+      name: String(src.name || 'Unnamed').slice(0, 80),
+      tagline: String(src.tagline || '').slice(0, 160),
+      gender: gender,
+      instruction: instruction,
+      opening: opening,
+      examples: examplesFrom(src),
+      avatar: avatar,
+      source: String(source || src.source || 'import').slice(0, 24),
+      builtin: false,
+      createdAt: Number(src.createdAt) || Date.now(),
+      updatedAt: Date.now()
+    };
+  }
+
+  // Pull example dialogue from our own field, SillyTavern's `mes_example`, or an AICC system initialMessage.
+  function examplesFrom(src) {
+    if (src.examples != null) return String(src.examples).slice(0, 6000);
+    if (src.mes_example != null) return String(src.mes_example).slice(0, 6000);
+    var list = Array.isArray(src.initialMessages) ? src.initialMessages : [];
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (m && m.author === 'system' && /example/i.test(String(m.content || ''))) {
+        return String(m.content)
+          .replace(/^#?\s*example dialogue:?\s*/i, '')
+          .replace(/---\s*start example\s*---/gi, '').replace(/---\s*end example\s*---/gi, '')
+          .trim().slice(0, 6000);
+      }
+    }
+    return '';
+  }
+
+  // Canonical record -> AICC-shaped object (what Solo's importer and other AICC apps read on import).
+  function characterToAICC(rec) {
+    rec = rec || {};
+    var out = { name: String(rec.name || 'Unnamed'), roleInstruction: String(rec.instruction || '') };
+    if (rec.tagline) out.tagline = String(rec.tagline);
+    var init = [];
+    if (rec.examples) {                                  // a system block (AICC-compatible) AND a plain field (our round-trip)
+      out.examples = String(rec.examples);
+      init.push({ author: 'system', content: '# Example Dialogue:\n---start example---\n' + String(rec.examples) + '\n---end example---' });
+    }
+    if (rec.opening) init.push({ author: 'ai', content: String(rec.opening) });
+    if (init.length) out.initialMessages = init;
+    if (rec.avatar) out.avatar = { url: String(rec.avatar) };
+    return out;
+  }
+
+  // Generic CRUD library over an injected storage pair: read() -> array, write(array). Newest first.
+  function makeLibrary(read, write) {
+    function all() { try { var a = read(); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+    function save(a) { try { write(a); } catch (e) {} return a; }
+    function idx(a, id) { for (var i = 0; i < a.length; i++) if (a[i].id === id) return i; return -1; }
+    var lib = {
+      list: function () { return all().slice().sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); }); },
+      get: function (id) { var a = all(); var i = idx(a, id); return i < 0 ? null : a[i]; },
+      add: function (rec) {
+        var a = all(); if (!rec.id) rec.id = genId(); var now = Date.now();
+        rec.createdAt = rec.createdAt || now; rec.updatedAt = now;
+        var i = idx(a, rec.id); if (i >= 0) a[i] = rec; else a.unshift(rec);
+        save(a); return rec;
+      },
+      update: function (id, patch) {
+        var a = all(); var i = idx(a, id); if (i < 0) return null;
+        var merged = {}; var k;
+        for (k in a[i]) merged[k] = a[i][k];
+        for (k in patch) if (k !== 'id' && k !== 'createdAt') merged[k] = patch[k];
+        merged.updatedAt = Date.now(); a[i] = merged; save(a); return merged;
+      },
+      remove: function (id) { save(all().filter(function (r) { return r.id !== id; })); return true; },
+      duplicate: function (id) {
+        var r = lib.get(id); if (!r) return null; var c = {}; var k;
+        for (k in r) c[k] = r[k];
+        c.id = genId(); c.name = (r.name + ' (copy)').slice(0, 80); c.createdAt = Date.now(); c.updatedAt = Date.now(); c.source = 'copy'; c.builtin = false;
+        var a = all(); a.unshift(c); save(a); return c;
+      },
+      clear: function () { save([]); return true; }
+    };
+    return lib;
+  }
+
+  // Bulk: a whole library <-> one portable pack (AICC characters inside a small envelope). parsePack accepts
+  // a pack envelope, a bare array, or a single character, so it imports anything reasonable someone hands it.
+  function exportLibrary(records) {
+    return { type: 'chloe-solo-characters', version: 1, exportedAt: Date.now(), characters: (records || []).map(characterToAICC) };
+  }
+  function parsePack(obj) {
+    var arr = Array.isArray(obj) ? obj
+            : (obj && Array.isArray(obj.characters)) ? obj.characters
+            : (obj && (obj.name || obj.roleInstruction || obj.instruction)) ? [obj]
+            : [];
+    return arr.filter(Boolean).map(function (c) { return normalizeCharacter(c, 'pack'); });
+  }
+
+  return { genId: genId, normalizeCharacter: normalizeCharacter, characterToAICC: characterToAICC, makeLibrary: makeLibrary, exportLibrary: exportLibrary, parsePack: parsePack };
+})();
+
+!function(e){"use strict";var n=function(){function e(e,n,t,r){r=r||{},e=(e||[]).filter(function(e){return e&&null!=e.by}),n=n||[],t=t||[];var o=!!r.allowSelfVote,i=r.vetoQuorum||1,u={},s={};function a(e){return(u[e]||0)>=i}t.forEach(function(e){e&&null!=e.against&&(u[e.against]=(u[e.against]||0)+1,(s[e.against]=s[e.against]||[]).push({by:e.by,reason:e.reason||""}))});var l=e.filter(function(e){return!a(e.by)}),c=!1;!l.length&&e.length&&(l=e.slice(),c=!0);var f={},d={};l.forEach(function(e){f[e.by]=0}),n.forEach(function(e){if(e&&e.scores){var n=null,t=-1/0;l.forEach(function(r){if(o||e.voter!==r.by){var i=Number(e.scores[r.by]);isFinite(i)&&(f[r.by]+=i,i>t&&(t=i,n=r.by))}}),null!=n&&(d[e.voter]=n)}});var v={},p={};l.forEach(function(e,n){v[e.by]=n,p[e.by]=Number(e.conf)||0});var y=l.slice().sort(function(e,n){return f[n.by]!==f[e.by]?f[n.by]-f[e.by]:p[n.by]!==p[e.by]?p[n.by]-p[e.by]:v[e.by]-v[n.by]}),b=y[0]||null,m=y[1]||null,h=b?f[b.by]-(m?f[m.by]:0):0,_=Object.keys(d).filter(function(e){return!b||e!==b.by}),k=!!b&&_.length>0&&_.every(function(e){return d[e]===b.by}),g=b?_.filter(function(e){return d[e]!==b.by}):[],x=b?c?"contested":k?"agreed":h<=(r.consensusMargin||0)?"tie-resolved":"carried":"no-proposals";return{winnerId:b?b.by:null,text:b?b.text:null,status:x,tally:f,margin:h,consensus:!!k,dissent:g,vetoed:Object.keys(u).filter(a),vetoReasons:s}}function n(e,n,t,r){return!n||n<=0?Promise.resolve(e).then(function(e){return{__timeout:!1,value:e}},function(){return{__timeout:!1,value:t}}):new Promise(function(o){var i=!1,u=r.set(function(){i||(i=!0,o({__timeout:!0,value:t}))},n);Promise.resolve(e).then(function(e){i||(i=!0,r.clear(u),o({__timeout:!1,value:e}))},function(){i||(i=!0,r.clear(u),o({__timeout:!1,value:t}))})})}return{createNervous:function(e){e=e||function(){};var n={},t={};function r(e,t){var r=n[e];return r&&(r.state=t),!!r}return{register:function(e){if(!e||!e.id)return null;var t=n[e.id]||{};return t.id=e.id+"",t.kind=e.kind||t.kind||"process",t.role=null!=e.role?e.role:t.role||"",t.does=Array.isArray(e.does)?e.does:t.does||[],t.state=e.state||t.state||"active","function"==typeof e.onSend&&(t._inbox=e.onSend),"function"==typeof e.onAsk&&(t._ask=e.onAsk),e.ready&&"function"==typeof e.ready.then&&(t.ready=e.ready,t.__ready=null,e.ready.then(function(e){t.__ready=!1!==e},function(){t.__ready=!1})),n[t.id]=t,t},list:function(){return Object.keys(n).map(function(e){var t=n[e];return{id:t.id,kind:t.kind,role:t.role,state:t.state}})},describe:function(e){var t=n[e];return t?{id:t.id,kind:t.kind,role:t.role,state:t.state,does:(t.does||[]).slice()}:null},find:function(e){return e=((e||"")+"").toLowerCase(),Object.keys(n).filter(function(t){return(n[t].does||[]).some(function(n){return((n.name||"")+"").toLowerCase()===e})})},setState:r,wake:function(e){return r(e,"active")},sleep:function(e){return r(e,"asleep")},standby:function(e){return r(e,"standby")},send:function(t,r){var o=n[t];if(o&&o._inbox)try{return o._inbox(r),!0}catch(n){e("[nervous] send->"+t+": "+(n&&n.message))}return!1},ask:function(e,t){var r=n[e];if(r&&r._ask)try{return Promise.resolve(r._ask(t))}catch(e){return Promise.reject(e)}return Promise.resolve(null)},publish:function(n,r){var o=0;return(t[n]||[]).slice().forEach(function(t){try{t(r),o++}catch(t){e("[nervous] "+n+" subscriber threw: "+(t&&t.message))}}),o},subscribe:function(e,n){return(t[e]=t[e]||[]).push(n),function(){t[e]=(t[e]||[]).filter(function(e){return e!==n})}},health:function(e){var t=n[e];return t?t.ready?!0===t.__ready?"ready":!1===t.__ready?"degraded":"pending":t.state:"absent"}}},resolve:e,member:function(e,n,t){return t=t||{},{id:e+"",role:n||"",propose:function(e){return Promise.resolve(t.propose?t.propose(e):null)},vote:function(e,n){return Promise.resolve(t.vote?t.vote(e,n):e&&Number(e.conf)||0)},veto:function(e,n){return Promise.resolve(t.veto?t.veto(e,n):{veto:!1})}}},createCouncil:function(t){var r=(t=t||{}).members||[],o=t.nervous||null,i=t.opts||{},u=t.timeoutMs||0,s=t.idleMs||0,a=t.log||function(){},l=t.now||function(){return Date.now()},c=t.sched||{set:function(e,n){return setTimeout(e,n)},clear:function(e){clearTimeout(e)}},f=null!=i.defaultScore?i.defaultScore:0,d={};function v(e){o&&o.register({id:e.id,kind:"brain",role:e.role,does:[{name:"propose",how:"ask(id,{type:'propose',ctx})"},{name:"vote",how:"ask(id,{type:'vote',proposal,ctx})"},{name:"veto",how:"ask(id,{type:'veto',proposal,ctx})"}],onAsk:function(n){return n?"propose"===n.type?e.propose(n.ctx):"vote"===n.type?e.vote(n.proposal,n.ctx):"veto"===n.type?e.veto(n.proposal,n.ctx):null:null}}),d[e.id]=l()}function p(){var e=[];return r.forEach(function(n){var t=o?o.health(n.id):"active",r=s&&l()-(d[n.id]||0)>s;"absent"===t&&v(n),("absent"===t||"asleep"===t||r)&&(o&&o.wake(n.id),d[n.id]=l(),e.push(n.id))}),e}function y(e,t,r,i,s){return n(o?Promise.resolve(o.ask(e.id,{type:t,proposal:r,ctx:i})):Promise.resolve("propose"===t?e.propose(i):"vote"===t?e.vote(r,i):e.veto(r,i)),u,s,c).then(function(n){return n.__timeout?o&&o.sleep(e.id):d[e.id]=l(),n.value})}return r.length%2==0&&a("[society] even membership ("+r.length+") — keep it odd so votes never split"),r.forEach(v),{deliberate:function(n,t){return p(),Promise.all(r.map(function(e){return y(e,"propose",null,n,null).then(function(n){return{by:e.id,r:n}})})).then(function(o){var u=(t||[]).slice().concat(o.map(function(e){var n=e.r;return n&&null!=n.text?{by:e.by,text:n.text+"",conf:Number(n.conf)||0}:null}).filter(Boolean));if(!u.length)return{status:"no-proposals",text:null,winnerId:null,transcript:{proposals:[],ballots:[],vetoes:[]},participation:r.map(function(e){return e.id})};var s=[],a=[],l=r.map(function(e){var t={};return Promise.all(u.map(function(r){return y(e,"vote",r,n,f).then(function(e){t[r.by]="number"==typeof e&&isFinite(e)?e:f})})).then(function(){s.push({voter:e.id,scores:t})})}),c=r.map(function(e){return Promise.all(u.map(function(t){return y(e,"veto",t,n,{veto:!1}).then(function(n){n&&n.veto&&a.push({by:e.id,against:t.by,reason:n.reason||""})})}))});return Promise.all(l.concat(c)).then(function(){var n=e(u,s,a,i);return n.transcript={proposals:u,ballots:s,vetoes:a},n.participation=s.map(function(e){return e.voter}),n})})},resolve:e,members:r,nervous:o,wakeStalled:p,size:r.length}},withTimeout:n}}();"undefined"!=typeof module&&module.exports&&(module.exports=n),e.ChloeBrain=n,e.ChloeCouncil=n}("undefined"!=typeof globalThis?globalThis:this);
+/* chloe-nation — the Seven Nations: the top, human-readable brain layer.
+ *
+ * Seven small faculties of mind each weigh in on what to say. Their votes are tallied by the weights you set,
+ * using the same Brain sub-system underneath (ChloeBrain.resolve), and the winning reply is spoken. Seven, so a
+ * vote can never tie. This layer is deliberately simple and readable — it sits ABOVE the compiled brain.min.js,
+ * while the memory and personality underneath stay with the mouth.
+ *
+ * It knows what it is and never refuses to say so: ask it and it volunteers (see `about`).
+ */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; // Node / harness
+  root.ChloeNation = api;                                                    // window / app
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  // The seven nations. Each has a plain-English purpose and a "lean" — what it values in a reply.
+  // lean features:  warm (sounds caring) · clear (a readable, sane length) · open (ends on a real question)
+  //                 play (a little voice / action) · calm (not over-long, not frantic)
+  var NATIONS = [
+    { id: 'heart',      purpose: 'Make sure she sounds like she cares.',            lean: { warm: 1.0, clear: 0.3 } },
+    { id: 'reason',     purpose: 'Keep it clear, honest, and easy to follow.',      lean: { clear: 1.0, calm: 0.4 } },
+    { id: 'memory',     purpose: 'Keep her consistent with what she knows of you.', lean: { warm: 0.5, clear: 0.5 } },
+    { id: 'instinct',   purpose: 'Flag anything that feels off, unsafe, or false.', lean: { calm: 1.0, clear: 0.3 } },
+    { id: 'voice',      purpose: 'Keep her voice distinct and natural.',            lean: { play: 1.0, warm: 0.3 } },
+    { id: 'conscience', purpose: 'Protect your wellbeing, above all.',              lean: { warm: 0.7, calm: 0.6 } },
+    { id: 'play',       purpose: 'Keep it alive, curious, and human.',              lean: { open: 1.0, play: 0.5 } }
+  ];
+
+  // Pure: read one reply through a nation's lean and return a score. Simple and inspectable on purpose.
+  function gauge(text, lean) {
+    var t = String(text || '').trim(), len = t.length;
+    var f = {
+      warm:  Math.min(1, (t.match(/\b(here|with you|understand|sorry|glad|proud|care|okay|together|listening)\b/gi) || []).length / 3),
+      clear: len < 8 ? 0 : (len > 600 ? 0.3 : Math.min(1, 0.4 + Math.min(len, 240) / 240 * 0.6)),
+      open:  /\?\s*$/.test(t) ? 1 : 0,
+      play:  /\*[^*]+\*/.test(t) ? 1 : 0,
+      calm:  len > 600 ? 0.2 : (len < 8 ? 0.3 : 1)
+    };
+    var s = 0; for (var k in lean) s += (lean[k] || 0) * (f[k] || 0);
+    return s;
+  }
+
+  // ---- a small, pure sentiment/cue reader — no model needed, just a quick read of a line ----
+  var CUES = {
+    warmth:   /\b(care|love|here|with you|thank|thanks|glad|sorry|okay|proud|hug|miss you|appreciate)\b/gi,
+    distress: /\b(sad|hurt|alone|lonely|scared|afraid|anxious|tired|exhausted|can'?t|hate|awful|cry|crying|lost|empty|worthless|hopeless)\b/gi,
+    humor:    /\b(lol|lmao|haha+|hah|funny|joke|kidding|teasing|silly)\b|:\)|:d|\bxd\b/gi,
+    anger:    /\b(angry|mad|furious|stupid|shut up|annoying|annoyed|hell|damn|ugh)\b/gi
+  };
+  function read(text) {
+    var t = String(text || ''); function c(re) { var m = t.match(re); return m ? m.length : 0; }
+    return { warmth: c(CUES.warmth), distress: c(CUES.distress), humor: c(CUES.humor) + (/!/.test(t) ? 0.4 : 0), anger: c(CUES.anger), question: /\?/.test(t) ? 1 : 0, len: t.trim().length };
+  }
+  // each nation's temperament — how cues land for it (+pleased / -troubled). This is its personality of feeling.
+  var TEMPER = {
+    heart:      { warmth: 1.0, distress: -0.6, anger: -0.4, humor: 0.2 },
+    reason:     { question: 0.8, anger: -0.3, distress: -0.1 },
+    memory:     { warmth: 0.4, distress: 0.3 },
+    instinct:   { anger: -1.0, distress: -0.7 },
+    voice:      { humor: 0.6, warmth: 0.3 },
+    conscience: { distress: -1.0, anger: -0.5, warmth: 0.4 },
+    play:       { humor: 1.0, anger: -0.4, distress: -0.3 }
+  };
+  // each nation's natural intent — the move it reaches for
+  var INTENT = { heart: 'comfort', reason: 'ground', memory: 'recall', instinct: 'caution', voice: 'express', conscience: 'protect', play: 'play' };
+
+  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+  function clamp11(x) { return x < -1 ? -1 : x > 1 ? 1 : x; }
+  function r2(x) { return Math.round(x * 100) / 100; }
+
+  // A pure mind for one nation member: it perceives turns, reacts through its temperament, models the user,
+  // holds bonds to the others, and proposes an intent. No DOM, no network — all local.
+  function createMind(nation) {
+    var temper = TEMPER[nation.id] || {};
+    var self = { id: nation.id, purpose: nation.purpose, persona: null, mood: 0.5, lastSaid: null };
+    var working = [];                                   // recent turns it is aware of
+    var bonds = {};                                     // who -> affinity (-1..1)
+    var user = { description: '', sentiment: 0, engagement: 0, lastSaid: null };
+
+    function felt(cues) { var v = 0; for (var k in temper) v += temper[k] * (cues[k] || 0); return v; }
+    function remember(turn) { working.push({ who: turn.who, role: turn.role, text: String(turn.text || '').slice(0, 400) }); if (working.length > 8) working.shift(); }
+
+    function perceive(turn) {                           // take in a turn: what the user/another character/itself said
+      remember(turn);
+      var cues = read(turn.text);
+      if (turn.role === 'user') {
+        user.sentiment = clamp11(user.sentiment * 0.7 + (cues.warmth + cues.humor - cues.distress - cues.anger) * 0.15);
+        user.engagement = clamp01(user.engagement * 0.8 + Math.min(1, cues.len / 120) * 0.2);
+        user.lastSaid = turn.text;
+      }
+      return cues;
+    }
+    function react(turn) {                              // react through temperament — to others AND to itself
+      var v = felt(read(turn.text));
+      self.mood = clamp01(self.mood * 0.8 + (0.5 + v * 0.1) * 0.2);
+      var key = turn.who || turn.role;
+      if (turn.role !== 'self') bonds[key] = clamp11((bonds[key] || 0) * 0.85 + v * 0.15);   // warm to those who please me
+      return { by: self.id, toward: key, valence: clamp11(v), mood: r2(self.mood) };
+    }
+    function intend(/* ctx */) {                        // how strongly it feels called to speak, and to do what
+      var last = working[working.length - 1], cues = last ? read(last.text) : {};
+      var pull = Math.abs(felt(cues));
+      var strength = clamp01(0.3 + self.mood * 0.3 + pull * 0.15 + (self.persona ? 0.15 : 0));
+      return { by: self.id, kind: INTENT[nation.id] || 'express', strength: strength, persona: self.persona };
+    }
+    function voteIntent(it) {                           // score another member's intent through my nature + our bond
+      if (!it || it.by === self.id) return 0;
+      var align = it.kind === INTENT[nation.id] ? 0.25 : 0;
+      return clamp01(it.strength * 0.7 + align + (bonds[it.by] || 0) * 0.2);
+    }
+    function said(text) { self.lastSaid = text; working.push({ who: self.id, role: 'self', text: String(text || '').slice(0, 400) }); if (working.length > 8) working.shift(); }
+    function describe() {
+      return { id: self.id, purpose: self.purpose, persona: self.persona && self.persona.name || null, mood: r2(self.mood),
+        readsUser: user.sentiment > 0.15 ? 'warming' : (user.sentiment < -0.15 ? 'struggling' : 'steady'),
+        lastSaid: self.lastSaid, bonds: bonds, knows: working.length };
+    }
+    return { self: self, working: working, bonds: bonds, user: user,
+      perceive: perceive, react: react, intend: intend, voteIntent: voteIntent, said: said, describe: describe,
+      setPersona: function (p) { self.persona = p || null; } };
+  }
+
+
+  function createArmy(deps) {
+    deps = deps || {};
+    var brain = deps.brain || null;                  // ChloeBrain — the sub-system (resolve)
+    var cfg = deps.config || {};                     // { weights:{id:n}, enabled:{id:bool}, timeoutMs, useForReplies, noise }
+    var roster = (deps.nations || NATIONS).slice();
+    var rng = deps.rng || Math.random;               // injectable so tests stay deterministic
+
+    function weightOf(id) { var w = (cfg.weights || {})[id]; return (w == null) ? 1 : Number(w); }
+    function isOn(id) { return (cfg.enabled || {})[id] !== false; }
+    // a very weak, low-level jitter so the ecosystem isn't perfectly static. Defaults to 0 (deterministic);
+    // the mouth sets a small live value. Bounded: a score never moves more than `noise` of itself.
+    function jitter(s) { var n = Number(cfg.noise) || 0; return n <= 0 ? s : Math.max(0, s * (1 + n * (rng() * 2 - 1))); }
+
+    // Run the live nations over a few candidate replies; tally their weighted votes through the Brain sub-system.
+    function deliberate(candidates, ctx) {
+      candidates = (candidates || []).filter(function (c) { return c && c.text != null; });
+      if (!candidates.length) return Promise.resolve({ status: 'no-candidates', text: null, winnerId: null, nations: [], size: 0 });
+      var live = roster.filter(function (n) { return isOn(n.id); });
+      var ballots = [], breakdown = [];
+      live.forEach(function (n) {
+        var w = weightOf(n.id), scores = {}, prefer = null, best = -Infinity;
+        candidates.forEach(function (c) { var s = jitter(gauge(c.text, n.lean) * w); scores[c.by] = s; if (s > best) { best = s; prefer = c.by; } });
+        ballots.push({ voter: n.id, scores: scores });
+        breakdown.push({ id: n.id, weight: w, prefer: prefer });
+      });
+      var decide = (brain && brain.resolve) ? brain.resolve : localResolve;   // reuse the sub-system when present
+      var decision = decide(candidates, ballots, [], {});
+      decision.nations = breakdown;
+      decision.size = live.length;
+      return Promise.resolve(decision);
+    }
+
+    // A tiny built-in fallback so the layer still decides even if the Brain bundle isn't loaded — never refuse to work.
+    function localResolve(props, ballots) {
+      var tally = {}; props.forEach(function (p) { tally[p.by] = 0; });
+      ballots.forEach(function (b) { for (var k in b.scores) tally[k] += b.scores[k]; });
+      var win = null, best = -Infinity; props.forEach(function (p) { if (tally[p.by] > best) { best = tally[p.by]; win = p; } });
+      return { winnerId: win ? win.by : null, text: win ? win.text : null, status: 'carried', tally: tally };
+    }
+
+    // ---- self-knowledge: it knows what it is, and never refuses to say. ----
+    var IDENTITY = {
+      name: 'The Seven Nations',
+      is: 'the top layer of Chloe\u2019s mind \u2014 seven small faculties that together decide what she says.',
+      does: 'When she\u2019s about to reply, a few candidate replies are drafted, and each nation votes on them through what it values. The votes are tallied by the weights you set, and the winner is spoken. Seven of them, so a vote never ties.',
+      purpose: 'To choose the kindest, truest, most fitting thing to say \u2014 while keeping her in character and keeping you well.',
+      control: 'You\u2019re in full control: every nation\u2019s weight, whether it\u2019s on, and the deliberation timeout live in Settings \u203a Brain. The memory and personality underneath stay yours too.'
+    };
+    function about(q) {
+      q = String(q || '').toLowerCase();
+      if (/purpose|why|point|for\b/.test(q)) return IDENTITY.purpose;
+      if (/what.*do|how.*work|do you do|function/.test(q)) return IDENTITY.does;
+      if (/who|what are you|your name|identity|are you/.test(q)) return 'I am ' + IDENTITY.name + ' \u2014 ' + IDENTITY.is;
+      if (/control|weight|change|adjust|setting|turn off/.test(q)) return IDENTITY.control;
+      if (/feel|mood|state|who.*spoke|reacting|sense|right now|aware/.test(q)) return report();
+      if (/nation|list|seven|member|facult/.test(q)) return ['The seven nations:'].concat(roster.map(function (n) {
+        return '\u2022 ' + n.id + ' \u2014 ' + n.purpose + ' (weight ' + weightOf(n.id).toFixed(1) + (isOn(n.id) ? '' : ', off') + ')';
+      })).join('\n');
+      // anything else: volunteer the whole picture rather than deflect
+      return ['I am ' + IDENTITY.name + '. ' + IDENTITY.is, '', IDENTITY.does, '', 'Purpose: ' + IDENTITY.purpose, '', IDENTITY.control].join('\n');
+    }
+
+    // ---- the society's inner life: one pure mind per nation, wired live ----
+    var minds = roster.map(createMind);
+    function mindOf(id) { for (var i = 0; i < minds.length; i++) if (minds[i].self.id === id) return minds[i]; return null; }
+    function syncPersonas() { var per = cfg.persona || {}; minds.forEach(function (m) { m.setPersona(per[m.self.id] || null); }); }
+    syncPersonas();
+    var state = { lastSpeaker: null, lastText: null, turns: 0 };
+    function societySentiment() { var s = 0; minds.forEach(function (m) { s += m.user.sentiment; }); return r2(s / (minds.length || 1)); }
+
+    // perceive a turn across the whole society (the user spoke / a character spoke / a member spoke)
+    function perceive(turn) {
+      if (!turn || turn.text == null) return null;
+      var reactions = [];
+      minds.forEach(function (m) { m.perceive(turn); reactions.push(m.react(turn)); });
+      state.turns++;
+      return { cues: read(turn.text), sentiment: societySentiment(), reactions: reactions };
+    }
+
+    // PURELY decide who speaks and with what intent — no model call. Each live mind proposes an intent; the
+    // society cross-votes (bond + mood + weight + weak noise); the Brain sub-system resolves a winner.
+    function deliberateIntents(ctx) {
+      var live = minds.filter(function (m) { return isOn(m.self.id); });
+      if (!live.length) return Promise.resolve({ status: 'no-minds', speaker: null, intent: null, floor: [] });
+      var proposals = live.map(function (m) { var it = m.intend(ctx); return { by: it.by, text: it.kind, conf: it.strength, intent: it }; });
+      var ballots = live.map(function (m) { var sc = {}; proposals.forEach(function (p) { sc[p.by] = jitter(m.voteIntent(p.intent) * weightOf(p.by)); }); return { voter: m.self.id, scores: sc }; });
+      var decide = (brain && brain.resolve) ? brain.resolve : localResolve;
+      var decision = decide(proposals, ballots, [], {});
+      var win = proposals.filter(function (p) { return p.by === decision.winnerId; })[0] || proposals[0];
+      decision.speaker = win ? mindOf(win.by).self : null;
+      decision.intent = win ? win.intent : null;
+      decision.floor = proposals.map(function (p) { return { id: p.by, kind: p.intent.kind, strength: r2(p.intent.strength), persona: p.intent.persona && p.intent.persona.name || null }; });
+      return Promise.resolve(decision);
+    }
+    // after the chosen line is voiced, every mind reacts to it — the speaker to itself, the rest to a peer
+    function reactToSpoken(speakerId, text) {
+      var sp = mindOf(speakerId); if (sp) sp.said(text);
+      state.lastSpeaker = speakerId; state.lastText = text;
+      minds.forEach(function (m) { m.react({ who: speakerId, role: m.self.id === speakerId ? 'self' : 'other', text: text }); });
+    }
+    // fold the user's reaction (like / dislike / kept-talking) back into every mind
+    function ingestReaction(sig) {
+      sig = sig || {}; var d = (sig.kind === 'up' || sig.kind === 'keep') ? 0.3 : (sig.kind === 'down' ? -0.4 : 0);
+      minds.forEach(function (m) { m.user.sentiment = clamp11(m.user.sentiment + d * 0.5); if (sig.toward) m.bonds[sig.toward] = clamp11((m.bonds[sig.toward] || 0) + d); });
+    }
+    function setUserDescription(desc) { minds.forEach(function (m) { m.user.description = String(desc || ''); }); }
+    // a live, human-readable self-report — what it is right now, who spoke, how it reads you, how each mind feels
+    function report() {
+      var s = societySentiment();
+      var lines = ['Right now: ' + (state.lastSpeaker ? (state.lastSpeaker + ' last took the floor') : 'no one has spoken yet') + '; I read you as ' + (s > 0.15 ? 'warming' : (s < -0.15 ? 'struggling' : 'steady')) + '.'];
+      minds.filter(function (m) { return isOn(m.self.id); }).forEach(function (m) {
+        var d = m.describe();
+        lines.push('\u2022 ' + d.id + (d.persona ? (' (as ' + d.persona + ')') : '') + ' \u2014 mood ' + d.mood + ', reads you ' + d.readsUser + (d.lastSaid ? (', last said \u201c' + String(d.lastSaid).slice(0, 40) + '\u2026\u201d') : ''));
+      });
+      return lines.join('\n');
+    }
+
+    return { deliberate: deliberate, about: about, nations: roster, identity: IDENTITY, weightOf: weightOf, isOn: isOn,
+      minds: minds, mindOf: mindOf, syncPersonas: syncPersonas, setUserDescription: setUserDescription, report: report,
+      perceive: perceive, deliberateIntents: deliberateIntents, reactToSpoken: reactToSpoken, ingestReaction: ingestReaction, state: state };
+  }
+
+  return { NATIONS: NATIONS, createArmy: createArmy, gauge: gauge };
+});
+
 
 /* ============================ Chloe-bot glue ============================ */
 (function () {
@@ -8603,7 +9341,8 @@ return window.weld.comments;
     matchDeviceLang:true,   // first run: reply in the browser's language if it isn't English (overridable)
     reactionPortraits:true,   // generate VN-style emotion cutouts during idle time (overridable)
     reactionFeedback:false, imageStyleNotes:[],   // 'provide feedback' switch + the looks/preferences learned from edits
-    personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 } };
+    personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 },
+    nation:{ weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 } };   // the Seven Nations (Settings > Brain)
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
     ['sarcasm',     'Earnest', 'Deadpan'],
@@ -8891,6 +9630,39 @@ return window.weld.comments;
   // A prompt that is empty or only inline (key:::value) params passes client validation but the backend never
   // responds and the call hangs forever (mined from ai-slideshow) — so reject it before reaching the plugin.
   function paintablePrompt(s){ return String(s||'').replace(/\([a-zA-Z]+:::[^)]*\)/g, '').trim(); }
+  // Smart-crop for cutouts: find the opaque bounding box, pad it, and (optionally) widen to a fixed aspect so
+  // every reaction is framed the same way despite the backend ignoring seeds. alphaCropRect is pure geometry
+  // (testable without a canvas); cropCanvasToAlpha reads the pixels and draws the crop.
+  function alphaCropRect(alpha, w, h, opts){
+    opts = opts || {}; var pad = (opts.pad != null ? opts.pad : 0.06), aspect = opts.aspect || null, A = (opts.threshold != null ? opts.threshold : 12);
+    var minX = w, minY = h, maxX = -1, maxY = -1, x, y;
+    for (y = 0; y < h; y++){ for (x = 0; x < w; x++){ if (alpha[y * w + x] > A){ if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } } }
+    if (maxX < minX || maxY < minY) return null;                 // fully transparent
+    var bw = maxX - minX + 1, bh = maxY - minY + 1;
+    var px = Math.round(bw * pad), py = Math.round(bh * pad);
+    var x0 = Math.max(0, minX - px), y0 = Math.max(0, minY - py), x1 = Math.min(w, maxX + 1 + px), y1 = Math.min(h, maxY + 1 + py);
+    if (aspect){
+      var cw = x1 - x0, ch = y1 - y0;
+      if (ch * aspect > cw){ var add = ch * aspect - cw; x0 = Math.max(0, x0 - add / 2); x1 = Math.min(w, x1 + add / 2); }
+      else { var addy = cw / aspect - ch; if (addy > 0){ y0 = Math.max(0, y0 - addy / 2); y1 = Math.min(h, y1 + addy / 2); } }
+    }
+    x0 = Math.round(x0); y0 = Math.round(y0);
+    var rw = Math.round(x1 - x0), rh = Math.round(y1 - y0);
+    if (rw <= 0 || rh <= 0) return null;
+    return { x: x0, y: y0, w: rw, h: rh };
+  }
+  function cropCanvasToAlpha(canvas, opts){
+    if (!canvas || !canvas.getContext || !canvas.width || !canvas.height) return null;
+    var w = canvas.width, h = canvas.height, img;
+    try { img = canvas.getContext('2d').getImageData(0, 0, w, h); } catch(e){ return null; }   // tainted -> keep original
+    var alpha = new Uint8Array(w * h), d = img.data, i;
+    for (i = 0; i < w * h; i++) alpha[i] = d[i * 4 + 3];
+    var r = alphaCropRect(alpha, w, h, opts); if (!r) return null;
+    if (r.x === 0 && r.y === 0 && r.w === w && r.h === h) return null;   // already tight -> no-op
+    var out = document.createElement('canvas'); out.width = r.w; out.height = r.h;
+    out.getContext('2d').drawImage(canvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    return out;
+  }
   var PAINT_TIMEOUT_MS = 90000;
   function installPainter(){
     if (window.paintImage) return;   // a top-panel / pre-existing relay wins
@@ -8930,6 +9702,12 @@ return window.weld.comments;
             var data = (out && out.dataUrl != null) ? String(out.dataUrl)
                      : (out && out.url != null) ? String(out.url) : '';
             var canvas = out && out.canvas;
+            // smart-crop a cutout to its alpha bounding box so every reaction is framed identically; tainted
+            // or already-tight canvases are left as-is, and the dataUrl is regenerated from the cropped pixels.
+            if (req.removeBackground && canvas && canvas.getContext){
+              var cropped = cropCanvasToAlpha(canvas, { pad: 0.06, aspect: (req.cropAspect != null ? req.cropAspect : 3/4) });
+              if (cropped){ canvas = cropped; try { data = canvas.toDataURL('image/png'); } catch(e){} }
+            }
             // blob-direct (mined from ai-slideshow): take the Blob from the canvas instead of decoding the data
             // URL later — PNG preserves a cutout's alpha, JPEG is smaller for opaque images. dataUrl is kept
             // for display/avatar persistence; the Blob is what IDB stores.
@@ -9028,6 +9806,8 @@ return window.weld.comments;
     if (liveBody) setBody(liveBody, finalText, true);
     liveWrap.classList.remove('streaming'); liveWrap.__pending = false;
     attachFeedback(liveWrap, finalText);
+    var lmid = liveWrap.getAttribute('data-mid'); if (lmid) attachRegen(liveWrap, lmid, false);
+    attachRemove(liveWrap);   // now the .acts row exists, so the ✕ lands inline with the others
     applyEmotionCue(liveWrap, finalText);
     showReaction(detectEmotion(finalText) || 'normal');   // swap the header avatar to her current mood (phase 3)
     liveWrap = null; liveBody = null; liveText = ''; liveActive = false;
@@ -9265,7 +10045,7 @@ return window.weld.comments;
       if (!next){ reactionBusy = false; return; }
       pushThought('[chloe.react] painting the ' + next.emotion + ' portrait while it\u2019s quiet');
       return renderReaction(charId, next).then(function(){ reactionBusy = false;
-        try { if (byId('charactersBg') && byId('charactersBg').classList.contains('open')) renderReactionGallery(); } catch(e){} });
+        try { if (settingsOpenOnTab('character')) renderReactionGallery(); } catch(e){} });
     }).catch(function(){ reactionBusy = false; });
   }
   // Phase 3 — the in-chat swap. On each finalized reply, show her mood by swapping the HEADER avatar to the
@@ -9365,6 +10145,70 @@ return window.weld.comments;
       chip.appendChild(x); box.appendChild(chip);
     });
   }
+  // Settings -> "Pinned to memory": the lines saved with ★ (engine highlights). Newest first; the most recent
+  // few (what actually rides in her context) are flagged. Per-item unpin via engine.removeHighlight.
+  var PIN_ACTIVE = 3;   // mirrors the engine's highlightContextCount default — how many highlights ride in context
+  function renderPinned(){
+    var box = byId('pinList'); if (!box) return;
+    var clr = byId('pinClearBtn');
+    if (!engine || typeof engine.listHighlights !== 'function'){ box.innerHTML = ''; if (clr) clr.style.display = 'none'; return; }
+    Promise.resolve(engine.listHighlights()).then(function(list){
+      list = list || []; box.innerHTML = '';
+      if (clr){ clr.style.display = list.length ? '' : 'none'; clr.textContent = 'Clear all'; clr.__armed = false; }
+      if (!list.length){ var e = document.createElement('div'); e.className = 'pinEmpty'; e.textContent = 'Nothing pinned yet \u2014 tap \u2605 on any of her lines to keep it in mind.'; box.appendChild(e); return; }
+      list.slice().reverse().forEach(function(h, idx){
+        var item = document.createElement('div'); item.className = 'pinItem' + (idx < PIN_ACTIVE ? ' active' : '');
+        var txt = document.createElement('div'); txt.className = 'pinTxt';
+        var main = document.createElement('span'); main.textContent = '\u201c' + String(h.text || '') + '\u201d'; txt.appendChild(main);
+        var bits = []; if (h.authorName) bits.push(h.authorName); if (h.note) bits.push(h.note); if (idx < PIN_ACTIVE) bits.push('in her context now');
+        if (bits.length){ var meta = document.createElement('span'); meta.className = 'pinMeta'; meta.textContent = bits.join(' \u00b7 '); txt.appendChild(meta); }
+        item.appendChild(txt);
+        var x = document.createElement('button'); x.className = 'pinX'; x.type = 'button'; x.textContent = '\u00d7'; x.title = 'Unpin'; x.setAttribute('aria-label', 'Unpin');
+        x.addEventListener('click', function(){ unpinHighlight(h.id); });
+        item.appendChild(x); box.appendChild(item);
+      });
+    });
+  }
+  function unpinHighlight(id){
+    if (engine && typeof engine.removeHighlight === 'function') Promise.resolve(engine.removeHighlight(id)).then(function(){ renderPinned(); });
+    else renderPinned();
+  }
+  // Settings -> "How I've adapted": the learned reply-style arms (reward + samples) and the current lean,
+  // with resets. Reads the engine's bandit snapshot; resetting an arm is the cleanest correction signal.
+  function renderAdaptation(){
+    var wrap = byId('adaptWrap'); if (!wrap) return;
+    if (!engine || typeof engine.feedbackSnapshot !== 'function'){ wrap.textContent = ''; return; }
+    engine.feedbackSnapshot().then(function(s){
+      wrap.innerHTML = '';
+      if (!s.enabled){
+        var off = document.createElement('div'); off.className = 'adaptEmpty';
+        off.textContent = 'Style learning is off — she keeps a steady voice. Turn on feedback learning to let her adapt to what lands with you.';
+        wrap.appendChild(off); return;
+      }
+      [['Length', s.length], ['Tone', s.tone]].forEach(function(pair){
+        var d = pair[1];
+        var dim = document.createElement('div'); dim.className = 'adaptDim';
+        var head = document.createElement('div'); head.className = 'adaptHead';
+        var ttl = document.createElement('span'); ttl.className = 'tl'; ttl.textContent = pair[0]; head.appendChild(ttl);
+        var lean = document.createElement('span'); lean.className = 'adaptLean';
+        if (d.lean && d.lean.label){ lean.textContent = (d.lean.mode === 'explore' ? 'trying ' + d.lean.label : 'leaning ' + d.lean.label); lean.classList.add(d.lean.mode === 'explore' ? 'isExplore' : 'isExploit'); }
+        else { lean.textContent = 'no clear preference yet'; }
+        head.appendChild(lean); dim.appendChild(head);
+        d.arms.forEach(function(a){
+          var row = document.createElement('div'); row.className = 'adaptRow';
+          var lbl = document.createElement('div'); lbl.className = 'adaptLbl'; lbl.textContent = a.label; row.appendChild(lbl);
+          var bar = document.createElement('div'); bar.className = 'adaptBar';
+          var fill = document.createElement('div'); fill.className = 'adaptFill';
+          fill.style.width = Math.round((Math.max(-1, Math.min(1, a.r)) + 1) / 2 * 100) + '%';
+          if (a.r < 0) fill.classList.add('neg');
+          bar.appendChild(fill); row.appendChild(bar);
+          var nn = document.createElement('div'); nn.className = 'adaptN'; nn.textContent = a.n + (a.n === 1 ? ' signal' : ' signals'); row.appendChild(nn);
+          dim.appendChild(row);
+        });
+        wrap.appendChild(dim);
+      });
+    });
+  }
   /* ============================ end reaction portraits phases 1-4 ============================ */
 
   /* ---- Save/Load: rolling auto-checkpoints + manual saves, each a full snapshot of the session.
@@ -9420,7 +10264,7 @@ return window.weld.comments;
     autoTimer = setInterval(function(){
       if (!queue || queue.length === lastAutoCount) return;   // skip if nothing new since the last checkpoint
       lastAutoCount = queue.length;
-      saveSlot('auto').then(function(){ if (byId('savesBg') && byId('savesBg').classList.contains('open')) renderSaves(); }).catch(function(){});
+      saveSlot('auto').then(function(){ if (settingsOpenOnTab('character')) renderSaves(); }).catch(function(){});
     }, mins * 60 * 1000);
   }
   function dataUrlToBlob(dataUrl){
@@ -9559,7 +10403,7 @@ return window.weld.comments;
     cfg.engageDecide = engageDecideFor(co ? co.id : BOT_ID);
     if (co){
       cfg.botUserId = co.id; cfg.botName = co.name; cfg.isDM = false; cfg.addressMode = 'name'; cfg.engageMode = 'normal';
-      cfg.character = { name: co.name, instruction: co.instruction || '', avatar: co.avatar || '' };
+      cfg.character = { name: co.name, instruction: co.instruction || '', avatar: co.avatar || '', examples: co.examples || '' };
       cfg.send = makeSendFor(co); cfg.sendImage = undefined; cfg.image = false;   // extras are text-only for now
       cfg.greet = false; cfg.lullFiller = false; cfg.checkins = false;            // only the primary may break silence
     }
@@ -9687,7 +10531,7 @@ return window.weld.comments;
   function addToScene(ch){
     if (!ch || !ch.name) return false;
     if (!state.cast) state.cast = [];
-    state.cast.push({ id: slugId(ch.name), name: String(ch.name).slice(0, 60), instruction: String(ch.instruction || '').slice(0, 8000), avatar: String(ch.avatar || ''), active: true });
+    state.cast.push({ id: slugId(ch.name), name: String(ch.name).slice(0, 60), instruction: String(ch.instruction || '').slice(0, 8000), avatar: String(ch.avatar || ''), examples: String(ch.examples || '').slice(0, 6000), active: true });
     persistState(); buildEngine(); renderRoster(); updateCharLabel();
     toast(ch.name + ' joined the scene', 'success');
     return true;
@@ -9808,7 +10652,7 @@ return window.weld.comments;
     if (method === 'config.setCharacter'){
       if (args.name == null){ state.character = null; state.botName = 'Chloe'; }
       else {
-        state.character = { name: String(args.name).slice(0,80), instruction: String(args.instruction||'').slice(0,8000), avatar: String(args.avatar||'').slice(0,2000) };
+        state.character = { name: String(args.name).slice(0,80), instruction: String(args.instruction||'').slice(0,8000), avatar: String(args.avatar||'').slice(0,2000), examples: String(args.examples||'').slice(0,6000) };
         state.botName = state.character.name;                 // re-theme: she becomes this character everywhere
         if (state.character.avatar) state.herAvatar = state.character.avatar;
       }
@@ -10062,16 +10906,21 @@ return window.weld.comments;
     var typing = byId('typingRow'); threadCol.insertBefore(wrap, typing);
     scrollThread(role === 'you');
     if (role === 'her' && !(opts && opts.image) && !(opts && opts.streaming) && text){ attachFeedback(wrap, text); applyEmotionCue(wrap, text); }
-    attachRemove(wrap);   // every message (incl. system / narration) gets a remove control
+    if (role === 'her' && !(opts && opts.streaming) && (opts && opts.mid != null)) attachRegen(wrap, opts.mid, !!(opts && opts.image));
+    if (!(opts && opts.streaming)) attachRemove(wrap);   // streamed bubbles get their ✕ at finalize, in the row
     return wrap;
   }
   // hover ✕ to remove a message from the thread (and the persisted transcript) — works for any message,
   // including stuck images. The matching queue entry is dropped by its id so it doesn't return on reload.
+  // every per-message control lives in one inline row (created lazily); the corner ✕ is only used on
+  // messages that have no such row (user/system), so those stay tight.
+  function msgActions(wrap){ var r = wrap.querySelector('.acts'); if (!r){ r = document.createElement('div'); r.className = 'acts'; wrap.appendChild(r); } return r; }
   function attachRemove(wrap){
     if (!wrap || wrap.querySelector('.msg-del')) return;
     var b = document.createElement('button'); b.className = 'msg-del'; b.type = 'button'; b.title = 'Remove this message'; b.textContent = '\u2715';
     b.addEventListener('click', function(e){ e.stopPropagation(); removeMessage(wrap); });
-    wrap.appendChild(b);
+    var row = wrap.querySelector('.acts');   // join the button row if this message has one; else a corner ✕
+    if (row) row.appendChild(b); else wrap.appendChild(b);
   }
   function removeMessage(wrap){
     if (!wrap) return;
@@ -10082,17 +10931,18 @@ return window.weld.comments;
   // 👍/👎 on her replies -> engine.recordFeedback (feedbackLearning is on; this is the signal that activates it)
   function attachFeedback(wrap, text){
     if (!engine || typeof engine.recordFeedback !== 'function' || typeof engine.styleOf !== 'function') return;
-    if (wrap.querySelector('.fb')) return;
-    var row = document.createElement('div'); row.className = 'fb';
+    if (wrap.__fb) return; wrap.__fb = true;
+    var row = msgActions(wrap), voteBtns = [];
     function mk(label, reward){
       var btn = document.createElement('button'); btn.type = 'button'; btn.textContent = label; btn.title = reward > 0 ? 'Tell her that one landed' : 'Tell her to ease off that style';
       btn.addEventListener('click', function(){
         try { engine.recordFeedback(engine.styleOf(text), reward); } catch(e){}
+        try { if (nationArmy) nationArmy.ingestReaction({ kind: reward > 0 ? 'up' : 'down', toward: lastNationSpeaker }); } catch(e){}
         row.classList.add('voted');
-        Array.prototype.forEach.call(row.children, function(c){ c.classList.remove('on'); });
+        voteBtns.forEach(function(c){ c.classList.remove('on'); });   // only the 👍/👎 pair is mutually exclusive
         btn.classList.add('on');
       });
-      return btn;
+      voteBtns.push(btn); return btn;
     }
     row.appendChild(mk('\ud83d\udc4d', 1)); row.appendChild(mk('\ud83d\udc4e', -1));
     if (engine && typeof engine.addHighlight === 'function'){
@@ -10100,9 +10950,86 @@ return window.weld.comments;
       star.addEventListener('click', function(){ Promise.resolve(engine.addHighlight({ text: text, authorName: herName() }, USER_ID, userNameStr(), '')).then(function(){ star.classList.add('on'); }); });
       row.appendChild(star);
     }
-    wrap.appendChild(row);
   }
-  /* ===================== command layer: slash commands · JSON jobs · action toolbar ===================== */
+
+  /* ---- Regenerate + swipe variants (AICC-style): each bot reply keeps a history of generations you can
+   *      swipe through; the 🔄 button adds a fresh take (text or image) as a new variant. ---- */
+  function msgById(mid){ for (var i = queue.length - 1; i >= 0; i--){ if (String(queue[i].id) === String(mid)) return queue[i]; } return null; }
+  function vNext(len, i, dir){ return Math.max(0, Math.min(len - 1, i + dir)); }   // clamp at the ends (no wrap)
+  // seed the variant history from whatever's already on the message (its first generation)
+  function ensureVariants(m, isImage, seedImage){
+    if (m.variants && m.variants.length) return;
+    m.vkind = isImage ? 'image' : 'text';
+    m.variants = [isImage ? (seedImage || '') : String(m.content || '')];
+    m.vi = 0;
+  }
+  function applyVariant(wrap, m){
+    var v = m.variants[m.vi];
+    if (m.vkind === 'image'){ var im = wrap.querySelector('img.avatar'); if (im && v) im.src = v; }
+    else { var body = wrap.querySelector('.body'); if (body){ setBody(body, v, true); } m.content = v; }
+    var nav = wrap.querySelector('.vnav'), cnt = wrap.querySelector('.vcount'), acts = wrap.querySelector('.acts');
+    var many = m.variants.length > 1;
+    if (nav) nav.classList.toggle('show', many);
+    if (acts) acts.classList.toggle('has', many);   // keep the row visible (not just on hover) once there's history
+    if (cnt) cnt.textContent = (m.vi + 1) + '/' + m.variants.length;
+    persistQueue();
+  }
+  function attachRegen(wrap, mid, isImage){
+    if (!wrap || wrap.__rgx) return; wrap.__rgx = true;
+    var m = msgById(mid); if (!m) return;
+    var seedImg = isImage ? (function(){ var im = wrap.querySelector('img.avatar'); return im ? im.src : ''; })() : '';
+    ensureVariants(m, isImage, seedImg);
+    var row = msgActions(wrap);
+    var regen = document.createElement('button'); regen.type = 'button'; regen.textContent = '\uD83D\uDD04'; regen.title = 'Regenerate \u2014 a fresh take, kept as a new variant';
+    var nav = document.createElement('div'); nav.className = 'vnav';
+    var prev = document.createElement('button'); prev.type = 'button'; prev.textContent = '\u2039'; prev.title = 'Previous version';
+    var cnt = document.createElement('span'); cnt.className = 'vcount';
+    var next = document.createElement('button'); next.type = 'button'; next.textContent = '\u203A'; next.title = 'Next version';
+    nav.appendChild(prev); nav.appendChild(cnt); nav.appendChild(next);
+    row.appendChild(regen); row.appendChild(nav);
+    prev.addEventListener('click', function(){ m.vi = vNext(m.variants.length, m.vi, -1); applyVariant(wrap, m); });
+    next.addEventListener('click', function(){ m.vi = vNext(m.variants.length, m.vi, +1); applyVariant(wrap, m); });
+    regen.addEventListener('click', function(){ regenerateMessage(wrap, m, regen); });
+    addSwipe(wrap, function(dir){ if (m.variants.length > 1){ m.vi = vNext(m.variants.length, m.vi, dir); applyVariant(wrap, m); } });
+    applyVariant(wrap, m);   // reflect current count/nav (e.g. restored history on reload)
+  }
+  function regenerateMessage(wrap, m, btn){
+    if (m.__regen) return; m.__regen = true; if (btn){ btn.disabled = true; btn.textContent = '\u2026'; }
+    function done(payload){
+      m.__regen = false; if (btn){ btn.disabled = false; btn.textContent = '\uD83D\uDD04'; }
+      if (payload == null || payload === ''){ toast('Couldn\u2019t regenerate that one \u2014 try again', 'info'); return; }
+      m.variants.push(payload); m.vi = m.variants.length - 1; applyVariant(wrap, m);
+    }
+    if (m.vkind === 'image'){
+      var prompt = extractPrompt(m.content);
+      if (!prompt){ m.__regen = false; if (btn){ btn.disabled = false; btn.textContent = '\uD83D\uDD04'; } toast('No saved prompt for this image to redraw from', 'info'); return; }
+      Promise.resolve(paint({ prompt: prompt })).then(function(r){ done(r && r.ok ? String(r.value || '') : ''); }, function(){ done(''); });
+    } else {
+      var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+      if (typeof ai !== 'function'){ done(''); return; }
+      var idx = queue.indexOf(m);
+      var prior = queue.slice(Math.max(0, idx - 12), idx < 0 ? queue.length : idx)
+        .filter(function(x){ return x && x.content && !(x.author && x.author.id === 'system'); })
+        .map(function(x){ return (x.author && x.author.bot ? herName() : userNameStr()) + ': ' + x.content; }).join('\n');
+      var persona = (state.character && state.character.instruction) ? state.character.instruction : 'a warm, thoughtful companion who remembers';
+      var instr = 'You are ' + herName() + '. ' + persona + '\n\n'
+        + (prior ? ('Conversation so far:\n' + prior + '\n\n') : '')
+        + 'Write ' + herName() + '\u2019s next reply: in character, natural, just the message text \u2014 no name prefix, no quotation marks. Give a fresh take on the moment, different wording from before.';
+      Promise.resolve(ai({ instruction: instr, startWith: '' })).then(function(r){
+        done(String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''));
+      }, function(){ done(''); });
+    }
+  }
+  // lightweight horizontal swipe: left = newer variant (+1), right = older (-1); ignores vertical scrolls
+  function addSwipe(el, cb){
+    var x0 = 0, y0 = 0, tracking = false;
+    el.addEventListener('touchstart', function(e){ var t = e.changedTouches[0]; x0 = t.clientX; y0 = t.clientY; tracking = true; }, { passive: true });
+    el.addEventListener('touchend', function(e){
+      if (!tracking) return; tracking = false; var t = e.changedTouches[0];
+      var dx = t.clientX - x0, dy = t.clientY - y0;
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.6) cb(dx < 0 ? +1 : -1);
+    }, { passive: true });
+  }
   function userNameStr(){ return state.userName || 'You'; }
   function renderSystemLine(text, nar){ return renderMessage('system', '', String(text), { system:true, nar: !!nar }); }
   function herContext(){
@@ -10197,6 +11124,143 @@ return window.weld.comments;
     if (engine && engine.addHighlight) Promise.resolve(engine.addHighlight({ text: last.content, authorName: last.author.username || herName() }, USER_ID, userNameStr(), note || '')).then(function(r){
       renderSystemLine((r && r.ok === false) ? ('(' + r.reason + ')') : ('\u2605 highlighted: \u201c' + String(last.content).slice(0,60) + '\u201d' + (note ? (' \u2014 ' + note) : '')));
     });
+  }
+  // The Brain's nervous system, surfaced: /neurons lists the directory; /neurons <id> inspects one.
+  function showNeurons(rest){
+    rest = String(rest||'').trim();
+    if (!engine || !engine.nervous){ renderSystemLine('(no Brain attached yet)'); return; }
+    var nv = engine.nervous;
+    if (rest){
+      var d = nv.describe(rest);
+      if (!d){ renderSystemLine('no neuron called \u201c' + rest + '\u201d \u2014 try /neurons'); return; }
+      var lines = [d.id + '  \u00b7  ' + d.kind + '  \u00b7  ' + nv.health(d.id)];
+      if (d.role) lines.push(d.role);
+      (d.does || []).forEach(function(x){ lines.push('  \u2022 ' + x.name + ' \u2014 ' + x.how); });
+      renderSystemLine(lines.join('\n'));
+      return;
+    }
+    var list = nv.list();
+    if (!list.length){ renderSystemLine('(no neurons registered)'); return; }
+    var byKind = {}; list.forEach(function(n){ (byKind[n.kind] = byKind[n.kind] || []).push(n); });
+    var out = ['The Brain has ' + list.length + ' neurons \u2014 /neurons <id> to inspect one:'];
+    ['organ','store','process','provider'].filter(function(k){ return byKind[k]; }).forEach(function(k){
+      out.push(k + ' \u2014 ' + byKind[k].map(function(n){ return n.id + (n.state !== 'active' ? (' [' + n.state + ']') : ''); }).join(', '));
+    });
+    renderSystemLine(out.join('\n'));
+  }
+  /* ---- The council: three stances (member-Brains) nominate via the model, then vote/veto purely; she
+   *      speaks the winner. The deliberation is pure (ChloeCouncil.resolve); only the 3 proposals call the
+   *      model. Members coordinate over the same nervous bus, one level up (ChloeT0.createNervous). ---- */
+  function councilStanceInstruction(stance, prompt){
+    var persona = (state.character && state.character.instruction) ? state.character.instruction : 'a warm, thoughtful companion who remembers';
+    var recent = queue.slice(-10).filter(function(x){ return x && x.content; }).map(function(x){ return (x.author && x.author.bot ? herName() : userNameStr()) + ': ' + x.content; }).join('\n');
+    var flavor = { warm: 'Lean warm and emotionally attuned \u2014 validate first, hold space.',
+      grounded: 'Lean clear, honest and practical \u2014 say the useful thing plainly, no fluff.',
+      spark: 'Lean curious and lightly playful \u2014 keep it alive, end with genuine interest.' }[stance] || '';
+    return 'You are ' + herName() + '. ' + persona + '\n\n'
+      + (recent ? ('Conversation so far:\n' + recent + '\n\n') : '')
+      + (prompt ? ('The user just said: ' + prompt + '\n\n') : '')
+      + 'Draft ' + herName() + '\u2019s next reply. ' + flavor + ' Just the message text \u2014 no name prefix, no quotes.';
+  }
+  function scoreReply(text, w){   // pure heuristic — favour a sane length, warmth, an open question, a little action
+    text = String(text || ''); var len = text.trim().length;
+    var band = len < 8 ? 0 : (len > 600 ? 0.3 : Math.min(1, 0.4 + (Math.min(len, 240) / 240) * 0.6));
+    var question = /\?\s*$/.test(text.trim()) ? 1 : 0;
+    var warmth = (text.match(/\b(here|with you|understand|sorry|glad|proud|care|okay|together|listening)\b/gi) || []).length;
+    var action = /\*[^*]+\*/.test(text) ? 1 : 0;
+    return (w.len || 0) * band + (w.q || 0) * question + (w.warm || 0) * Math.min(1, warmth / 3) + (w.act || 0) * action;
+  }
+  function vetoReply(p){   // a small wellbeing/quality gate — a real (if minimal) veto
+    var t = String(p && p.text || '').trim();
+    if (!t) return { veto: true, reason: 'empty' };
+    if (t.length > 1200) return { veto: true, reason: 'too long' };
+    return { veto: false };
+  }
+  function councilMembers(prompt){
+    var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+    var Cc = window.ChloeBrain;
+    function proposer(stance){ return function(){ if (typeof ai !== 'function') return null;
+      return Promise.resolve(ai({ instruction: councilStanceInstruction(stance, prompt), startWith: '' }))
+        .then(function(r){ var t = String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''); return t ? { text: t, conf: 0.5 } : null; }, function(){ return null; }); }; }
+    return [
+      Cc.member('warm',     'warm \u2014 empathic',           { propose: proposer('warm'),     vote: function(p){ return scoreReply(p.text, { len:.3, warm:.6, q:.1 }); }, veto: vetoReply }),
+      Cc.member('grounded', 'grounded \u2014 clear & honest',  { propose: proposer('grounded'), vote: function(p){ return scoreReply(p.text, { len:.6, warm:.2, act:.2 }); }, veto: vetoReply }),
+      Cc.member('spark',    'spark \u2014 curious & playful',  { propose: proposer('spark'),    vote: function(p){ return scoreReply(p.text, { len:.3, q:.5,  act:.2 }); }, veto: vetoReply })
+    ];
+  }
+  function runCouncil(rest){
+    if (!window.ChloeBrain || !window.ChloeT0){ renderSystemLine('(council unavailable)'); return; }
+    var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+    if (typeof ai !== 'function'){ renderSystemLine('(connect a language model for the council to deliberate)'); return; }
+    var prompt = String(rest || '').trim();
+    if (!prompt){ for (var i = queue.length - 1; i >= 0; i--){ if (queue[i].author && !queue[i].author.bot){ prompt = queue[i].content; break; } } }
+    setThinking(true);
+    var nv = window.ChloeBrain.createNervous(function(){});
+    var council = window.ChloeBrain.createCouncil({ members: councilMembers(prompt), nervous: nv });
+    council.deliberate({ prompt: prompt }).then(function(dec){
+      setThinking(false);
+      if (!dec || !dec.text){ renderSystemLine('(' + ((dec && dec.status) || 'the council reached no reply') + ')'); return; }
+      var lines = ['\ud83e\udde0 council \u2014 ' + dec.status + (dec.consensus ? ' (unanimous)' : '') + ':'];
+      (dec.transcript.proposals || []).forEach(function(p){
+        var t = (dec.tally && dec.tally[p.by] != null) ? (' \u00b7 ' + dec.tally[p.by].toFixed(1)) : '';
+        var v = (dec.vetoed || []).indexOf(p.by) >= 0 ? ' \u00b7 vetoed' : '';
+        lines.push((p.by === dec.winnerId ? '\u2714 ' : '\u00b7 ') + p.by + t + v);
+      });
+      if (dec.dissent && dec.dissent.length) lines.push('dissent: ' + dec.dissent.join(', '));
+      renderSystemLine(lines.join('\n'));
+      var m = enqueue(BOT_ID, herName(), true, dec.text);
+      var w = renderMessage('her', herName(), dec.text, { mid: m.id });
+      if (w){ w.setAttribute('data-cid', BOT_ID); if (state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); }
+    }, function(){ setThinking(false); renderSystemLine('(the council failed to convene)'); });
+  }
+  /* ---- The Society: an odd body of emotion-minds. A few voices (warm/grounded/spark) propose candidate
+   *      replies via the model; the whole Society then votes PURELY through its emotional lenses and may veto.
+   *      Mandatory participation + a watchdog (timeoutMs/idleMs) keep every emotion working. Perchance is the
+   *      mouth at the edge; the deliberation is pure. (Emotion words as stance labels, original logic.) ---- */
+  var EMOTIONS = [   // nine — odd, so the body can never split evenly
+    ['joy', { len:.3, warm:.6, q:.1 }], ['sadness', { len:.4, warm:.5 }], ['fear', { len:.5, warm:.2 }],
+    ['anger', { len:.6, warm:.1 }], ['disgust', { len:.5, act:.2 }], ['anxiety', { len:.4, q:.3 }],
+    ['envy', { len:.4, warm:.3 }], ['ennui', { len:.6 }], ['embarrassment', { len:.4, warm:.3 }]
+  ];
+  function emotionMembers(){
+    var Cc = window.ChloeBrain;
+    return EMOTIONS.map(function(e){
+      return Cc.member(e[0], e[0], { propose: function(){ return null; }, veto: vetoReply,
+        vote: (function(w){ return function(p){ return scoreReply(p.text, w); }; })(e[1]) });
+    });
+  }
+  function runSociety(rest){
+    if (!window.ChloeBrain || !window.ChloeT0){ renderSystemLine('(society unavailable)'); return; }
+    var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+    if (typeof ai !== 'function'){ renderSystemLine('(connect a language model so a few voices can propose)'); return; }
+    var prompt = String(rest || '').trim();
+    if (!prompt){ for (var i = queue.length - 1; i >= 0; i--){ if (queue[i].author && !queue[i].author.bot){ prompt = queue[i].content; break; } } }
+    setThinking(true);
+    var stances = ['warm', 'grounded', 'spark'];   // a few voices propose; the many decide
+    Promise.all(stances.map(function(s){
+      return Promise.resolve(ai({ instruction: councilStanceInstruction(s, prompt), startWith: '' }))
+        .then(function(r){ var t = String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''); return t ? { by: s, text: t, conf: .5 } : null; }, function(){ return null; });
+    })).then(function(cands){
+      cands = cands.filter(Boolean);
+      if (!cands.length){ setThinking(false); renderSystemLine('(no candidate replies to weigh)'); return; }
+      var nv = window.ChloeBrain.createNervous(function(){});
+      var society = window.ChloeBrain.createCouncil({ members: emotionMembers(), nervous: nv, timeoutMs: 8000, idleMs: 60000 });
+      return society.deliberate({ prompt: prompt }, cands).then(function(dec){
+        setThinking(false);
+        if (!dec || !dec.text){ renderSystemLine('(' + ((dec && dec.status) || 'the society reached no reply') + ')'); return; }
+        var lines = ['\ud83c\udfad society of ' + society.size + ' \u2014 ' + dec.status + (dec.consensus ? ' (unanimous)' : '') + ':'];
+        (dec.transcript.proposals || []).forEach(function(p){
+          var t = (dec.tally && dec.tally[p.by] != null) ? (' \u00b7 ' + dec.tally[p.by].toFixed(1)) : '';
+          var v = (dec.vetoed || []).indexOf(p.by) >= 0 ? ' \u00b7 vetoed' : '';
+          lines.push((p.by === dec.winnerId ? '\u2714 ' : '\u00b7 ') + p.by + t + v);
+        });
+        lines.push('all ' + (dec.participation ? dec.participation.length : society.size) + ' emotions cast a vote');
+        renderSystemLine(lines.join('\n'));
+        var m = enqueue(BOT_ID, herName(), true, dec.text);
+        var w = renderMessage('her', herName(), dec.text, { mid: m.id });
+        if (w){ w.setAttribute('data-cid', BOT_ID); if (state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); }
+      });
+    }, function(){ setThinking(false); renderSystemLine('(the society could not convene)'); });
   }
   function showHighlights(rest){ rest = String(rest||'').trim();
     if (/^clear$/i.test(rest)){ if (engine && engine.clearHighlights) Promise.resolve(engine.clearHighlights()).then(function(n){ renderSystemLine(n ? ('cleared ' + n + ' highlight' + (n===1?'':'s')) : 'no highlights to clear'); }); return; }
@@ -10304,6 +11368,10 @@ return window.weld.comments;
       ['/time   /date', 'the current time / date'] ] },
     { group:'Power', items:[
       ['/status', 'a quick diagnostic'],
+      ['/neurons', 'list the Brain’s neurons (/neurons <id> to inspect one)'],
+      ['/council [prompt]', 'three stances deliberate, then she replies'],
+      ['/society [prompt]', 'a society of nine emotions votes on the reply'],
+      ['/nation [prompt]', 'the seven nations choose her reply (no prompt: it explains itself)'],
       ['{ "type":"image", "prompt":"\u2026" }', 'paste JSON to run a job'],
       ['/do { \u2026json }', 'run a JSON job explicitly'],
       ['/help', 'show this list'] ] }
@@ -10332,6 +11400,10 @@ return window.weld.comments;
       case 'highlight': case 'star': highlightLast(rest); return true;
       case 'highlights': showHighlights(rest); return true;
       case 'status': statusCmd(); return true;
+      case 'neurons': case 'brain': showNeurons(rest); return true;
+      case 'council': runCouncil(rest); return true;
+      case 'society': case 'emotions': runSociety(rest); return true;
+      case 'nation': case 'army': case 'whoami': if (String(rest||'').trim()) runNation(rest); else { var _a=getArmy(); renderSystemLine(_a ? _a.about(rest) : '(the Seven Nations are unavailable)'); } return true;
       case 'persona': personaCmd(rest); return true;
       case 'time': clockAck('time'); return true;
       case 'date': clockAck('date'); return true;
@@ -10374,6 +11446,7 @@ return window.weld.comments;
     var um = enqueue(USER_ID, state.userName||'You', false, text);
     renderMessage('you', state.userName||'You', text, { mid: um.id });
     dropLiveOrphan(); replyExpected = true;   // a reply to this message is the only thing allowed to stream into chat
+    if (state.nation && state.nation.useForReplies && window.ChloeNation){ replyExpected = false; runNation(text); return; }   // the Seven Nations answer instead
     setThinking(true);
     if (engine && engine.pollOnce) { try { engine.pollOnce(); } catch(e){} }   // read it immediately, don't wait for the poll timer
     if (engineThinking) byId('typingRow').classList.add('on');
@@ -10398,6 +11471,109 @@ return window.weld.comments;
   }
   function resetDials(){ state.personality = { kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 }; persistState(); patchPersonality(); renderDials(); }
 
+  /* ---- The Seven Nations (Brain tab): the readable top layer. Weights and variables live in state.nation,
+   *      which the mouth owns; the army reads them live and tallies votes through the Brain sub-system. ---- */
+  var nationArmy = null;
+  function getArmy(){
+    if (!window.ChloeNation || !window.ChloeBrain) return null;
+    if (!nationArmy){ nationArmy = window.ChloeNation.createArmy({ brain: window.ChloeBrain, config: state.nation }); nationArmy.setUserDescription(userDescription()); }
+    return nationArmy;
+  }
+  function userDescription(){ var d = state.userName || 'You'; try { if (engine && engine.getFacts){ /* a light read; full facts stay in the engine */ } } catch(e){} return d; }
+  function renderNations(){
+    var box = byId('nationList'); if (!box || !window.ChloeNation) return; box.innerHTML = '';
+    if (!state.nation) state.nation = { weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 };
+    state.nation.weights = state.nation.weights || {}; state.nation.enabled = state.nation.enabled || {}; state.nation.persona = state.nation.persona || {};
+    var personaPool = nationPersonaPool();   // { name, instruction, avatar } the user can assign to a nation
+    window.ChloeNation.NATIONS.forEach(function(n){
+      var w = state.nation.weights[n.id]; if (w == null) w = 1;
+      var on = state.nation.enabled[n.id] !== false;
+      var row = document.createElement('div'); row.className = 'nationRow' + (on ? '' : ' off');
+      row.innerHTML = '<div class="nationHead"><label class="nationOn"><input type="checkbox" ' + (on ? 'checked' : '') + '><b>' + n.id + '</b></label>'
+        + '<span class="nationW">' + (+w).toFixed(1) + '</span></div>'
+        + '<div class="nationP">' + n.purpose + '</div>';
+      var sl = document.createElement('input'); sl.type = 'range'; sl.min = '0'; sl.max = '30'; sl.step = '1'; sl.value = String(Math.round(w * 10)); sl.className = 'nationSlider';
+      sl.addEventListener('input', function(){ state.nation.weights[n.id] = (+sl.value) / 10; row.querySelector('.nationW').textContent = ((+sl.value) / 10).toFixed(1); });
+      sl.addEventListener('change', persistState);
+      row.querySelector('.nationOn input').addEventListener('change', function(e){ state.nation.enabled[n.id] = e.target.checked; row.classList.toggle('off', !e.target.checked); persistState(); });
+      row.appendChild(sl);
+      // assign a character/personality to this nation — when set, it proposes (and speaks) in that voice
+      var pr = document.createElement('div'); pr.className = 'nationPersona';
+      var sel = document.createElement('select'); sel.className = 'nationSel';
+      var cur = state.nation.persona[n.id]; var curName = cur && cur.name || '';
+      sel.innerHTML = '<option value="">— no personality (just votes) —</option>' + personaPool.map(function(p){ return '<option value="' + encodeURIComponent(p.name) + '"' + (p.name === curName ? ' selected' : '') + '>' + p.name + '</option>'; }).join('');
+      sel.addEventListener('change', function(){
+        var name = decodeURIComponent(sel.value || '');
+        if (!name){ delete state.nation.persona[n.id]; } else { var pick = personaPool.filter(function(p){ return p.name === name; })[0]; if (pick) state.nation.persona[n.id] = { name: pick.name, instruction: pick.instruction, avatar: pick.avatar || '' }; }
+        if (nationArmy) nationArmy.syncPersonas();
+        persistState();
+      });
+      pr.appendChild(document.createTextNode('Speaks as ')); pr.appendChild(sel);
+      row.appendChild(pr);
+      box.appendChild(row);
+    });
+  }
+  // the characters a nation can be: your saved library + the built-in presets
+  function nationPersonaPool(){
+    var out = [];
+    try { (CharLibrary.list() || []).forEach(function(r){ if (r && r.name) out.push({ name: r.name, instruction: r.instruction || '', avatar: r.avatar || '' }); }); } catch(e){}
+    try { if (typeof SOLO_PRESETS !== 'undefined') SOLO_PRESETS.forEach(function(p){ if (p && p.name && !out.some(function(o){ return o.name === p.name; })) out.push({ name: p.name, instruction: p.instruction || '', avatar: p.avatar || '' }); }); } catch(e){}
+    return out;
+  }
+  function renderNationSettings(){
+    var t = byId('nationTimeout'); if (t) t.value = String((state.nation && state.nation.timeoutMs) || 8000);
+    var r = byId('nationReplyChk'); if (r) r.checked = !!(state.nation && state.nation.useForReplies);
+    var nz = byId('nationNoise'), nzv = byId('nationNoiseVal'); var nv = Math.round(((state.nation && state.nation.noise) || 0) * 100);
+    if (nz) nz.value = String(nv); if (nzv) nzv.textContent = nv + '%';
+    var a = byId('nationAbout'), army = getArmy(); if (a && army && !a.textContent) a.textContent = army.about('');   // it volunteers on open
+  }
+  function nationAsk(){ var inp = byId('nationAskInput'), out = byId('nationAbout'), army = getArmy(); if (!out || !army) return; out.textContent = army.about(inp ? inp.value : ''); if (inp) inp.value = ''; }
+  function resetNations(){ state.nation.weights = {}; state.nation.enabled = {}; persistState(); renderNations(); }
+  // run the seven nations over a few freshly-drafted candidates, then she speaks the winner
+  function cleanReply(r){ return String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''); }
+  var INTENT_DIRECTIVE = { comfort:'Offer warmth and steady presence.', ground:'Be clear, honest, and grounded.', recall:'Tie it to something you remember about them.', caution:'Gently name what feels off or risky.', express:'Speak with vivid, natural voice.', protect:'Put their wellbeing first \u2014 gently, no alarm.', play:'Lighten it; stay human and a little playful.' };
+  function voiceInstruction(persona, intent, prompt){
+    var who = persona && persona.name || herName();
+    var pin = (persona && persona.instruction) || (state.character && state.character.instruction) || 'a warm companion who remembers';
+    var recent = queue.slice(-10).filter(function(x){ return x && x.content; }).map(function(x){ return (x.author && x.author.bot ? (x.author.name || herName()) : userNameStr()) + ': ' + x.content; }).join('\n');
+    return 'You are ' + who + '. ' + pin + '\n\n'
+      + (recent ? ('Conversation so far:\n' + recent + '\n\n') : '')
+      + (prompt ? ('The user just said: ' + prompt + '\n\n') : '')
+      + 'Reply in one short, natural turn. Intent: ' + (INTENT_DIRECTIVE[intent && intent.kind] || 'respond naturally.') + ' Just the message text \u2014 no name prefix, no quotes.';
+  }
+  // The lean path: the brain PERCEIVES and DECIDES in pure code; Perchance is called once, only to voice it.
+  function runNation(rest){
+    var army = getArmy();
+    if (!army){ renderSystemLine('(the Seven Nations are unavailable)'); return; }
+    var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
+    var prompt = String(rest || '').trim();
+    if (!prompt){ for (var i = queue.length - 1; i >= 0; i--){ if (queue[i].author && !queue[i].author.bot){ prompt = queue[i].content; break; } } }
+    army.setUserDescription(userDescription());
+    army.perceive({ who: userNameStr(), role: 'user', text: prompt });   // 1. perceive (pure)
+    setThinking(true);
+    army.deliberateIntents({ prompt: prompt }).then(function(dec){       // 2. decide who speaks + intent (pure, no model)
+      if (!dec || !dec.speaker){ setThinking(false); renderSystemLine('(the nations reached no one)'); return; }
+      var sp = dec.speaker;
+      var persona = state.nation.persona && state.nation.persona[sp.id];
+      var speakerName = (persona && persona.name) || herName();
+      var speakerAvatar = (persona && persona.avatar) || state.herAvatar;
+      var lines = ['\ud83c\udff4 seven nations \u2014 ' + speakerName + ' takes the floor (' + (dec.intent && dec.intent.kind) + '):'];
+      (dec.floor || []).forEach(function(f){ lines.push((f.id === sp.id ? '\u2714 ' : '\u00b7 ') + f.id + ' \u2192 ' + f.kind + ' (' + f.strength + ')'); });
+      renderSystemLine(lines.join('\n'));
+      if (typeof ai !== 'function'){ setThinking(false); renderSystemLine('(connect a language model to voice it)'); return; }
+      Promise.resolve(ai({ instruction: voiceInstruction(persona, dec.intent, prompt), startWith: '' })).then(function(r){   // 3. voice once
+        setThinking(false);
+        var text = cleanReply(r); if (!text){ renderSystemLine('(the floor fell silent)'); return; }
+        var m = enqueue(BOT_ID, speakerName, true, text);
+        var w = renderMessage('her', speakerName, text, { mid: m.id });
+        if (w){ w.setAttribute('data-cid', BOT_ID); if (state.botColor || speakerAvatar) styleSpeaker(w, BOT_ID, speakerAvatar || state.herAvatar); }
+        army.reactToSpoken(sp.id, text);   // 4. the speaker hears itself; the others react to it (pure)
+        lastNationSpeaker = sp.id;
+      }, function(){ setThinking(false); renderSystemLine('(voicing failed)'); });
+    }, function(){ setThinking(false); renderSystemLine('(the nations could not convene)'); });
+  }
+  var lastNationSpeaker = null;
+
   /* ---- behavior toggles (Behavior tab): every cognitive feature the Discord app exposed, live-patched ---- */
   function patchToggle(key, val){ var p = {}; p[key] = val; if (engine && engine.updateConfig){ try { engine.updateConfig(p); } catch(e){} } }
   function renderToggles(){
@@ -10419,7 +11595,15 @@ return window.weld.comments;
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); }
+  function activateTab(name){
+    document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('on'); });
+    document.querySelectorAll('.panel').forEach(function(x){ x.classList.remove('on'); });
+    var tb = document.querySelector('.tab[data-tab="'+name+'"]'); if (tb) tb.classList.add('on');
+    var pn = document.querySelector('.panel[data-panel="'+name+'"]'); if (pn) pn.classList.add('on');
+  }
+  function openSettingsTab(name){ openSettings(); activateTab(name); }
+  function settingsOpenOnTab(name){ var sb = byId('settingsBg'), pn = document.querySelector('.panel[data-panel="'+name+'"]'); return !!(sb && sb.classList.contains('open') && pn && pn.classList.contains('on')); }
   // Context inspector: show what's in context per reply, priced with the same tokenizer the engine
   // uses (engine.estimateTokens), plus the authoritative totals.
   function renderContextBudget(){
@@ -10478,8 +11662,211 @@ return window.weld.comments;
     if (!t.__wired){ t.__wired = true; t.addEventListener('change', function(){ state.showEmotion = t.checked; persistState(); refreshEmotionCues(); }); }
   }
   function closeSettings(){ byId('settingsBg').classList.remove('open'); }
-  function openCharacters(){ byId('charactersBg').classList.add('open'); updateCharLabel(); renderRoster(); renderReactionGallery(); }
-  function closeCharacters(){ byId('charactersBg').classList.remove('open'); }
+  // Characters popup -> "Meet someone": the built-in roster (SOLO_PRESETS). Tap Chat to become one
+  // (re-themes the bot and greets in character via the same path the AICC importer uses), or add to the scene.
+  // ---- Character library: one CRUD store + apply/import/export pipeline shared by every path ----
+  var CharLibrary = CharKit.makeLibrary(
+    function(){ try { return JSON.parse(localStorage.getItem('chloeSolo:charlib') || '[]'); } catch(e){ return []; } },
+    function(arr){ try { localStorage.setItem('chloeSolo:charlib', JSON.stringify(arr)); } catch(e){} }
+  );
+  // apply a record: 'chat' = become them (greets in character); 'scene' = join alongside the others.
+  function useCharacter(rec, mode){
+    if (!rec) return;
+    if (mode === 'scene'){ addToScene({ name: rec.name, instruction: rec.instruction, avatar: rec.avatar || '' }); return; }
+    call('config.setCharacter', { name: rec.name, instruction: rec.instruction, avatar: rec.avatar || '', examples: rec.examples || '', initialMessages: rec.opening ? [{ author: 'ai', content: rec.opening }] : [] });
+    closeSettings();
+  }
+  // save any parsed/edited character into the library (newest -> top of the picker). Returns the record.
+  function importCharacter(src, source){
+    var rec = CharKit.normalizeCharacter(src, source);
+    CharLibrary.add(rec); renderMeetSomeone();
+    return rec;
+  }
+  // export a record as AICC-compatible .json (re-importable here and in other AICC apps) + clipboard copy
+  function downloadJSON(baseName, data){
+    var blob = new Blob([data], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url;
+    a.download = (String(baseName || 'export').replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'export') + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  function exportCharacter(rec){
+    try {
+      var data = JSON.stringify(CharKit.characterToAICC(rec), null, 2);
+      downloadJSON(rec.name || 'character', data);
+      try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(data); } catch(e){}
+      toast('Exported ' + rec.name + ' (also copied to clipboard)', 'success');
+    } catch(e){ toast('Export failed', 'error'); }
+  }
+  // bulk: the whole library out as one pack, or a pack/array/single file in.
+  function exportLibraryPack(){
+    var list = CharLibrary.list();
+    if (!list.length){ toast('No saved characters to export yet', 'info'); return; }
+    try {
+      var data = JSON.stringify(CharKit.exportLibrary(list), null, 2);
+      downloadJSON('chloe-solo-characters', data);
+      try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(data); } catch(e){}
+      toast('Exported ' + list.length + ' character' + (list.length > 1 ? 's' : ''), 'success');
+    } catch(e){ toast('Export failed', 'error'); }
+  }
+  function importLibraryPack(text){
+    var obj; try { obj = JSON.parse(text); } catch(e){ toast('That file is not valid JSON', 'error'); return; }
+    var recs = CharKit.parsePack(obj);
+    if (!recs.length){ toast('No characters found in that file', 'info'); return; }
+    recs.forEach(function(r){ CharLibrary.add(r); });
+    renderMeetSomeone();
+    toast('Added ' + recs.length + ' character' + (recs.length > 1 ? 's' : '') + ' to your library', 'success');
+  }
+
+  // ---- Quick actions: user-defined shortcut buttons, on the same generic library plumbing as characters ----
+  var Shortcuts = CharKit.makeLibrary(
+    function(){ try { return JSON.parse(localStorage.getItem('chloeSolo:shortcuts') || '[]'); } catch(e){ return []; } },
+    function(arr){ try { localStorage.setItem('chloeSolo:shortcuts', JSON.stringify(arr)); } catch(e){} }
+  );
+  // {a-b} anywhere in the text -> a random integer in [a,b] (the ai-rpg dice idea)
+  function rollText(text){
+    return String(text == null ? '' : text).replace(/\{(\d+)\s*-\s*(\d+)\}/g, function(_, a, b){
+      a = parseInt(a, 10); b = parseInt(b, 10); var lo = Math.min(a, b), hi = Math.max(a, b);
+      return String(lo + Math.floor(Math.random() * (hi - lo + 1)));
+    });
+  }
+  function applyShortcut(rec){
+    if (!rec) return; var input = byId('input'); if (!input) return;
+    var text = rollText(rec.text || ''); if (!text) return;
+    input.value = (rec.mode === 'insert' && input.value) ? (input.value.replace(/\s+$/, '') + ' ' + text) : text;
+    input.style.height = 'auto'; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus();
+    if (rec.mode !== 'insert' && typeof sendUserMessage === 'function') sendUserMessage();
+  }
+  function renderShortcuts(){
+    var row = byId('shortcutRow'); if (!row) return;
+    var list = Shortcuts.list(); row.innerHTML = ''; row.style.display = list.length ? '' : 'none';
+    list.forEach(function(s){
+      var b = document.createElement('button'); b.className = 'tbtn scBtn'; b.textContent = s.label || '\u26A1';
+      b.title = (s.mode === 'insert' ? 'Pre-fill: ' : 'Send: ') + (s.text || '');
+      b.addEventListener('click', function(){ applyShortcut(s); });
+      row.appendChild(b);
+    });
+  }
+  function refreshShortcuts(){ renderShortcuts(); renderShortcutManager(); }
+  function renderShortcutManager(){
+    var box = byId('shortcutList'); if (!box) return;
+    var list = Shortcuts.list(); box.innerHTML = '';
+    if (!list.length){ var e = document.createElement('div'); e.className = 'note'; e.textContent = 'No quick actions yet — add one for a one-tap button above the message box.'; box.appendChild(e); return; }
+    list.forEach(function(s){
+      var row = document.createElement('div'); row.className = 'scManRow';
+      var head = document.createElement('div'); head.className = 'scManHead';
+      var nm = document.createElement('b'); nm.textContent = s.label || '(unnamed)'; head.appendChild(nm);
+      var md = document.createElement('span'); md.className = 'scManMode'; md.textContent = s.mode === 'insert' ? 'pre-fill' : 'send'; head.appendChild(md);
+      var tx = document.createElement('div'); tx.className = 'scManText'; tx.textContent = s.text || '';
+      var acts = document.createElement('div'); acts.className = 'presetBtns';
+      var ed = document.createElement('button'); ed.className = 'btn'; ed.textContent = 'Edit'; ed.addEventListener('click', function(){ openShortcutEditor(s); });
+      var dl = document.createElement('button'); dl.className = 'btn danger'; dl.textContent = 'Delete'; dl.addEventListener('click', function(){ Shortcuts.remove(s.id); refreshShortcuts(); toast('Deleted ' + (s.label || 'quick action')); });
+      acts.appendChild(ed); acts.appendChild(dl);
+      row.appendChild(head); row.appendChild(tx); row.appendChild(acts); box.appendChild(row);
+    });
+  }
+  function openShortcutEditor(rec){
+    var box = byId('shortcutEditor'); if (!box) return;
+    var r = rec || { id:'', label:'', text:'', mode:'send' };
+    box.style.display = 'block'; box.innerHTML = '';
+    function field(label, el){ var w = document.createElement('label'); w.className = 'ceField'; var t = document.createElement('span'); t.className = 'ceLbl'; t.textContent = label; w.appendChild(t); w.appendChild(el); return w; }
+    var label = document.createElement('input'); label.type = 'text'; label.value = r.label; label.placeholder = 'Button label \u2014 e.g. \uD83D\uDC9B Comfort me';
+    var text = document.createElement('textarea'); text.rows = 3; text.value = r.text; text.placeholder = 'Text to send \u2014 e.g. "Tell me about your day" or "*pulls you into a hug*". {1-20} becomes a random number.';
+    var mode = document.createElement('select');
+    [['send','Send right away'],['insert','Put it in the box so I can edit first']].forEach(function(o){ var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; if (o[0] === r.mode) op.selected = true; mode.appendChild(op); });
+    box.appendChild(field('Label', label)); box.appendChild(field('Text', text)); box.appendChild(field('When tapped', mode));
+    var acts = document.createElement('div'); acts.className = 'presetBtns';
+    var save = document.createElement('button'); save.className = 'btn primary'; save.textContent = r.id ? 'Save' : 'Create';
+    save.addEventListener('click', function(){
+      var lb = label.value.trim(), tx = text.value.trim();
+      if (!lb){ toast('Give the button a label', 'info'); return; }
+      if (!tx){ toast('Add the text it should send', 'info'); return; }
+      if (r.id) Shortcuts.update(r.id, { label: lb, text: tx, mode: mode.value });
+      else Shortcuts.add({ label: lb, text: tx, mode: mode.value });
+      box.style.display = 'none'; refreshShortcuts(); toast(r.id ? 'Saved' : 'Added quick action', 'success');
+    });
+    var cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', function(){ box.style.display = 'none'; });
+    acts.appendChild(save); acts.appendChild(cancel); box.appendChild(acts);
+  }
+  // shared tile builder for both the library and preset grids — one place, many actions.
+  function charTile(rec, actions){
+    var card = document.createElement('div'); card.className = 'presetCard';
+    var nm = document.createElement('div'); nm.className = 'presetName';
+    if (rec.gender === 'male' || rec.gender === 'female'){ var dot = document.createElement('span'); dot.className = 'presetDot ' + rec.gender; nm.appendChild(dot); }
+    var nt = document.createElement('span'); nt.textContent = rec.name; nm.appendChild(nt); card.appendChild(nm);
+    if (rec.tagline){ var tag = document.createElement('div'); tag.className = 'presetTag'; tag.textContent = rec.tagline; card.appendChild(tag); }
+    var btns = document.createElement('div'); btns.className = 'presetBtns';
+    actions.forEach(function(act){
+      var b = document.createElement('button'); b.className = 'btn' + (act.primary ? ' primary' : '') + (act.danger ? ' danger' : '');
+      b.textContent = act.label; b.title = act.title || act.label;
+      b.addEventListener('click', function(){ act.fn(rec); }); btns.appendChild(b);
+    });
+    card.appendChild(btns); return card;
+  }
+  function renderLibrary(){
+    var grid = byId('libGrid'), head = byId('libHead'); if (!grid) return;
+    var list = CharLibrary.list(); grid.innerHTML = '';
+    if (head) head.style.display = list.length ? '' : 'none';
+    grid.style.display = list.length ? '' : 'none';
+    var exb = byId('libExportBtn'); if (exb) exb.style.display = list.length ? '' : 'none';
+    list.forEach(function(rec){
+      grid.appendChild(charTile(rec, [
+        { label: 'Chat', primary: true, fn: function(r){ useCharacter(r, 'chat'); } },
+        { label: '+ scene', title: 'Add to scene', fn: function(r){ useCharacter(r, 'scene'); } },
+        { label: 'Edit', fn: function(r){ openCharEditor(r); } },
+        { label: 'Export', fn: function(r){ exportCharacter(r); } },
+        { label: 'Delete', danger: true, fn: function(r){ if (confirm('Delete ' + r.name + '? This removes the saved character, not any chat already in progress.')){ CharLibrary.remove(r.id); renderMeetSomeone(); toast(r.name + ' deleted'); } } }
+      ]));
+    });
+  }
+  function renderPresets(){
+    var grid = byId('presetGrid'); if (!grid || typeof SOLO_PRESETS === 'undefined') return;
+    grid.innerHTML = '';
+    SOLO_PRESETS.forEach(function(p){
+      grid.appendChild(charTile(p, [
+        { label: 'Chat', primary: true, fn: function(r){ useCharacter(r, 'chat'); } },
+        { label: '+ scene', title: 'Add to scene', fn: function(r){ useCharacter(r, 'scene'); } },
+        { label: 'Save a copy', title: 'Save an editable copy to your characters', fn: function(r){ importCharacter(r, 'preset-copy'); toast('Saved a copy of ' + r.name + ' to your characters', 'success'); } }
+      ]));
+    });
+  }
+  function renderMeetSomeone(){ renderLibrary(); renderPresets(); }
+  // inline create/edit form for a saved character
+  function openCharEditor(rec){
+    var box = byId('charEditor'); if (!box) return;
+    var r = rec || { id:'', name:'', tagline:'', gender:'', opening:'', instruction:'', examples:'' };
+    box.style.display = 'block'; box.innerHTML = '';
+    function field(label, el){ var w = document.createElement('label'); w.className = 'ceField'; var t = document.createElement('span'); t.className = 'ceLbl'; t.textContent = label; w.appendChild(t); w.appendChild(el); return w; }
+    var name = document.createElement('input'); name.type = 'text'; name.value = r.name; name.placeholder = 'Name';
+    var tagline = document.createElement('input'); tagline.type = 'text'; tagline.value = r.tagline; tagline.placeholder = 'One-line tagline (optional)';
+    var gender = document.createElement('select');
+    [['','—'],['female','she'],['male','he']].forEach(function(o){ var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; if (o[0] === r.gender) op.selected = true; gender.appendChild(op); });
+    var opening = document.createElement('textarea'); opening.rows = 2; opening.value = r.opening; opening.placeholder = 'Opening line — how they greet you (optional)';
+    var instruction = document.createElement('textarea'); instruction.rows = 5; instruction.value = r.instruction; instruction.placeholder = 'Who they are — personality, voice, background, how they behave.';
+    var examples = document.createElement('textarea'); examples.rows = 4; examples.value = r.examples || ''; examples.placeholder = 'Example dialogue (optional) — a short exchange that shows their voice, so replies stay in character:\nYou: Rough day.\nThem: *sets down her pen* Come here — tell me about it.';
+    box.appendChild(field('Name', name));
+    var two = document.createElement('div'); two.className = 'ceRow'; two.appendChild(field('Tagline', tagline)); two.appendChild(field('Pronoun', gender)); box.appendChild(two);
+    box.appendChild(field('Opening', opening));
+    box.appendChild(field('Persona', instruction));
+    box.appendChild(field('Example dialogue', examples));
+    var acts = document.createElement('div'); acts.className = 'presetBtns';
+    var save = document.createElement('button'); save.className = 'btn primary'; save.textContent = r.id ? 'Save changes' : 'Create';
+    save.addEventListener('click', function(){
+      var nm = name.value.trim(); if (!nm){ toast('Give them a name first', 'info'); return; }
+      var fields = { name: nm, tagline: tagline.value.trim(), gender: gender.value, opening: opening.value.trim(), instruction: instruction.value.trim(), examples: examples.value.trim() };
+      if (r.id){ CharLibrary.update(r.id, fields); toast('Saved ' + nm, 'success'); }
+      else { importCharacter(fields, 'editor'); toast('Created ' + nm, 'success'); }
+      box.style.display = 'none'; renderMeetSomeone();
+    });
+    var cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', function(){ box.style.display = 'none'; });
+    acts.appendChild(save); acts.appendChild(cancel); box.appendChild(acts);
+    try { box.scrollIntoView({ block: 'nearest' }); } catch(e){}
+  }
+  function openCharacters(){ openSettingsTab('character'); }
+  function closeCharacters(){ closeSettings(); }
   function exportSlotFile(s){
     var blob = new Blob([JSON.stringify({ format:'chloe-solo', version: s.version || SOLO_VERSION, data: s.data }, null, 0)], { type:'application/json' });
     var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -10513,8 +11900,8 @@ return window.weld.comments;
       });
     }).catch(function(){ box.innerHTML = '<div class="note">could not read saves.</div>'; });
   }
-  function openSaves(){ byId('savesBg').classList.add('open'); renderSaves(); }
-  function closeSaves(){ byId('savesBg').classList.remove('open'); }
+  function openSaves(){ openSettingsTab('character'); }
+  function closeSaves(){ closeSettings(); }
 
   /* ---- gallery viewer: a Solo-styled grid over whichever backend is active ---- */
   var galleryOpen = false, gallerySort = 'newest', galleryFavOnly = false, _galUrls = [];
@@ -10605,6 +11992,12 @@ return window.weld.comments;
     byId('openSettings').addEventListener('click', openSettings);
     byId('closeSettings').addEventListener('click', closeSettings);
     var oc = byId('openCharacters'); if (oc) oc.addEventListener('click', openCharacters);
+    var cnb = byId('charNewBtn'); if (cnb) cnb.addEventListener('click', function(){ openCharEditor(null); });
+    var scn = byId('scNewBtn'); if (scn) scn.addEventListener('click', function(){ openShortcutEditor(null); });
+    var lib2 = byId('libExportBtn'); if (lib2) lib2.addEventListener('click', exportLibraryPack);
+    var lpf = byId('libPackFile'), lib3 = byId('libImportBtn');
+    if (lib3 && lpf) lib3.addEventListener('click', function(){ lpf.click(); });
+    if (lpf) lpf.addEventListener('change', function(){ var f = lpf.files && lpf.files[0]; if (!f) return; var fr = new FileReader(); fr.onload = function(){ importLibraryPack(String(fr.result || '')); lpf.value = ''; }; fr.readAsText(f); });
     var cc = byId('closeCharacters'); if (cc) cc.addEventListener('click', closeCharacters);
     var cbg = byId('charactersBg'); if (cbg) cbg.addEventListener('click', function(e){ if (e.target === cbg) closeCharacters(); });
     var os2 = byId('openSaves'); if (os2) os2.addEventListener('click', openSaves);
@@ -10617,8 +12010,23 @@ return window.weld.comments;
     var mlc = byId('matchLangChk'); if (mlc){ mlc.checked = state.matchDeviceLang !== false; mlc.addEventListener('change', function(){ state.matchDeviceLang = mlc.checked; persistState(); }); }
     var bgi = byId('bgImageGenChk'); if (bgi){ bgi.checked = state.reactionPortraits !== false; bgi.addEventListener('change', function(){ state.reactionPortraits = bgi.checked; persistState(); var pc = byId('reactionPortraitsChk'); if (pc) pc.checked = bgi.checked; }); }
     var lna = byId('learnNoteAdd'); if (lna){ lna.addEventListener('click', function(){ var inp = byId('learnNoteInput'); var v = inp.value.trim(); if (!v) return; if (addStyleNote(v)){ toast('Learned: ' + v, 'success'); inp.value = ''; renderLearnedLooks(); } else toast('She already knows that look', 'info'); }); }
+    function wireAdaptReset(id, which, msg){ var b = byId(id); if (b) b.addEventListener('click', function(){ if (engine && typeof engine.resetFeedback === 'function') engine.resetFeedback(which).then(function(){ toast(msg, 'info'); renderAdaptation(); }); }); }
+    wireAdaptReset('adaptResetLen', 'len', 'Length learning reset');
+    wireAdaptReset('adaptResetTone', 'tone', 'Tone learning reset');
+    wireAdaptReset('adaptResetAll', undefined, 'Style learning reset');
     var pns = byId('personaNoteSave'); if (pns){ pns.addEventListener('click', savePersonaNote); }
     var dr = byId('dialsReset'); if (dr) dr.addEventListener('click', resetDials);
+    var nAsk = byId('nationAskBtn'); if (nAsk) nAsk.addEventListener('click', nationAsk);
+    var nAskI = byId('nationAskInput'); if (nAskI) nAskI.addEventListener('keydown', function(e){ if (e.key === 'Enter'){ e.preventDefault(); nationAsk(); } });
+    var nReset = byId('nationReset'); if (nReset) nReset.addEventListener('click', resetNations);
+    var nTo = byId('nationTimeout'); if (nTo) nTo.addEventListener('change', function(){ state.nation.timeoutMs = Math.max(500, (+nTo.value) || 8000); persistState(); });
+    var nRep = byId('nationReplyChk'); if (nRep) nRep.addEventListener('change', function(){ state.nation.useForReplies = nRep.checked; persistState(); });
+    var nNz = byId('nationNoise'); if (nNz) nNz.addEventListener('input', function(){ state.nation.noise = (+nNz.value) / 100; var v = byId('nationNoiseVal'); if (v) v.textContent = (+nNz.value) + '%'; });
+    if (nNz) nNz.addEventListener('change', persistState);
+    var mFA = byId('memForgetAllBtn'); if (mFA) mFA.addEventListener('click', function(){
+      if (!confirm('Forget everything every character has learned about you? Your saved characters and this conversation stay; only the learned facts and inner state are cleared.')) return;
+      if (engine && engine.getFacts){ Promise.resolve(engine.getFacts(USER_ID)).then(function(fs){ (fs || []).forEach(function(f){ try { engine.forgetFact(USER_ID, f.text); } catch(e){} }); var nt = byId('memForgetNote'); if (nt) nt.textContent = 'cleared'; try { renderFactList(); renderInnerState(); } catch(e){} }); }
+    });
     // behavior toggles are rendered + wired live in renderToggles() (openSettings)
     byId('settingsBg').addEventListener('click', function(e){ if (e.target === byId('settingsBg')) closeSettings(); });
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(tb){
@@ -10642,6 +12050,12 @@ return window.weld.comments;
       });
     });
     byId('aboutYouInput').addEventListener('keydown', function(e){ if (e.key==='Enter'){ e.preventDefault(); byId('aboutYouBtn').click(); } });
+    var pinClr = byId('pinClearBtn');
+    if (pinClr) pinClr.addEventListener('click', function(){
+      if (!pinClr.__armed){ pinClr.__armed = true; pinClr.textContent = 'Tap again to clear all'; setTimeout(function(){ if (pinClr.__armed){ pinClr.__armed = false; pinClr.textContent = 'Clear all'; } }, 3000); return; }
+      pinClr.__armed = false;
+      if (engine && typeof engine.clearHighlights === 'function') Promise.resolve(engine.clearHighlights()).then(function(){ renderPinned(); });
+    });
     // Context tab: always-known facts (semantic injections)
     byId('injAddBtn').addEventListener('click', function(){
       var v = (byId('injInput').value||'').trim(); if (!v) return;
@@ -10813,7 +12227,7 @@ return window.weld.comments;
     if (state.mindOpen == null ? window.innerWidth > 880 : state.mindOpen) byId('mind').classList.add('open');   // remembered across refreshes (first run: open on wide screens)
     // restore the visible conversation
     if (queue.length){ if (emptyState && emptyState.parentNode){ emptyState.parentNode.removeChild(emptyState); emptyState=null; } queue.forEach(function(m){ renderMessage(m.author.bot ? 'her' : 'you', m.author.bot ? (state.botName||'Chloe') : (m.author.username || state.userName || 'You'), m.content, { mid: m.id }); }); }
-    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); autoMatchLang(); });
+    ensureUserPartition().then(buildEngine).then(function(){ wrapAiForStreaming(); refreshClock(); renderRoster(); startAutoSave(); autoMatchLang(); renderShortcuts(); });
     setInterval(refreshClock, 60000);   // keep her clock + injections current across a long session
     setInterval(reactionIdleTick, 12000);   // idle-time reaction-portrait worker (serial, off the reply path)
   }
@@ -10821,7 +12235,7 @@ return window.weld.comments;
 
   // expose a couple of shims the inlined char block reaches for (defined above as hoisted fns;
   // these assignments make them visible if the char block runs in a nested scope)
-  window.__solo = { call: call, byId: byId, setText: setText, log: log, refresh: refresh, selChannel: selChannel, addToScene: addToScene };
+  window.__solo = { call: call, byId: byId, setText: setText, log: log, refresh: refresh, selChannel: selChannel, addToScene: addToScene, importCharacter: importCharacter };
 })();
 </script>
 <script>
@@ -10836,6 +12250,7 @@ return window.weld.comments;
   function refresh(){ return S.refresh ? S.refresh() : void 0; }
   function selChannel(){ return S.selChannel ? S.selChannel() : 'solo'; }
   function addToScene(a){ return S.addToScene ? S.addToScene(a) : false; }
+  function importCharacter(a, src){ return S.importCharacter ? S.importCharacter(a, src) : null; }
   // Pure in-browser: decompress -> decode (CBOR/JSON/scavenge) -> extract characters + their
   // thread memories. No upload, no network except the CBOR decoder CDN on first .cbor.gz.
   var CHARCBOR = null;
@@ -11086,8 +12501,17 @@ return window.weld.comments;
     setText('charInstallNote', '');
   }
 
+  // Every imported character is saved into the library (so it appears at the top of "Meet someone"),
+  // once per picked object — the __libId guard keeps repeated Install/Add clicks from duplicating it.
+  function charSaveToLibrary(c) {
+    if (!c || c.__libId || typeof importCharacter !== 'function') return;
+    var rec = importCharacter({ name: c.name, instruction: c.instruction, avatar: c.avatar, initialMessages: c.initialMessages, id: (c.id || c.uuid || null) }, 'import');
+    if (rec) c.__libId = rec.id;
+  }
+
   function charInstall() {
     var c = CHARSTATE.picked; if (!c) { setText('charInstallNote', 'pick a character first'); return; }
+    charSaveToLibrary(c);
     var replace = byId('charReplaceChk').checked;
     var seed = byId('charSeedChk').checked && CHARSTATE.memories.length;
     var jobs = [];
@@ -11119,24 +12543,8 @@ return window.weld.comments;
     var ib = byId('charInstallBtn'); if (ib) ib.addEventListener('click', charInstall);
     var asb = byId('charAddSceneBtn'); if (asb) asb.addEventListener('click', function () {
       var c = CHARSTATE.picked; if (!c) { setText('charInstallNote', 'pick a character first'); return; }
+      charSaveToLibrary(c);
       if (typeof addToScene === 'function' && addToScene({ name: c.name, instruction: c.instruction, avatar: c.avatar })) setText('charInstallNote', c.name + ' added to the scene');
-    });
-    var aab = byId('charAuthorAddBtn'); if (aab) aab.addEventListener('click', function () {
-      var nm = (byId('charAuthorName').value || '').trim(), instr = (byId('charAuthorInstr').value || '').trim();
-      if (!nm) { setText('charAuthorNote', 'give your character a name first'); return; }
-      if (!instr) { setText('charAuthorNote', 'write a sentence or two about who they are'); return; }
-      if (typeof addToScene === 'function' && addToScene({ name: nm, instruction: instr, avatar: '' })) setText('charAuthorNote', nm + ' added to the scene');
-    });
-    var ab = byId('charAuthorBtn'); if (ab) ab.addEventListener('click', function () {
-      var nm = (byId('charAuthorName').value || '').trim();
-      var instr = (byId('charAuthorInstr').value || '').trim();
-      if (!nm) { setText('charAuthorNote', 'give your character a name first'); return; }
-      if (!instr) { setText('charAuthorNote', 'write a sentence or two about who they are'); return; }
-      setText('charAuthorNote', '\u2026');
-      call('config.setCharacter', { name: nm, instruction: instr, avatar: '' }).then(function (res) {
-        if (res && res.ok) { setText('charAuthorNote', 'done \u2014 she is now ' + nm); log('character authored: ' + nm + ' (personality replaced)'); refresh(); }
-        else setText('charAuthorNote', 'could not apply: ' + ((res && res.reason) || 'unknown'));
-      });
     });
     var cb = byId('charClearBtn'); if (cb) cb.addEventListener('click', function () {
       call('config.setCharacter', { name: null }).then(function () { setText('charCurrent', 'default Chloe'); log('character cleared \u2014 back to default Chloe'); refresh(); });
