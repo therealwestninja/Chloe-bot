@@ -2626,6 +2626,8 @@ return window.weld.comments;
       imageCooldownMs: 2000,  // courtesy gap between images (generation time is the real spacing)
       imageQueueMax: 8,       // global image queue depth (adjustable); extra requests are dropped with a note
       imgClarifyTtlMs: 300000,// how long (5m) a "what kind of outfit?" stays open: her next-message answer completes the picture; after this it's a normal message again
+      imageStuckMs: 90000,    // watchdog ceiling: if an image generation hasn't settled in 90s the lock is force-released (a hung plugin call must not freeze the queue)
+      replyStuckMs: 60000,    // watchdog ceiling: if a reply generation hasn't settled in 60s the reply lock is force-released (a stalled model call must not freeze replies)
       // Image memory + natural-language iteration (DESIGN: "the bot knows what it generated, and you
       // can ask for changes in plain language"). When imageMemory is on, each delivered image is
       // recorded on the user's partition (prompt, resolution, when), capped to a small ring, so the
@@ -3886,7 +3888,14 @@ return window.weld.comments;
               : /pose/.test(appNoun)
               ? 'what sort of pose were you picturing?'
               : 'what would you like me to show you exactly? give me a little more to go on';
-        return { clarify: q, noun: appNoun };
+        return { clarify: q, noun: appNoun, self: true };
+      }
+      // Contentless request: "draw something", "make me a picture", "draw anything". Non-empty but says
+      // nothing about WHAT to draw, so the stripping leaves a bare placeholder that would render as noise.
+      // Ask instead — and mark it non-self, so the follow-up answer becomes an ordinary image, not a portrait.
+      var stub = prompt.replace(/\s+/g, ' ').trim();
+      if (/^(?:an?\s+)?(something|anything|everything|whatever|stuff|things?|picture|images?|pics?|photos?|drawings?|art|artwork)$/i.test(stub)) {
+        return { clarify: 'sure \u2014 what would you like me to draw?', noun: '', self: false };
       }
       if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return null;  // no real description -> would hang
       return { prompt: prompt.slice(0, 400), dm: dm, resolution: pickResolution(prompt) };
@@ -4846,7 +4855,7 @@ return window.weld.comments;
                 var probe = parseImageRequest(m.content);
                 if (probe && probe.clarify) {                 // still too vague -> ask again, keep waiting
                   if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, probe.clarify); } catch (e) {} }
-                  imgClarify[m.author.id] = { noun: probe.noun || pend.noun, at: now };
+                  imgClarify[m.author.id] = { noun: probe.noun || pend.noun, self: probe.self, at: now };
                   if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
                   imageReqName = m.author.username;
                   return;
@@ -4855,11 +4864,19 @@ return window.weld.comments;
                 } else {                                       // no image verb -> treat as the answer to her question
                   var ans = stripAddressing(m.content).trim();
                   var plausible = ans && !/^[\/!]/.test(ans) && ans.split(/\s+/).length <= 8 && !/\?$/.test(ans)
-                               && !/^(nevermind|never ?mind|forget it|stop|cancel|no|nah|actually|wait|what|why|how|who|when|where|hold on)\b/i.test(ans);
+                               && !/^(nevermind|never ?mind|forget it|stop|cancel|no|nah|actually|wait|hmm|um|i\u2019?m|im|i am|i was|i feel|i think|let me|we|what|why|how|who|when|where|hold on)\b/i.test(ans);
                   if (plausible && paint.queue.length < cfg.imageQueueMax) {
                     delete imgClarify[m.author.id];
-                    var spec2 = clarifyDetailToSpec(pend.noun, ans);
-                    var qC = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: selfPortraitPrompt(spec2), resolution: '512x768', dm: false, at: now };
+                    // self-clarify ("what outfit?") completes as a portrait of HER; a contentless clarify
+                    // ("what should I draw?") completes as an ordinary image of whatever they named.
+                    var spec2, qC;
+                    if (pend.self === false) {
+                      spec2 = clarifyDetailToSpec('', ans);
+                      qC = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: spec2.slice(0, 400), resolution: pickResolution(spec2), dm: false, at: now };
+                    } else {
+                      spec2 = clarifyDetailToSpec(pend.noun, ans);
+                      qC = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: selfPortraitPrompt(spec2), resolution: '512x768', dm: false, at: now };
+                    }
                     paint.queue.push(qC);
                     if (paint.painting || paint.queue.length > 1) setQueueAck(qC, queueEmojiFor(paint.queue.length));
                     if (reply.queue[m.author.id]) delete reply.queue[m.author.id];
@@ -4912,7 +4929,7 @@ return window.weld.comments;
                 // before the reply is queued below, so the clarifying question stands alone (no double answer).
                 // Remember what she asked about so the user's next message can finish the picture.
                 if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, imgReq.clarify); } catch (e) {} }
-                imgClarify[m.author.id] = { noun: imgReq.noun || '', at: now };
+                imgClarify[m.author.id] = { noun: imgReq.noun || '', self: imgReq.self, at: now };
                 if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;
                 imageReqName = m.author.username;
                 return;
@@ -5894,6 +5911,34 @@ return window.weld.comments;
       var g = deferGen;
       var wait = Math.max(50, (cfg.imageCooldownMs || 0) - (clock.now() - lastPaintAt));
       cfg.defer(function () { imageChainScheduled = false; if (g === deferGen) iHoldRunLock().then(function (h) { if (h) kickImage(); else log('[chloe.lock] deferred image abandoned \u2014 another engine holds the run-lock now'); }); }, wait);
+    }
+    // Watchdog: an in-flight lock (reply.replying / paint.painting) is normally cleared in the call's
+    // .then/.catch. But a model or image call that never SETTLES — the broker-iframe image trap, a stream
+    // that stalls and neither resolves nor rejects — would leave the lock stuck true and freeze the whole
+    // subsystem until reload. This is the engine-side twin of the council's withTimeout, the escape hatch
+    // the two heavy calls lacked. It tracks how long each lock has been held (no touch to the set-sites)
+    // and, past a generous ceiling well beyond any real generation, force-releases it and re-arms the queue.
+    var _wdPaintAt = 0, _wdReplyAt = 0;
+    function watchdog() {
+      var now = clock.now();
+      if (paint.painting) {
+        if (!_wdPaintAt) _wdPaintAt = now;
+        else if ((now - _wdPaintAt) > (cfg.imageStuckMs || 90000)) {
+          log('[chloe.watchdog] image lock held ' + Math.round((now - _wdPaintAt) / 1000) + 's with no result \u2014 releasing it and moving the queue on');
+          paint.painting = false; _wdPaintAt = 0;
+          if (typeof cfg.releaseSend === 'function') { try { cfg.releaseSend('image'); } catch (e) {} }
+          scheduleImageChain();
+        }
+      } else _wdPaintAt = 0;
+      if (reply.replying) {
+        if (!_wdReplyAt) _wdReplyAt = now;
+        else if ((now - _wdReplyAt) > (cfg.replyStuckMs || 60000)) {
+          log('[chloe.watchdog] reply lock held ' + Math.round((now - _wdReplyAt) / 1000) + 's with no result \u2014 releasing it');
+          reply.replying = false; _wdReplyAt = 0;
+          if (typeof cfg.releaseSend === 'function') { try { cfg.releaseSend('text'); } catch (e) {} }
+          scheduleTextChain();
+        }
+      } else _wdReplyAt = 0;
     }
     // ---- commit-point revalidation (while-if-true) -------------------------------------------
     // Every multi-second generation captures its premises at START and commits at END — but the
@@ -8113,6 +8158,7 @@ return window.weld.comments;
       var curDelay = cfg.pollIntervalMs;
       var tick = function () {
         if (!running) return;
+        watchdog();   // free any in-flight lock stuck past its ceiling (a hung model/image call) before polling
         Promise.resolve(pollOnce()).then(function (summary) {
           curDelay = computeNextDelay(curDelay, summary);
           if (running) timer = setTimeout(tick, curDelay);
@@ -8203,6 +8249,8 @@ return window.weld.comments;
       parseImageRequest: parseImageRequest,
       selfPortraitPrompt: selfPortraitPrompt,
       clarifyDetailToSpec: clarifyDetailToSpec,
+      watchdog: watchdog,
+      inflight: function () { return { paint: paint.painting, reply: reply.replying }; },
       safeParseJson: safeParseJson, volunteerPrefilter: volunteerPrefilter,
       scheduleReminder: scheduleReminder, listReminders: listReminders, clearReminders: clearReminders, processReminders: processReminders,
       setAfk: setAfk, getAfk: getAfk, clearAfk: clearAfk, getAfkMap: getAfkMap,
@@ -9245,6 +9293,20 @@ var CharKit = (function () {
   // each nation's natural intent — the move it reaches for
   var INTENT = { heart: 'comfort', reason: 'ground', memory: 'recall', instinct: 'caution', voice: 'express', conscience: 'protect', play: 'play' };
 
+  // each nation's GUARD — the one intent kind it will BLOCK (not merely outvote) when its trigger reads true.
+  // This is the veto the council layer already exercises; here the faculties that hold the PURPOSE wield it.
+  // Deliberately narrow and conservative: only conscience and instinct guard, only against frivolous moves,
+  // and only on a genuine signal — so a veto is rare and the floor is almost never silenced (and if every
+  // intent were somehow blocked, resolve still seats one: she never refuses to speak).
+  var VETO = {
+    // conscience protects wellbeing: don't be playful/showy at someone who reads as hurting.
+    conscience: { blocks: /^(play|express)$/, when: function (r, u) { return (u && u.sentiment < -0.2) || (r && r.distress >= 1); },
+      reason: 'they sound like they\u2019re hurting \u2014 not the moment for that' },
+    // instinct flags what's off: don't poke at someone who's angry.
+    instinct:   { blocks: /^(play|express)$/, when: function (r, u) { return (r && r.anger >= 1); },
+      reason: 'they\u2019re upset \u2014 don\u2019t poke at it' }
+  };
+
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
   function clamp11(x) { return x < -1 ? -1 : x > 1 ? 1 : x; }
   function r2(x) { return Math.round(x * 100) / 100; }
@@ -9289,6 +9351,15 @@ var CharKit = (function () {
       var align = it.kind === INTENT[nation.id] ? 0.25 : 0;
       return clamp01(it.strength * 0.7 + align + (bonds[it.by] || 0) * 0.2);
     }
+    function veto(proposal) {                            // BLOCK another member's intent (not just outvote it) — my guard only
+      var g = VETO[nation.id];
+      if (!g || !proposal || !proposal.intent || proposal.by === self.id) return null;
+      if (!g.blocks.test(proposal.intent.kind)) return null;
+      var lastUser = null;                              // judge against the freshest thing the user actually said
+      for (var i = working.length - 1; i >= 0; i--) { if (working[i].role === 'user') { lastUser = working[i]; break; } }
+      var r = read(lastUser ? lastUser.text : (user.lastSaid || ''));
+      return g.when(r, user) ? { by: self.id, against: proposal.by, reason: g.reason } : null;
+    }
     function said(text) { self.lastSaid = text; working.push({ who: self.id, role: 'self', text: String(text || '').slice(0, 400) }); if (working.length > 8) working.shift(); }
     function describe() {
       return { id: self.id, purpose: self.purpose, persona: self.persona && self.persona.name || null, mood: r2(self.mood),
@@ -9296,7 +9367,7 @@ var CharKit = (function () {
         lastSaid: self.lastSaid, bonds: bonds, knows: working.length };
     }
     return { self: self, working: working, bonds: bonds, user: user,
-      perceive: perceive, react: react, intend: intend, voteIntent: voteIntent, said: said, describe: describe,
+      perceive: perceive, react: react, intend: intend, voteIntent: voteIntent, veto: veto, said: said, describe: describe,
       setPersona: function (p) { self.persona = p || null; } };
   }
 
@@ -9334,11 +9405,22 @@ var CharKit = (function () {
     }
 
     // A tiny built-in fallback so the layer still decides even if the Brain bundle isn't loaded — never refuse to work.
-    function localResolve(props, ballots) {
-      var tally = {}; props.forEach(function (p) { tally[p.by] = 0; });
-      ballots.forEach(function (b) { for (var k in b.scores) tally[k] += b.scores[k]; });
-      var win = null, best = -Infinity; props.forEach(function (p) { if (tally[p.by] > best) { best = tally[p.by]; win = p; } });
-      return { winnerId: win ? win.by : null, text: win ? win.text : null, status: 'carried', tally: tally };
+    // Mirrors brain.resolve's veto contract: vetoed proposals are dropped; if every one is blocked, it contests
+    // (un-blocks them) rather than going silent, and reports vetoed/vetoReasons for the floor display.
+    function localResolve(props, ballots, vetoes) {
+      vetoes = vetoes || [];
+      var vetoCount = {}, vetoReasons = {};
+      vetoes.forEach(function (v) { if (!v || v.against == null) return; vetoCount[v.against] = (vetoCount[v.against] || 0) + 1; (vetoReasons[v.against] = vetoReasons[v.against] || []).push({ by: v.by, reason: v.reason || '' }); });
+      var vetoed = Object.keys(vetoCount);
+      var eligible = props.filter(function (p) { return !vetoCount[p.by]; });
+      var contested = false;
+      if (!eligible.length && props.length) { eligible = props.slice(); contested = true; }
+      var tally = {}; eligible.forEach(function (p) { tally[p.by] = 0; });
+      ballots.forEach(function (b) { for (var k in b.scores) if (tally.hasOwnProperty(k)) tally[k] += b.scores[k]; });
+      var win = null, best = -Infinity; eligible.forEach(function (p) { if (tally[p.by] > best) { best = tally[p.by]; win = p; } });
+      return { winnerId: win ? win.by : null, text: win ? win.text : null,
+        status: contested ? 'contested' : (vetoes.length ? 'veto-resolved' : 'carried'),
+        tally: tally, vetoed: vetoed, vetoReasons: vetoReasons };
     }
 
     // ---- self-knowledge: it knows what it is, and never refuses to say. ----
@@ -9387,8 +9469,11 @@ var CharKit = (function () {
       if (!live.length) return Promise.resolve({ status: 'no-minds', speaker: null, intent: null, floor: [] });
       var proposals = live.map(function (m) { var it = m.intend(ctx); return { by: it.by, text: it.kind, conf: it.strength, intent: it }; });
       var ballots = live.map(function (m) { var sc = {}; proposals.forEach(function (p) { sc[p.by] = jitter(m.voteIntent(p.intent) * weightOf(p.by)); }); return { voter: m.self.id, scores: sc }; });
+      // each mind may BLOCK a proposal it guards against (conscience/instinct); the Society resolves the vetoes.
+      var vetoes = [];
+      live.forEach(function (m) { proposals.forEach(function (p) { var v = m.veto && m.veto(p); if (v) vetoes.push(v); }); });
       var decide = (brain && brain.resolve) ? brain.resolve : localResolve;
-      var decision = decide(proposals, ballots, [], {});
+      var decision = decide(proposals, ballots, vetoes, { vetoQuorum: 1 });
       var win = proposals.filter(function (p) { return p.by === decision.winnerId; })[0] || proposals[0];
       decision.speaker = win ? mindOf(win.by).self : null;
       decision.intent = win ? win.intent : null;
@@ -9424,6 +9509,92 @@ var CharKit = (function () {
   }
 
   return { NATIONS: NATIONS, createArmy: createArmy, gauge: gauge };
+});
+
+/* chloe-stance — reads the conversation's STANCE and carries it as a mean-reverting blend.
+ * Pure, deterministic, no model. It only OBSERVES and REPORTS — nothing here changes how she
+ * behaves. Acting on the blend (re-weighting / gating) is a later, separately-gated slice. */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeStance = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  var STANCES = ['companion', 'roleplay', 'author', 'assist'];
+
+  // Pure cue signals — each distinct match is a "pull" toward a stance. Inspectable on purpose; no model.
+  var SIGNALS = {
+    roleplay: [
+      /\*[^*]{2,}\*/,                                                        // *brushes hair from her face*
+      /\b(he|she|they|you)\s+(walks?|grabs?|leans?|smiles?|reaches?|draws?|steps?|turns?|whispers?|nods?|glances?)\b/i,
+      /\b(the|a|an)\s+\w+\s+(room|hall|forest|castle|tavern|street|battlefield|chamber|garden|dungeon)\b/i,
+      /^\s*[\(\[][^\)\]]{3,}[\)\]]\s*$/                                      // (a parenthetical stage direction)
+    ],
+    assist: [
+      /\bhow (do|can|should|would) i\b/i,
+      /\b(help me|fix|debug|explain|implement|write me|generate|refactor|optimi[sz]e)\b/i,
+      /\b(error|bug|function|code|api|regex|syntax|install|config|command)\b/i,
+      /\b(step by step|tutorial|example of)\b/i
+    ],
+    companion: [
+      /\bi(?:'m| am| feel| felt| was|m)\s+(?:so |really |kinda |pretty |a bit )?(sad|alone|lonely|tired|exhausted|anxious|scared|down|empty|happy|excited|okay|fine|stressed|overwhelmed)\b/i,
+      /\bi (just )?(need|want|wanted) to (talk|vent|tell you)\b/i,
+      /\b(my day|at work|my mom|my dad|my friend|can'?t stop thinking)\b/i,
+      /\bhow are you\b/i
+    ],
+    author: [
+      /\b(let'?s|can we|keep|continue) (writ|continu|go on)/i,
+      /\bnext (chapter|scene|paragraph|part|line|verse)\b/i,
+      /\b(write|draft|compose) (the|a|an|me a) (story|scene|poem|chapter|dialogue|verse)\b/i,
+      /\b(plot|character arc|narrator|prose|stanza)\b/i
+    ]
+  };
+
+  function read(text) {
+    var t = String(text || '');
+    var pulls = { companion: 0, roleplay: 0, author: 0, assist: 0 };
+    STANCES.forEach(function (s) { (SIGNALS[s] || []).forEach(function (re) { if (re.test(t)) pulls[s] += 1; }); });
+    return pulls;
+  }
+
+  function clone(v) { return { companion: +v.companion || 0, roleplay: +v.roleplay || 0, author: +v.author || 0, assist: +v.assist || 0 }; }
+  function renorm(v) {
+    var sum = STANCES.reduce(function (a, s) { return a + Math.max(0, v[s]); }, 0);
+    if (sum <= 0) { var u = 1 / STANCES.length; STANCES.forEach(function (s) { v[s] = u; }); return v; }
+    STANCES.forEach(function (s) { v[s] = Math.max(0, v[s]) / sum; });
+    return v;
+  }
+
+  // A mean-reverting blend. Each turn nudges the vector toward what THIS turn signalled; a neutral turn
+  // (no signal) holds. alpha is the move-per-turn — small, so one odd line can't flip the dominant stance.
+  function createReader(opts) {
+    opts = opts || {};
+    var alpha = (opts.alpha == null) ? 0.25 : Number(opts.alpha);
+    var vec = renorm(opts.initial ? clone(opts.initial) : { companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 });
+
+    function observe(text) {
+      var pulls = read(text);
+      var total = STANCES.reduce(function (a, s) { return a + pulls[s]; }, 0);
+      if (total > 0) {
+        var target = {}; STANCES.forEach(function (s) { target[s] = pulls[s] / total; });
+        STANCES.forEach(function (s) { vec[s] = vec[s] * (1 - alpha) + target[s] * alpha; });
+        renorm(vec);
+      }
+      return snapshot();
+    }
+    function snapshot() {
+      var ranked = STANCES.slice().sort(function (a, b) { return vec[b] - vec[a]; });
+      return { vector: clone(vec), dominant: ranked[0],
+        blend: ranked.slice(0, 2).map(function (s) { return { stance: s, weight: Math.round(vec[s] * 100) / 100 }; }) };
+    }
+    return { observe: observe, snapshot: snapshot,
+      get: function () { return clone(vec); }, set: function (v) { if (v) vec = renorm(clone(v)); },
+      reset: function () { vec = renorm({ companion: 0.25, roleplay: 0.25, author: 0.25, assist: 0.25 }); } };
+  }
+
+  return { STANCES: STANCES, read: read, createReader: createReader };
 });
 
 
@@ -9464,7 +9635,8 @@ var CharKit = (function () {
     reactionPortraits:true,   // generate VN-style emotion cutouts during idle time (overridable)
     reactionFeedback:false, imageStyleNotes:[],   // 'provide feedback' switch + the looks/preferences learned from edits
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 },
-    nation:{ weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 } };   // the Seven Nations (Settings > Brain)
+    nation:{ weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 },   // the Seven Nations (Settings > Brain)
+    stance:null };   // persisted stance vector (companion/roleplay/author/assist) — observed + shown only; nothing acts on it yet
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
     ['sarcasm',     'Earnest', 'Deadpan'],
@@ -10891,7 +11063,7 @@ var CharKit = (function () {
   var CATMAP = { ctx:'cog', T0:'flow', T1:'flow', T2:'flow', T3:'flow', tok:'cog', lock:'flow', poll:'io',
     fact:'mem', episode:'mem', mem:'mem', summary:'mem', goal:'mem', trust:'mem', reflect:'mem', consolidate:'mem', semantic:'mem',
     persona:'cog', character:'cog', think:'cog', affect:'cog', mood:'cog', intent:'cog', feedback:'cog',
-    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page' };
+    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page', stance:'cog' };
   function renderThought(line){
     if (!streamEl) return;
     if (lastIdle){ streamEl.innerHTML = ''; lastIdle = false; }
@@ -11591,6 +11763,7 @@ var CharKit = (function () {
     inp.value = ''; inp.style.height = 'auto'; byId('sendBtn').disabled = true;
     var um = enqueue(USER_ID, state.userName||'You', false, text);
     renderMessage('you', state.userName||'You', text, { mid: um.id });
+    observeStance(text);   // read the conversation's stance (observe + show only; nothing acts on it)
     dropLiveOrphan(); replyExpected = true;   // a reply to this message is the only thing allowed to stream into chat
     if (state.nation && state.nation.useForReplies && window.ChloeNation){ replyExpected = false; runNation(text); return; }   // the Seven Nations answer instead
     setThinking(true);
@@ -11620,6 +11793,29 @@ var CharKit = (function () {
   /* ---- The Seven Nations (Brain tab): the readable top layer. Weights and variables live in state.nation,
    *      which the mouth owns; the army reads them live and tallies votes through the Brain sub-system. ---- */
   var nationArmy = null;
+  // Stance reader (slice 1: observe + show only). Reads the conversation's stance as a blended, mean-reverting
+  // vector and logs it to the Thoughts drawer. It does NOT touch the engine, the Nations, grounding, or the
+  // veto — acting on the blend is a later, separately-gated slice. Glue-only and fully try/caught, so a stance
+  // fault can never affect a reply or an image.
+  var stanceReader = null;
+  function getStance(){
+    if (!window.ChloeStance) return null;
+    if (!stanceReader){ try { stanceReader = window.ChloeStance.createReader({ initial: state.stance }); } catch(e){ stanceReader = null; } }
+    return stanceReader;
+  }
+  function renderStance(snap){
+    if (!snap || !snap.blend || !snap.blend.length || typeof pushThought !== 'function') return;
+    var parts = snap.blend.map(function(b){ return b.stance + ' ' + Math.round(b.weight * 100) + '%'; });
+    pushThought('[chloe.stance] ' + parts.join(' \u00b7 '));
+  }
+  function observeStance(text){
+    try {
+      var sr = getStance(); if (!sr) return;
+      var snap = sr.observe(String(text || ''));
+      state.stance = sr.get(); persistState();
+      renderStance(snap);
+    } catch(e){}
+  }
   function getArmy(){
     if (!window.ChloeNation || !window.ChloeBrain) return null;
     if (!nationArmy){ nationArmy = window.ChloeNation.createArmy({ brain: window.ChloeBrain, config: state.nation }); nationArmy.setUserDescription(userDescription()); }
@@ -11704,7 +11900,15 @@ var CharKit = (function () {
       var speakerName = (persona && persona.name) || herName();
       var speakerAvatar = (persona && persona.avatar) || state.herAvatar;
       var lines = ['\ud83c\udff4 seven nations \u2014 ' + speakerName + ' takes the floor (' + (dec.intent && dec.intent.kind) + '):'];
-      (dec.floor || []).forEach(function(f){ lines.push((f.id === sp.id ? '\u2714 ' : '\u00b7 ') + f.id + ' \u2192 ' + f.kind + ' (' + f.strength + ')'); });
+      var _vetoed = dec.vetoed || [], _vreasons = dec.vetoReasons || {};
+      (dec.floor || []).forEach(function(f){
+        if (_vetoed.indexOf(f.id) >= 0){
+          var rs = (_vreasons[f.id] && _vreasons[f.id][0] && _vreasons[f.id][0].reason) || 'blocked';
+          lines.push('\u2717 ' + f.id + ' \u2192 ' + f.kind + ' \u2014 vetoed: ' + rs);
+        } else {
+          lines.push((f.id === sp.id ? '\u2714 ' : '\u00b7 ') + f.id + ' \u2192 ' + f.kind + ' (' + f.strength + ')');
+        }
+      });
       renderSystemLine(lines.join('\n'));
       if (typeof ai !== 'function'){ setThinking(false); renderSystemLine('(connect a language model to voice it)'); return; }
       Promise.resolve(ai({ instruction: voiceInstruction(persona, dec.intent, prompt), startWith: '' })).then(function(r){   // 3. voice once
