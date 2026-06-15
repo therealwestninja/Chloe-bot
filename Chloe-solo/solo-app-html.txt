@@ -10322,6 +10322,12 @@ var CharKit = (function () {
     return s.replace(/[{}\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
   }
   try { window.__chloeScrubPrompt = scrubImagePrompt; } catch(e){}   // expose so the inlined brain + engine route through this same function
+  // Perchance ignores the image seed, so an identical prompt yields an identical image (the backend keys on the
+  // prompt). That's good for portraits/reactions — a character stays consistent — but it means "another one"
+  // would redraw the same picture. So when the person asks for a fresh take, nudge the prompt with one neutral,
+  // on-domain render tag (rotated so each take differs) to get genuine variation without changing intent.
+  var VARY_TAGS = ['soft detail', 'fine detail', 'crisp detail', 'natural light', 'gentle light', 'subtle shading', 'clean rendering', 'balanced tones'];
+  function varyPrompt(p, n){ return String(p || '') + ', ' + VARY_TAGS[((n || 0) % VARY_TAGS.length + VARY_TAGS.length) % VARY_TAGS.length]; }
   // Caption shown under an image: turn AICC placeholders into real names first (so {{user}} isn't eaten as
   // brace syntax), then run the same scrub. The caption's random pick is independent of the prompt's, so a
   // prompt using {a|b} may name a different option in its caption — cosmetic only.
@@ -11028,7 +11034,8 @@ var CharKit = (function () {
     if (m.vkind === 'image'){
       var prompt = extractPrompt(m.content);
       if (!prompt){ m.__regen = false; if (btn){ btn.disabled = false; btn.textContent = '\uD83D\uDD04'; } toast('No saved prompt for this image to redraw from', 'info'); return; }
-      Promise.resolve(paint({ prompt: prompt })).then(function(r){ done(r && r.ok ? String(r.value || '') : ''); }, function(){ done(''); });
+      // vary the prompt so a fresh take actually differs (Perchance keys on the prompt; the seed is ignored)
+      Promise.resolve(paint({ prompt: varyPrompt(prompt, (m.variants ? m.variants.length : 1)) })).then(function(r){ done(r && r.ok ? String(r.value || '') : ''); }, function(){ done(''); });
     } else {
       var ai = null; try { ai = window.aiTextPlugin || (typeof root !== 'undefined' && root.aiTextPlugin); } catch(e){}
       if (typeof ai !== 'function'){ done(''); return; }
