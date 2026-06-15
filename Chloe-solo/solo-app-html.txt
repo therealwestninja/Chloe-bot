@@ -2626,6 +2626,8 @@ return window.weld.comments;
       imageCooldownMs: 2000,  // courtesy gap between images (generation time is the real spacing)
       imageQueueMax: 8,       // global image queue depth (adjustable); extra requests are dropped with a note
       imgClarifyTtlMs: 300000,// how long (5m) a "what kind of outfit?" stays open: her next-message answer completes the picture; after this it's a normal message again
+      stanceActs: false,      // OPT-IN: let inferred stance steer behavior. Default off = stance is observe-only (slice 1). When on, slice-2 actuators engage (currently just the roleplay image yes-and below).
+      stanceActThreshold: 0.5,// how dominant roleplay must be before the image clarify yes-ands instead of asking
       imageStuckMs: 90000,    // watchdog ceiling: if an image generation hasn't settled in 90s the lock is force-released (a hung plugin call must not freeze the queue)
       replyStuckMs: 60000,    // watchdog ceiling: if a reply generation hasn't settled in 60s the reply lock is force-released (a stalled model call must not freeze replies)
       // Image memory + natural-language iteration (DESIGN: "the bot knows what it generated, and you
@@ -3819,6 +3821,19 @@ return window.weld.comments;
       var d = String(detail || '').replace(/\s+/g, ' ').trim();
       return ('portrait of ' + nm + (appear ? (', ' + appear.slice(0, 220)) : '') + (d ? (', ' + d) : '') + ', soft natural light, head and shoulders').slice(0, 400);
     }
+    // Should a vague image request be YES-AND'd instead of clarified? Only in a clearly roleplay-led flow, only
+    // when the user opted in (stanceActs, default off), and only when it isn't a companion/distress moment —
+    // any real companion weight and she still asks (eager into protective). Contentless requests (self:false)
+    // have no subject to guess, so they always ask. Worst case if the read is wrong: a slightly-off image of
+    // her instead of a question — recoverable, and nowhere near the safety floor. (Grounding and the veto are
+    // untouched; this is the safest actuator on purpose.)
+    function stanceWantsYesAnd(imgReq) {
+      if (!cfg.stanceActs || !imgReq || imgReq.self === false) return false;
+      var st = (typeof cfg.stanceFn === 'function') ? cfg.stanceFn() : null;
+      var v = st && st.vector;
+      if (!v) return false;
+      return v.roleplay >= (cfg.stanceActThreshold || 0.5) && v.companion < 0.30;
+    }
     // Weave a short clarify answer ("a red one") back onto what was being clarified ("outfit") -> "red outfit",
     // so the follow-up to her own question actually completes the picture instead of dead-ending.
     function clarifyDetailToSpec(noun, answer) {
@@ -4924,6 +4939,11 @@ return window.weld.comments;
             }
             if (imageEnabled() && addressed && mayPaint(m)) {
               var imgReq = parseImageRequest(m.content);
+              if (imgReq && imgReq.clarify && stanceWantsYesAnd(imgReq)) {
+                // roleplay-led + opted in: make a bold choice (her, varied) instead of breaking immersion to ask.
+                log('[chloe.img] roleplay stance \u2014 yes-and instead of clarifying \u201c' + (imgReq.noun || 'look') + '\u201d');
+                imgReq = { prompt: selfPortraitPrompt('a different ' + (imgReq.noun || 'look')), resolution: '512x768', dm: false };
+              }
               if (imgReq && imgReq.clarify) {
                 // image-shaped but too vague to honour: she asks instead of inventing a picture. This returns
                 // before the reply is queued below, so the clarifying question stands alone (no double answer).
@@ -8185,6 +8205,7 @@ return window.weld.comments;
     // running engine without a full rebuild. Structural keys (channelId, addressMode, botUserId,
     // character/persona, channels list) still require applyConfigChange + rebuild.
     var LIVE_PATCHABLE = ['deviceClock', 'semanticInjections', 'deviceClockStaleMs', 'cleanOutput',
+      'stanceActs', 'stanceActThreshold',
       'personality',
       'translate', 'selfKnowledge', 'attentionManager', 'exactTokens', 'workingMemory',
       'idleDeliberation', 'ownAffect', 'moodAware', 'channelSummary', 'factMemory', 'volunteer',
@@ -9636,7 +9657,8 @@ var CharKit = (function () {
     reactionFeedback:false, imageStyleNotes:[],   // 'provide feedback' switch + the looks/preferences learned from edits
     personality:{ kindness:0.5, sarcasm:0.5, curiosity:0.5, playfulness:0.5, formality:0.5, verbosity:0.5 },
     nation:{ weights:{}, enabled:{}, persona:{}, timeoutMs:8000, useForReplies:false, noise:0.04 },   // the Seven Nations (Settings > Brain)
-    stance:null };   // persisted stance vector (companion/roleplay/author/assist) — observed + shown only; nothing acts on it yet
+    stanceActs:false,   // opt-in: let inferred stance steer behavior (currently the roleplay image yes-and). Default off.
+    stance:null };   // persisted stance vector (companion/roleplay/author/assist) — observed + shown only; nothing acts on it unless stanceActs is on
   var DIALS = [
     ['kindness',    'Blunt', 'Warm'],
     ['sarcasm',     'Earnest', 'Deadpan'],
@@ -9670,7 +9692,8 @@ var CharKit = (function () {
       ['attentionManager','Prioritise by relevance','when several background passes are due at once, do the one the moment calls for'] ] },
     { title:'Grounding & image', note:null, items:[
       ['selfKnowledge','Self-knowledge','knows its own name, version, and how long it\u2019s been running'],
-      ['imageMemory','Remember generated images','recall recent images so \u201canother like that\u201d / \u201cmake it landscape\u201d work'] ] }
+      ['imageMemory','Remember generated images','recall recent images so \u201canother like that\u201d / \u201cmake it landscape\u201d work'],
+      ['stanceActs','Let roleplay improvise images','experimental: in a clearly roleplay-led chat, a vague image request gets a bold guess instead of a \u201cwhat kind?\u201d question. Off = always ask. Won\u2019t improvise during an emotional/companion moment.'] ] }
   ];
   var state = loadState();
   function loadState(){ try { var s = JSON.parse(localStorage.getItem(NS+'__state__')); return Object.assign({}, DEF_STATE, s||{}); } catch(e){ return Object.assign({}, DEF_STATE); } }
@@ -10665,6 +10688,9 @@ var CharKit = (function () {
       typingRefreshMs: 4000,
       // ---- image generation: answer image requests + paint on its own ----
       image: true, sendImage: soloSendImage, imageCooldownMs: 0, imageQueueMax: 4, imageMemory: state.imageMemory !== false, imageMemoryRing: 12,
+      // ---- stance acting (opt-in, default off): lets the inferred stance steer the image clarify (roleplay -> yes-and). Observe-only until enabled. ----
+      stanceActs: !!state.stanceActs,
+      stanceFn: function(){ try { return stanceReader ? stanceReader.snapshot() : null; } catch(e){ return null; } },
       // ---- no Discord surface: no commands, moderation, @-pings, #-channels, reactions ----
       commandPrefix: null, ackCommands: false, backgroundText: false, volunteer: false,
       reactionTracking: false, reactionSummon: false, reactionAutoHighlight: false, archiveStale: false,
