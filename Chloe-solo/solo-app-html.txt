@@ -269,6 +269,24 @@
   .mempick:hover{border-color:var(--speaker,var(--accent-ink))}
   .mempick.on{border-color:var(--speaker,var(--accent-ink));color:var(--speaker,var(--accent-ink));font-weight:600;box-shadow:inset 0 0 0 1px var(--speaker,var(--accent-ink))}
   .card h3{margin:0 0 4px;font-size:14px;color:var(--ink)} .card .note{font-size:12px;color:var(--muted)}
+  /* collapsible settings tree: each settings card is a node, its h3 the single-line header */
+  .card.tnode>h3{cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;margin:0}
+  .card.tnode>h3::before{content:'';width:6px;height:6px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .14s;flex:none}
+  .card.tnode:not(.collapsed)>h3{margin-bottom:10px}
+  .card.tnode:not(.collapsed)>h3::before{transform:rotate(45deg)}
+  .card.tnode.collapsed>h3::before{transform:rotate(-45deg)}
+  .card.tnode.collapsed>*:not(h3){display:none!important}
+  .card.tnode.collapsed{padding-top:13px;padding-bottom:13px}
+  .card.tnode>h3:hover{color:var(--accent-ink)}
+  /* density inside settings: tighter cards/fields, terser descriptions */
+  #settingsBg .card{padding:14px;margin-bottom:11px}
+  #settingsBg .card .note{font-size:11.5px;line-height:1.45}
+  #settingsBg .field{margin-bottom:13px} #settingsBg .field .desc{font-size:11px;line-height:1.4;margin:-1px 0 7px}
+  #settingsBg .toggle{padding:8px 0} #settingsBg .toggle .td{font-size:11.5px;line-height:1.4}
+  #settingsBg .panel{padding:18px}
+  .tree-allbar{display:flex;gap:8px;justify-content:flex-end;margin:-4px 0 10px}
+  .tree-allbar button{border:none;background:transparent;color:var(--muted);font-size:12px;cursor:pointer;padding:3px 6px;border-radius:6px}
+  .tree-allbar button:hover{color:var(--accent-ink);background:var(--line-soft)}
   .chardrop{border:1.5px dashed var(--line);border-radius:11px;padding:20px;text-align:center;color:var(--muted);font-size:13px;transition:border-color .15s,background .15s;cursor:pointer}
   .chardrop:hover,.chardrop.drag{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
   .chardrop code{background:var(--line-soft);padding:1px 5px;border-radius:4px;font-size:12px}
@@ -12221,7 +12239,47 @@ var CharKit = (function () {
     });
   }
 
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); }
+  // ---- collapsible settings tree ----------------------------------------------------------------
+  // Pure DOM enhancement over the existing settings markup: every .card with an <h3> becomes a foldable
+  // node keyed by its title, with per-panel expand/collapse-all and persisted open/closed state. No control
+  // id is touched — the wiring map is preserved by construction (the dup-id / missing-id audits confirm it).
+  function treeStateLoad(){ try { return JSON.parse(localStorage.getItem(NS + '__tree__')) || {}; } catch(e){ return {}; } }
+  function treeStateSave(s){ try { localStorage.setItem(NS + '__tree__', JSON.stringify(s)); } catch(e){} }
+  function directChild(el, tag){ for (var i = 0; i < el.children.length; i++){ if (el.children[i].tagName === tag) return el.children[i]; } return null; }
+  function setAllIn(panel, collapsed){
+    var s = treeStateLoad();
+    Array.prototype.forEach.call(panel.querySelectorAll('.card.tnode'), function(card){
+      card.classList.toggle('collapsed', collapsed);
+      var k = card.getAttribute('data-tk'); if (k) s[k] = collapsed;
+    });
+    treeStateSave(s);
+  }
+  function enhanceSettingsTrees(){
+    var sb = byId('settingsBg'); if (!sb) return;
+    var st = treeStateLoad();
+    Array.prototype.forEach.call(sb.querySelectorAll('.panel'), function(panel){
+      if (panel.querySelectorAll('.card').length > 1 && !panel.querySelector('.tree-allbar')){
+        var bar = document.createElement('div'); bar.className = 'tree-allbar';
+        var ex = document.createElement('button'); ex.textContent = 'Expand all'; ex.addEventListener('click', function(){ setAllIn(panel, false); });
+        var co = document.createElement('button'); co.textContent = 'Collapse all'; co.addEventListener('click', function(){ setAllIn(panel, true); });
+        bar.appendChild(ex); bar.appendChild(co); panel.insertBefore(bar, panel.firstChild);
+      }
+    });
+    Array.prototype.forEach.call(sb.querySelectorAll('.card'), function(card){
+      if (card.classList.contains('tnode')) return;            // already wired (skip re-render churn)
+      var h3 = directChild(card, 'H3'); if (!h3) return;
+      var panel = card.closest('.panel'); var pname = panel ? (panel.getAttribute('data-panel') || '') : '';
+      card.classList.add('tnode');
+      var key = pname + ':' + (String(h3.textContent || '').trim().slice(0, 40) || 'card');
+      card.setAttribute('data-tk', key);
+      card.classList.toggle('collapsed', (key in st) ? !!st[key] : true);   // default folded -> a clean tree of titles
+      h3.addEventListener('click', function(){
+        var nowC = card.classList.toggle('collapsed');
+        var s = treeStateLoad(); s[key] = nowC; treeStateSave(s);
+      });
+    });
+  }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); enhanceSettingsTrees(); }
   function activateTab(name){
     document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('on'); });
     document.querySelectorAll('.panel').forEach(function(x){ x.classList.remove('on'); });
