@@ -9806,6 +9806,7 @@ var CharKit = (function () {
     if (liveWrap) return;
     liveWrap = renderMessage('her', herName(), '', { streaming:true }); liveWrap.__pending = true;
     liveBody = liveWrap.querySelector('.body');
+    lastBotWrap = liveWrap; paintMsgFace(liveWrap);   // her face sits beside the name while she streams; the mood lands at finalize
     try { byId('typingRow').classList.remove('on'); } catch(e){}   // words are arriving — the dots are redundant now
   }
   function updateLiveReply(t){ ensureLiveBubble(); liveText = t; if (liveBody) liveBody.textContent = t; scrollThread(false); }
@@ -9861,7 +9862,7 @@ var CharKit = (function () {
     if (text){
       var m = enqueue(BOT_ID, herName(), true, text);
       if (liveActive && liveWrap) liveWrap.setAttribute('data-mid', m.id);
-      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text, { mid: m.id }); if (w){ w.setAttribute('data-cid', BOT_ID); if (isGroup() || state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); } }
+      if (!(liveActive && finalizeLiveReply(text))){ var w = renderMessage('her', herName(), text, { mid: m.id }); if (w){ w.setAttribute('data-cid', BOT_ID); lastBotWrap = w; if (isGroup() || state.botColor) styleSpeaker(w, BOT_ID, state.herAvatar); paintMsgFace(w); showReaction(detectEmotion(text) || 'normal'); } }
     }
     liveActive = false; replyExpected = false;
     return Promise.resolve(true);
@@ -10060,6 +10061,18 @@ var CharKit = (function () {
   // matching reaction cutout. The base portrait (state.herAvatar) is left intact; only the displayed <img>
   // changes. Falls back: a missing emotion -> the normal cutout -> the base portrait.
   var _reactionUrl = null, _reactionEmo = null;
+  var _faceUrl = null, _faceEmo = null, lastBotWrap = null;   // her current face as a STABLE data url for the per-message slot (object urls get revoked each mood, which would break older messages)
+  function blobToDataUrl(blob){ return new Promise(function(res, rej){ try { var fr = new FileReader(); fr.onload = function(){ res(fr.result); }; fr.onerror = function(){ rej(fr.error); }; fr.readAsDataURL(blob); } catch(e){ rej(e); } }); }
+  // the face to show beside her name right now: the live reaction cutout if we have one, else her base portrait
+  function herFace(){ return _faceUrl || state.herAvatar || (state.character && state.character.avatar) || ''; }
+  // paint (or update) the small portrait to the LEFT of the name on one of her messages
+  function paintMsgFace(wrap){
+    if (!wrap) return; var who = wrap.querySelector('.who'); if (!who) return;
+    var url = herFace(), img = who.querySelector('.spk-av');
+    if (!url){ if (img && img.parentNode) img.parentNode.removeChild(img); return; }
+    if (!img){ img = document.createElement('img'); img.className = 'spk-av'; img.alt = ''; who.insertBefore(img, who.firstChild); }
+    if (img.getAttribute('src') !== url) img.src = url;
+  }
   function forgetReaction(){ if (_reactionUrl){ try { URL.revokeObjectURL(_reactionUrl); } catch(e){} _reactionUrl = null; } _reactionEmo = null; }
   function revertAvatar(){
     var img = byId('herAvatar'); if (!img) return; forgetReaction();
@@ -10068,13 +10081,17 @@ var CharKit = (function () {
   }
   function showReaction(emotion){
     if (state.reactionPortraits === false) return;
-    var img = byId('herAvatar'); if (!img) return;
-    var emo = emotion || 'normal'; if (emo === _reactionEmo) return;
+    var img = byId('herAvatar');
+    var emo = emotion || 'normal';
+    if (emo === _reactionEmo){ paintMsgFace(lastBotWrap); return; }   // already on this mood — just make sure the message shows it
     ReactionStore.get(reactionCharId(), emo).then(function(rec){
-      if (!rec || !rec.blob){ if (emo !== 'normal') showReaction('normal'); else revertAvatar(); return; }
+      if (!rec || !rec.blob){ if (emo !== 'normal') showReaction('normal'); else { _faceUrl = null; _faceEmo = null; revertAvatar(); paintMsgFace(lastBotWrap); } return; }
       var url = URL.createObjectURL(rec.blob);
       if (_reactionUrl){ try { URL.revokeObjectURL(_reactionUrl); } catch(e){} }
-      _reactionUrl = url; _reactionEmo = emo; img.src = url; img.style.display = '';
+      _reactionUrl = url; _reactionEmo = emo;
+      if (img){ img.src = url; img.style.display = ''; }   // the header avatar (top bar), to the left of her name
+      // and a stable data url for the in-chat face beside her name on the latest reply
+      blobToDataUrl(rec.blob).then(function(durl){ _faceUrl = durl; _faceEmo = emo; paintMsgFace(lastBotWrap); }, function(){ paintMsgFace(lastBotWrap); });
     }).catch(function(){});
   }
   // Phase 4 — the reaction gallery in the Characters popup: the set at a glance, each cutout with an editable
