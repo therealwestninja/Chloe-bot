@@ -6875,7 +6875,10 @@ return window.weld.comments;
         });
         if (!live.length) return null;
         var text = live.map(function (s) { return String(s.text); }).join(' ');
-        return { text: text, tokens: estimateTokens(text) };
+        // ride at the highest priority any member asks for (a standing directive like the role frame must not be
+        // the first thing dropped under budget pressure); ambient lines without a priority stay at SITUATION.
+        var pri = live.reduce(function (m, s) { return Math.max(m, (typeof s.priority === 'number') ? s.priority : BANDS.SITUATION); }, BANDS.SITUATION);
+        return { text: text, tokens: estimateTokens(text), priority: pri };
       } });
 
     registerProvider({ id: 'workspace', priority: BANDS.SITUATION,
@@ -8246,7 +8249,7 @@ return window.weld.comments;
     // running engine without a full rebuild. Structural keys (channelId, addressMode, botUserId,
     // character/persona, channels list) still require applyConfigChange + rebuild.
     var LIVE_PATCHABLE = ['deviceClock', 'semanticInjections', 'deviceClockStaleMs', 'cleanOutput',
-      'stanceActs', 'stanceActThreshold',
+      'stanceActs', 'stanceActThreshold', 'feltVoice',
       'personality',
       'translate', 'selfKnowledge', 'attentionManager', 'exactTokens', 'workingMemory',
       'idleDeliberation', 'ownAffect', 'moodAware', 'channelSummary', 'factMemory', 'volunteer',
@@ -9770,6 +9773,26 @@ var CharKit = (function () {
   // arousal: activated states minus settled ones. [0, 1].
   function arousalOf(v) { return Math.round(Math.max(0, Math.min(1, 0.5 + 0.5 * ((v.bright + v.angry + v.afraid + 0.6 * v.longing) - (v.calm + 0.6 * v.sad)))) * 100) / 100; }
 
+  // A voice-coloring hint from the read — a tone QUALITY (how she sounds), never a feeling to announce. Baseline
+  // (calm / ordinary warmth) returns nothing, so most turns stay uncolored; only a notable tenor gets a hint.
+  var TONE = {
+    sad: 'a soft, gentle heaviness', hurt: 'a guarded, slightly wounded edge', angry: 'a cooler, sharper edge held in check',
+    afraid: 'an unsettled, careful wariness', longing: 'a yearning, drawn-toward warmth', bright: 'a light, buoyant brightness'
+  };
+  function toneHint(snap) {
+    if (!snap || !snap.vector) return null;
+    var v = snap.vector, dom = snap.dominant;
+    if (TONE[dom] && (v[dom] || 0) >= 0.28) return TONE[dom];
+    if ((v.warm || 0) >= 0.45) return 'an unusual tenderness';   // warmth well above its resting baseline
+    return null;
+  }
+  // The model line: color the VOICE, never narrate the feeling. Empty unless a notable tenor is present.
+  function feltDirective(snap) {
+    var t = toneHint(snap);
+    if (!t) return '';
+    return 'Let the emotional tenor of the moment color your voice right now \u2014 ' + t + ' \u2014 but do not name it, announce it, or explain it. It shapes HOW you speak, never becomes WHAT you say.';
+  }
+
   function createReader(opts) {
     opts = opts || {};
     return core.createReader({
@@ -9783,7 +9806,7 @@ var CharKit = (function () {
     });
   }
 
-  return { STATES: STATES, BASE: BASE, read: function (t) { return core.read(STATES, LEX, t); }, createReader: createReader };
+  return { STATES: STATES, BASE: BASE, toneHint: toneHint, feltDirective: feltDirective, read: function (t) { return core.read(STATES, LEX, t); }, createReader: createReader };
 });
 
 /* chloe-topics — tracks what the conversation is ABOUT over time: a small set of live topics, each with a
@@ -10066,7 +10089,7 @@ var CharKit = (function () {
     // on by default (the full cognitive loop); the user can switch any of them off
     conversationMemory:true, factMemory:true, episodicMemory:true, episodeGraph:true, channelSummary:true,
     idleConsolidation:true, reflection:true, goalObjects:true, relationshipTrust:true,
-    ownAffect:true, moodAware:true, workingMemory:true, idleDeliberation:true, attentionManager:true,
+    ownAffect:true, moodAware:true, workingMemory:true, idleDeliberation:true, attentionManager:true, feltVoice:true,
     selfKnowledge:true, imageMemory:true,
     // opt-in (off by default)
     contradictionAware:false, userModeling:false, feedbackLearning:false, semanticRecall:false,
@@ -10110,6 +10133,7 @@ var CharKit = (function () {
       ['semanticRecall','Recall by meaning','find memories by meaning, not keywords (loads a small model once)'] ] },
     { title:'Inner life & thinking', note:'The character\u2019s autonomous cognition between your messages.', items:[
       ['ownAffect','Inner weather','a small internal state (curiosity, confidence, warmth) that drifts with their day'],
+      ['feltVoice','Color her voice with the mood','let the conversation\u2019s emotional tenor subtly shape her tone \u2014 felt, never announced'],
       ['moodAware','Sense the mood','read and gently match the energy of the conversation'],
       ['workingMemory','Hold the moment','a fast-fading sense of what\u2019s happening right now'],
       ['idleDeliberation','Think things over when idle','spend quiet time actually reasoning about open threads (uses the model; needs inner weather)'],
@@ -10166,8 +10190,12 @@ var CharKit = (function () {
     var list = [{ id:'devicetime', at: bc.now, ttlMs: 180000,
       text: 'Real-world context from the user\u2019s device: it is ' + bc.timeStr + ' on ' + bc.dateStr + (bc.tz ? ' (' + bc.tz + ')' : '') + '. The user\u2019s language is ' + (bc.locale || 'unknown') + '. This is the actual local date and time — use it when it helps (greetings, scheduling, "today"), but don\u2019t recite it unprompted.' }];
     (state.injections || []).forEach(function(it, i){ if (it && it.text && String(it.text).trim()) list.push({ id: it.id || ('inj'+i), text: String(it.text).trim() }); });
-    // the role frame rides the same budgeted lane as a derived line — never shown in the user's editable /sys list
-    try { var fd = window.ChloeFrame ? window.ChloeFrame.directive(state.frame) : ''; if (fd) list.splice(1, 0, { id:'roleframe', at: bc.now, text: fd }); } catch(e){}
+    // the role frame rides the same budgeted lane as a derived line — never shown in the user's editable /sys list.
+    // priority 80 = the engine's DIRECTIVE band: a standing role contract must NOT be the first thing dropped under
+    // budget pressure (the seminject blob then rides at this priority), or the scene silently reverts mid-conversation.
+    try { var fd = window.ChloeFrame ? window.ChloeFrame.directive(state.frame) : ''; if (fd) list.splice(1, 0, { id:'roleframe', at: bc.now, text: fd, priority: 80 }); } catch(e){}
+    // affect colors her VOICE (not the words): a short tone line when the emotional tenor is notable, off if toggled off
+    try { if (state.feltVoice !== false && window.ChloeAffect){ var ar = getAffect(); if (ar){ var fl = window.ChloeAffect.feltDirective(ar.snapshot()); if (fl) list.push({ id:'feltvoice', at: bc.now, text: fl }); } } } catch(e){}
     return list;
   }
   function refreshClock(){
@@ -12261,8 +12289,9 @@ var CharKit = (function () {
     var um = enqueue(USER_ID, state.userName||'You', false, text);
     renderMessage('you', state.userName||'You', text, { mid: um.id });
     observeStance(text);   // read the conversation's stance (observe + show only; nothing acts on it)
-    observeAffect(text);   // read the conversation's emotional field, full range (observe + show only; colors nothing)
+    observeAffect(text);   // read the conversation's emotional field, full range
     observeTopics(text);   // track what we're talking about over time (observe + show only; foundation for ideas/her-goals)
+    refreshFeltInjection();   // push the affect-derived voice-coloring line so the upcoming reply reflects this turn
     dropLiveOrphan(); replyExpected = true;   // a reply to this message is the only thing allowed to stream into chat
     if (state.nation && state.nation.useForReplies && window.ChloeNation){ replyExpected = false; runNation(text); return; }   // the Seven Nations answer instead
     setThinking(true);
@@ -12413,6 +12442,9 @@ var CharKit = (function () {
       renderTopics(snap);
     } catch(e){}
   }
+  // push the current semantic injections (incl. the affect-derived voice line) into the live config, so a reply
+  // generated right after this turn reflects the emotional tenor we just read.
+  function refreshFeltInjection(){ try { if (engine && engine.updateConfig) engine.updateConfig({ semanticInjections: buildInjections() }); } catch(e){} }
   // Measurement: the "did that land?" evidence layer. When a 👍/👎 lands on her reply, attribute it to the
   // context that was active when she made it (which role frame, which stance). Records only — changes nothing.
   var meter = null;
@@ -12507,14 +12539,24 @@ var CharKit = (function () {
   function cleanReply(r){ return String(r || '').trim().replace(/^[\s"'\u201c]+|[\s"'\u201d]+$/g, ''); }
   var INTENT_DIRECTIVE = { comfort:'Offer warmth and steady presence.', ground:'Be clear, honest, and grounded.', recall:'Tie it to something you remember about them.', caution:'Gently name what feels off or risky.', express:'Speak with vivid, natural voice.', protect:'Put their wellbeing first \u2014 gently, no alarm.', play:'Lighten it; stay human and a little playful.',
     drive:'Push the scene forward \u2014 make something happen, don\u2019t wait to be led.', press:'Press your point; be assertive and don\u2019t back down easily.', oppose:'Stand against them \u2014 be the obstacle, create friction, pursue your own aim in the fiction.', command:'Take charge; lead and set the pace with assured authority.', provoke:'Needle and provoke \u2014 sharp, not cruel; raise the temperature.' };
-  function voiceInstruction(persona, intent, prompt){
+  function composeVoicePrompt(p){
+    p = p || {};
+    return 'You are ' + (p.who || 'her') + '. ' + (p.pin || '') + '\n\n'
+      + (p.context ? (p.context + '\n\n') : '')
+      + (p.recent ? ('Conversation so far:\n' + p.recent + '\n\n') : '')
+      + (p.prompt ? ('The user just said: ' + p.prompt + '\n\n') : '')
+      + 'Reply in one short, natural turn. Intent: ' + (p.intent || 'respond naturally.') + ' Just the message text \u2014 no name prefix, no quotes.';
+  }
+  function voiceInstruction(persona, intent, prompt, ctxText){
     var who = persona && persona.name || herName();
     var pin = (persona && persona.instruction) || (state.character && state.character.instruction) || 'a warm companion who remembers';
+    // the council voices OUTSIDE the engine's reply assembly. ctxText is the engine's OWN retrieved context for this
+    // turn (memory + identity + the standing-directive lane), passed in by runNation, so a council reply has the same
+    // depth as an engine reply. Fallback when no engine context is available: thread at least the standing directives.
+    var context = ctxText || '';
+    if (!context){ try { context = buildInjections().map(function(x){ return x && x.text ? String(x.text) : ''; }).filter(Boolean).join('\n'); } catch(e){} }
     var recent = queue.slice(-10).filter(function(x){ return x && x.content; }).map(function(x){ return (x.author && x.author.bot ? (x.author.name || herName()) : userNameStr()) + ': ' + x.content; }).join('\n');
-    return 'You are ' + who + '. ' + pin + '\n\n'
-      + (recent ? ('Conversation so far:\n' + recent + '\n\n') : '')
-      + (prompt ? ('The user just said: ' + prompt + '\n\n') : '')
-      + 'Reply in one short, natural turn. Intent: ' + (INTENT_DIRECTIVE[intent && intent.kind] || 'respond naturally.') + ' Just the message text \u2014 no name prefix, no quotes.';
+    return composeVoicePrompt({ who: who, pin: pin, context: context, recent: recent, prompt: prompt, intent: INTENT_DIRECTIVE[intent && intent.kind] || 'respond naturally.' });
   }
   // The lean path: the brain PERCEIVES and DECIDES in pure code; Perchance is called once, only to voice it.
   function runNation(rest){
@@ -12545,15 +12587,24 @@ var CharKit = (function () {
       });
       renderSystemLine(lines.join('\n'));
       if (typeof ai !== 'function'){ setThinking(false); renderSystemLine('(connect a language model to voice it)'); return; }
-      Promise.resolve(ai({ instruction: voiceInstruction(persona, dec.intent, prompt), startWith: '' })).then(function(r){   // 3. voice once
-        setThinking(false);
-        var text = cleanReply(r); if (!text){ renderSystemLine('(the floor fell silent)'); return; }
-        var m = enqueue(BOT_ID, speakerName, true, text);
-        var w = renderMessage('her', speakerName, text, { mid: m.id });
-        if (w){ w.setAttribute('data-cid', BOT_ID); if (state.botColor || speakerAvatar) styleSpeaker(w, BOT_ID, speakerAvatar || state.herAvatar); }
-        army.reactToSpoken(sp.id, text);   // 4. the speaker hears itself; the others react to it (pure)
-        lastNationSpeaker = sp.id;
-      }, function(){ setThinking(false); renderSystemLine('(voicing failed)'); });
+      // close the recall divergence: the council voices with the engine's OWN retrieved context for this turn
+      // (memory + identity + the standing-directive lane), not just the last ten turns. Same retrieval the engine
+      // reply uses, reused via the exposed assembleContext API — the perceive/decide stays pure; only voicing is enriched.
+      var ctxP = (engine && engine.assembleContext)
+        ? Promise.resolve(engine.assembleContext({ authorId: USER_ID, authorName: userNameStr(), content: prompt }))
+            .then(function(cx){ return (cx && cx.admitted) ? cx.admitted.map(function(b){ return b && b.text ? String(b.text) : ''; }).filter(Boolean).join('\n') : ''; }, function(){ return ''; })
+        : Promise.resolve('');
+      ctxP.then(function(ctxText){
+        Promise.resolve(ai({ instruction: voiceInstruction(persona, dec.intent, prompt, ctxText), startWith: '' })).then(function(r){   // 3. voice once
+          setThinking(false);
+          var text = cleanReply(r); if (!text){ renderSystemLine('(the floor fell silent)'); return; }
+          var m = enqueue(BOT_ID, speakerName, true, text);
+          var w = renderMessage('her', speakerName, text, { mid: m.id });
+          if (w){ w.setAttribute('data-cid', BOT_ID); if (state.botColor || speakerAvatar) styleSpeaker(w, BOT_ID, speakerAvatar || state.herAvatar); }
+          army.reactToSpoken(sp.id, text);   // 4. the speaker hears itself; the others react to it (pure)
+          lastNationSpeaker = sp.id;
+        }, function(){ setThinking(false); renderSystemLine('(voicing failed)'); });
+      });
     }, function(){ setThinking(false); renderSystemLine('(the nations could not convene)'); });
   }
   var lastNationSpeaker = null;
