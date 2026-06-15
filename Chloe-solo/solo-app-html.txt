@@ -743,6 +743,11 @@
         <div class="row" style="margin-top:8px;align-items:center;gap:10px"><button class="btn" id="frameReset">Back to companion</button><span class="status" id="frameNow"></span></div>
       </div>
       <div class="card">
+        <h3>What lands</h3>
+        <div class="note">When you 👍/👎 her replies, the rating is attributed to the role frame and stance that were active \u2014 so you can see what actually works for you, by evidence rather than guesswork. Local and private; it records only and changes nothing on its own.</div>
+        <div id="measureReadout" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
         <h3>Content moderation</h3>
         <div class="note">Block image prompts that contain certain terms. One phrase per line; <code>*</code> is a wildcard. Off by default. (Import <code>weld-banlist</code> in the top panel to also enforce a content-rating ceiling.)</div>
         <div class="toggle" style="border:none;padding-top:10px"><input type="checkbox" id="modEnabled"><div><div class="tl">Enable the content gate</div><div class="td">the character won’t draw anything matching a blocked term</div></div></div>
@@ -9400,7 +9405,10 @@ var CharKit = (function () {
       remember(turn);
       var cues = read(turn.text);
       if (turn.role === 'user') {
-        user.sentiment = clamp11(user.sentiment * 0.7 + (cues.warmth + cues.humor - cues.distress - cues.anger) * 0.15);
+        // signed user-polarity has one source of truth: the affect read's valence when the mouth provides it,
+        // else this layer's own cues (so the council and the affect reader can't disagree about how you feel).
+        var nudge = (turn.valence != null) ? (clamp11(turn.valence) * 0.3) : ((cues.warmth + cues.humor - cues.distress - cues.anger) * 0.15);
+        user.sentiment = clamp11(user.sentiment * 0.7 + nudge);
         user.engagement = clamp01(user.engagement * 0.8 + Math.min(1, cues.len / 120) * 0.2);
         user.lastSaid = turn.text;
       }
@@ -9967,6 +9975,71 @@ var CharKit = (function () {
   return { DIMS: DIMS, DEFAULT: DEFAULT, normalize: normalize, isDefault: isDefault, directive: directive, affectResting: affectResting, describe: describe, drives: drives, beatInstruction: beatInstruction };
 });
 
+/* chloe-measure — the "did that land?" evidence layer. A local, sparse tally that attributes a 👍/👎 on her reply
+ * to the context that was active when she made it (which role frame, which stance). Gently time-decayed so recent
+ * signal weighs more and stale preference fades. Pure and deterministic — no model, no DOM, no network. This only
+ * RECORDS; it changes no behavior. The point is to make "is this helping?" answerable by evidence, not taste. */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.ChloeMeasure = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  function r1(x) { return Math.round(x * 10) / 10; }
+
+  function createMeter(opts) {
+    opts = opts || {};
+    var halfLifeDays = (opts.halfLifeDays == null) ? 30 : Number(opts.halfLifeDays);
+    var now = (typeof opts.now === 'function') ? opts.now : function () { return Date.now(); };
+    var init = opts.initial || null;
+    var tally = {};                                  // tag -> { up, down, at }
+    if (init && init.tally) Object.keys(init.tally).forEach(function (k) {
+      var e = init.tally[k]; if (e) tally[k] = { up: +e.up || 0, down: +e.down || 0, at: +e.at || now() };
+    });
+
+    function decay(at, t) {
+      if (!at || halfLifeDays <= 0) return 1;
+      var days = (t - at) / 86400000;
+      return days > 0 ? Math.pow(0.5, days / halfLifeDays) : 1;
+    }
+
+    // record a 👍 (reward > 0) or 👎 against one or more context tags
+    function record(tags, reward) {
+      var t = now(), r = (reward > 0) ? 1 : -1;
+      var arr = Array.isArray(tags) ? tags : [tags];
+      arr.forEach(function (tag) {
+        tag = String(tag || '').trim(); if (!tag) return;
+        var e = tally[tag] || { up: 0, down: 0, at: t }, f = decay(e.at, t);
+        e.up = e.up * f + (r > 0 ? 1 : 0);
+        e.down = e.down * f + (r < 0 ? 1 : 0);
+        e.at = t;
+        tally[tag] = e;
+      });
+      return summary();
+    }
+
+    // per-tag decayed up/down/n and a "lands" rate (up / (up+down)), strongest signal first
+    function summary() {
+      var t = now();
+      return Object.keys(tally).map(function (tag) {
+        var e = tally[tag], f = decay(e.at, t), up = e.up * f, down = e.down * f, n = up + down;
+        return { tag: tag, up: r1(up), down: r1(down), n: r1(n), rate: n > 0 ? Math.round((up / n) * 100) / 100 : null };
+      }).filter(function (x) { return x.n >= 0.05; }).sort(function (a, b) { return b.n - a.n; });
+    }
+
+    function forTag(tag) { var s = summary(); for (var i = 0; i < s.length; i++) if (s[i].tag === tag) return s[i]; return null; }
+
+    return { record: record, summary: summary, forTag: forTag,
+      get: function () { var out = {}; Object.keys(tally).forEach(function (k) { out[k] = { up: r1(tally[k].up), down: r1(tally[k].down), at: tally[k].at }; }); return { tally: out }; },
+      set: function (v) { tally = {}; if (v && v.tally) Object.keys(v.tally).forEach(function (k) { var e = v.tally[k]; if (e) tally[k] = { up: +e.up || 0, down: +e.down || 0, at: +e.at || now() }; }); },
+      reset: function () { tally = {}; } };
+  }
+
+  return { createMeter: createMeter };
+});
+
 
 /* ============================ Chloe-bot glue ============================ */
 (function () {
@@ -9989,7 +10062,7 @@ var CharKit = (function () {
   function refresh(){ updateCharLabel(); persistState(); }
 
   /* ---- settings state, persisted ---- */
-  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[], frame:null, theme:'system', accent:null, botColor:null,
+  var DEF_STATE = { botName:'Chloe', userName:'You', character:null, herAvatar:null, injections:[], frame:null, measure:null, theme:'system', accent:null, botColor:null,
     // on by default (the full cognitive loop); the user can switch any of them off
     conversationMemory:true, factMemory:true, episodicMemory:true, episodeGraph:true, channelSummary:true,
     idleConsolidation:true, reflection:true, goalObjects:true, relationshipTrust:true,
@@ -11471,7 +11544,7 @@ var CharKit = (function () {
   var CATMAP = { ctx:'cog', T0:'flow', T1:'flow', T2:'flow', T3:'flow', tok:'cog', lock:'flow', poll:'io',
     fact:'mem', episode:'mem', mem:'mem', summary:'mem', goal:'mem', trust:'mem', reflect:'mem', consolidate:'mem', semantic:'mem',
     persona:'cog', character:'cog', think:'cog', affect:'cog', mood:'cog', intent:'cog', feedback:'cog',
-    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page', stance:'cog', topics:'mem' };
+    mode:'flow', work:'flow', remind:'io', greet:'io', lull:'io', checkin:'io', note:'page', stance:'cog', topics:'mem', measure:'cog' };
   function renderThought(line){
     if (!streamEl) return;
     if (lastIdle){ streamEl.innerHTML = ''; lastIdle = false; }
@@ -11657,12 +11730,14 @@ var CharKit = (function () {
   function attachFeedback(wrap, text){
     if (!engine || typeof engine.recordFeedback !== 'function' || typeof engine.styleOf !== 'function') return;
     if (wrap.__fb) return; wrap.__fb = true;
+    var measureTags = signatureNow();   // capture the active context NOW (at reply render), recorded if/when rated
     var row = msgActions(wrap), voteBtns = [];
     function mk(label, reward){
       var btn = document.createElement('button'); btn.type = 'button'; btn.textContent = label; btn.title = reward > 0 ? 'Tell her that one landed' : 'Tell her to ease off that style';
       btn.addEventListener('click', function(){
         try { engine.recordFeedback(engine.styleOf(text), reward); } catch(e){}
         try { if (nationArmy) nationArmy.ingestReaction({ kind: reward > 0 ? 'up' : 'down', toward: lastNationSpeaker }); } catch(e){}
+        recordMeasure(measureTags, reward);   // attribute the 👍/👎 to the frame/stance that were active
         row.classList.add('voted');
         voteBtns.forEach(function(c){ c.classList.remove('on'); });   // only the 👍/👎 pair is mutually exclusive
         btn.classList.add('on');
@@ -12338,6 +12413,41 @@ var CharKit = (function () {
       renderTopics(snap);
     } catch(e){}
   }
+  // Measurement: the "did that land?" evidence layer. When a 👍/👎 lands on her reply, attribute it to the
+  // context that was active when she made it (which role frame, which stance). Records only — changes nothing.
+  var meter = null;
+  function getMeter(){
+    if (!window.ChloeMeasure) return null;
+    if (!meter){ try { meter = window.ChloeMeasure.createMeter({ initial: state.measure }); } catch(e){ meter = null; } }
+    return meter;
+  }
+  function signatureNow(){   // the context tags for the reply being rendered right now
+    var tags = [];
+    try { tags.push('frame:' + (window.ChloeFrame ? window.ChloeFrame.describe(state.frame) : 'companion (default)')); } catch(e){}
+    try { var sr = getStance(); if (sr){ var sn = sr.snapshot(); if (sn) tags.push('stance:' + (sn.pinned ? (sn.pinned + ' (pinned)') : sn.dominant)); } } catch(e){}
+    return tags;
+  }
+  function recordMeasure(tags, reward){
+    try {
+      var mt = getMeter(); if (!mt || !tags || !tags.length) return;
+      mt.record(tags, reward);
+      state.measure = mt.get(); persistState();
+      if (typeof pushThought === 'function') pushThought('[chloe.measure] noted ' + (reward > 0 ? '\ud83d\udc4d' : '\ud83d\udc4e') + ' \u2014 ' + tags.join(', '));
+      renderMeasure();
+    } catch(e){}
+  }
+  function renderMeasure(){
+    var box = byId('measureReadout'); if (!box) return;
+    var mt = getMeter(); var rows = mt ? mt.summary() : [];
+    if (!rows.length){ box.textContent = 'No 👍/👎 yet. As you rate her replies, what lands under each role frame and stance shows up here.'; return; }
+    box.innerHTML = '';
+    rows.slice(0, 12).forEach(function(r){
+      var line = document.createElement('div'); line.className = 'status'; line.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:2px 0';
+      var pct = (r.rate == null) ? '\u2014' : (Math.round(r.rate * 100) + '%');
+      line.innerHTML = '<span>' + r.tag.replace(/[<>&]/g, '') + '</span><span>' + pct + ' land \u00b7 ' + r.up + '\ud83d\udc4d/' + r.down + '\ud83d\udc4e</span>';
+      box.appendChild(line);
+    });
+  }
   function getArmy(){
     if (!window.ChloeNation || !window.ChloeBrain) return null;
     if (!nationArmy){ nationArmy = window.ChloeNation.createArmy({ brain: window.ChloeBrain, config: state.nation }); nationArmy.setUserDescription(userDescription()); }
@@ -12414,7 +12524,8 @@ var CharKit = (function () {
     var prompt = String(rest || '').trim();
     if (!prompt){ for (var i = queue.length - 1; i >= 0; i--){ if (queue[i].author && !queue[i].author.bot){ prompt = queue[i].content; break; } } }
     army.setUserDescription(userDescription());
-    army.perceive({ who: userNameStr(), role: 'user', text: prompt });   // 1. perceive (pure)
+    var _av = null; try { var _ar = getAffect(); if (_ar){ var _as = _ar.snapshot(); if (_as) _av = _as.valence; } } catch(e){}
+    army.perceive({ who: userNameStr(), role: 'user', text: prompt, valence: _av });   // 1. perceive (pure) — sentiment from the affect read
     setThinking(true);
     army.deliberateIntents({ prompt: prompt, frame: (window.ChloeFrame ? window.ChloeFrame.normalize(state.frame) : null) }).then(function(dec){       // 2. decide who speaks + intent (pure, no model)
       if (!dec || !dec.speaker){ setThinking(false); renderSystemLine('(the nations reached no one)'); return; }
@@ -12508,7 +12619,7 @@ var CharKit = (function () {
       });
     });
   }
-  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); renderStancePin(); renderFramePanel(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); enhanceSettingsTrees(); }
+  function openSettings(){ byId('settingsBg').classList.add('open'); renderAppearance(); renderMemPicker(); refreshMemStats(); renderFactList(); renderInnerState(); renderInjList(); renderLore(); renderDials(); renderToggles(); renderModeration(); renderEmotionToggle(); renderContextBudget(); refreshClock(); var bgi = byId('bgImageGenChk'); if (bgi) bgi.checked = state.reactionPortraits !== false; renderLearnedLooks(); renderPersonaNote(); renderAdaptation(); renderShortcutManager(); renderPinned(); renderNations(); renderNationSettings(); renderStancePin(); renderFramePanel(); renderMeasure(); updateCharLabel(); renderRoster(); renderReactionGallery(); renderMeetSomeone(); renderSaves(); enhanceSettingsTrees(); }
   function activateTab(name){
     document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('on'); });
     document.querySelectorAll('.panel').forEach(function(x){ x.classList.remove('on'); });
