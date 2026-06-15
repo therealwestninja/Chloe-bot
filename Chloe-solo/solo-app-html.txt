@@ -12080,13 +12080,19 @@ var CharKit = (function () {
     (function(){ var pc = byId('reactionPortraitsChk'); if (pc) pc.addEventListener('change', function(){ state.reactionPortraits = pc.checked; persistState(); renderReactionGallery(); });
       var fc = byId('reactionFeedbackChk'); if (fc) fc.addEventListener('change', function(){ state.reactionFeedback = fc.checked; persistState(); }); })();
     byId('portraitBtn').addEventListener('click', function(){
+      if (typeof paint !== 'function'){ setText('portraitNote', 'image generation isn\u2019t available here'); return; }
+      if (demoMode){ setText('portraitNote', 'connect the image plugin on Perchance to paint a portrait'); toast('Connect the image plugin on Perchance to paint a portrait', 'info'); return; }
       setText('portraitNote', 'painting\u2026');
       var who = state.character ? state.character.name : (state.botName||'Chloe');
       var desc = (state.character && state.character.instruction) ? String(state.character.instruction).replace(/\s+/g,' ').slice(0,200) : 'a warm, thoughtful presence';
-      Promise.resolve(paint({ prompt: 'portrait of ' + who + ', ' + desc + ', soft natural light, head and shoulders', resolution: '512x512' })).then(function(r){
-        if (r && r.ok && r.value){ state.herAvatar = r.value; persistState(); updateCharLabel(); setText('portraitNote','done.'); toast('Portrait updated', 'success'); renderMessage('her', state.botName||'Chloe', '', { image: r.value }); }
-        else setText('portraitNote', (r && r.reason) ? r.reason : 'no image \u2014 connect the image plugin on Perchance.');
-      });
+      try {
+        Promise.resolve(paint({ prompt: 'portrait of ' + who + ', ' + desc + ', soft natural light, head and shoulders', resolution: '512x512' })).then(function(r){
+          try {
+            if (r && r.ok && r.value){ state.herAvatar = r.value; persistState(); updateCharLabel(); setText('portraitNote','done.'); toast('Portrait updated', 'success'); renderMessage('her', state.botName||'Chloe', '', { image: r.value }); }
+            else setText('portraitNote', (r && r.reason) ? r.reason : 'no image \u2014 connect the image plugin on Perchance.');
+          } catch(e){ setText('portraitNote', 'couldn\u2019t apply the portrait \u2014 ' + ((e && e.message) || e)); }
+        }, function(e){ setText('portraitNote', 'image generation failed \u2014 ' + ((e && e.message) || e)); });
+      } catch(e){ setText('portraitNote', 'image generation failed \u2014 ' + ((e && e.message) || e)); }
     });
     // data tab
     byId('wipeBtn').addEventListener('click', function(){
