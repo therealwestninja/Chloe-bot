@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.3
+// @version      0.90.4
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -5865,7 +5865,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.3';
+  var VERSION = '0.90.4';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6748,7 +6748,43 @@
   // Rejecting "null" was a false-negative that broke detection inside sandboxed embeds while real
   // brain traffic (userscript-initiated, replied via the captured page handle) still flowed.
   var ORIGIN_OK = /^(null|https:\/\/([a-z0-9]{32}\.)?perchance\.org)$/;
+  // v0.90.4 consolidation: the single-flag toggles shared one shape (cfgSet + optional
+  // patch/restart + {key: value} reply) across ~37 cases — now a table, not cases. Specials
+  // with extra work (setMode enum, setTimeAware offset, setDeviceTime drop, setSemanticRecall
+  // + setExactTokens preloads) keep their own cases below. Mode: 'patch' | 'store' | 'config'.
+  var FLAG_TOGGLES = [
+    ['config.setVolunteer', 'volunteer', 'patch'], ['config.setGreet', 'greet', 'patch'],
+    ['config.setMemberCheck', 'memberCheck', 'store'], ['config.setBackfill', 'backfill', 'patch'],
+    ['config.setImage', 'image', 'patch'], ['config.setImageMemory', 'imageMemory', 'patch'],
+    ['config.setImageEnhanceOffer', 'imageEnhanceOffer', 'patch'], ['config.setAutoMod', 'autoMod', 'patch'],
+    ['config.setPersonaAnchor', 'personaAnchor', 'store'], ['config.setDMReplies', 'dmReplies', 'config'],
+    ['config.setAckReactions', 'ackReactions', 'patch'], ['config.setSingleParagraph', 'singleParagraph', 'patch'],
+    ['config.setLullFiller', 'lullFiller', 'patch'], ['config.setCheckins', 'checkins', 'patch'],
+    ['config.setFeedbackLearning', 'feedbackLearning', 'patch'], ['config.setConversationMemory', 'conversationMemory', 'patch'],
+    ['config.setContradictionAware', 'contradictionAware', 'patch'], ['config.setFactMemory', 'factMemory', 'patch'],
+    ['config.setMoodAware', 'moodAware', 'patch'], ['config.setChannelSummary', 'channelSummary', 'patch'],
+    ['config.setAdaptivePace', 'adaptivePace', 'patch'], ['config.setWorkingMemory', 'workingMemory', 'patch'],
+    ['config.setIdleDeliberation', 'idleDeliberation', 'patch'], ['config.setDeferredIntents', 'deferredIntents', 'patch'],
+    ['config.setAttentionManager', 'attentionManager', 'patch'], ['config.setSelfKnowledge', 'selfKnowledge', 'patch'],
+    ['config.setCleanOutput', 'cleanOutput', 'patch'], ['config.setTranslate', 'translate', 'patch'],
+    ['config.setUserModeling', 'userModeling', 'patch'], ['config.setEpisodeGraph', 'episodeGraph', 'patch'],
+    ['config.setIdleConsolidation', 'idleConsolidation', 'patch'], ['config.setGoalObjects', 'goalObjects', 'patch'],
+    ['config.setReflection', 'reflection', 'patch'], ['config.setEpisodicMemory', 'episodicMemory', 'patch'],
+    ['config.setRelationshipTrust', 'relationshipTrust', 'patch'], ['config.setOwnAffect', 'ownAffect', 'patch'],
+    ['config.setProceduralModes', 'proceduralModes', 'patch'], ['config.setReactionSummon', 'reactionSummon', 'patch']
+  ];
+  function dispatchFlagToggle(cmd, args) {
+    for (var i = 0; i < FLAG_TOGGLES.length; i++) {
+      var t = FLAG_TOGGLES[i]; if (t[0] !== cmd) continue;
+      var v = !!(args && args.on); cfgSet(t[1], v);
+      if (t[2] === 'config') applyConfigChange();
+      else if (t[2] !== 'store') { var pe = {}; pe[t[1]] = v; patchEngines(pe); }
+      var out = {}; out[t[1]] = v; return Promise.resolve({ ok: true, value: out });
+    }
+    return null;
+  }
   function dispatch(cmd, args) {
+    var flagRes = dispatchFlagToggle(cmd, args); if (flagRes) return flagRes;
     switch (cmd) {
       case 'ping':            return Promise.resolve({ ok: true, value: statusSnapshot() });
       case 'status':          return Promise.resolve({ ok: true, value: statusSnapshot() });
@@ -6757,20 +6793,6 @@
         return Promise.resolve({ ok: true, value: { channelId: cfgGet('channelId', '') } });
       case 'config.setMode':
         { var mode = String((args && args.mode) || 'both'); if (mode !== 'mention' && mode !== 'name' && mode !== 'both') mode = 'both'; cfgSet('addressMode', mode); applyConfigChange(); return Promise.resolve({ ok: true, value: { addressMode: mode } }); }
-      case 'config.setVolunteer':
-        { var on = !!(args && args.on); cfgSet('volunteer', on); patchEngines({ volunteer: on }); return Promise.resolve({ ok: true, value: { volunteer: on } }); }
-      case 'config.setGreet':
-        { var g = !!(args && args.on); cfgSet('greet', g); patchEngines({ greet: g }); return Promise.resolve({ ok: true, value: { greet: g } }); }
-      case 'config.setMemberCheck':
-        { var mc = !!(args && args.on); cfgSet('memberCheck', mc); return Promise.resolve({ ok: true, value: { memberCheck: mc } }); }
-      case 'config.setBackfill':
-        { var bf = !!(args && args.on); cfgSet('backfill', bf); patchEngines({ backfill: bf }); return Promise.resolve({ ok: true, value: { backfill: bf } }); }
-      case 'config.setImage':
-        { var im = !!(args && args.on); cfgSet('image', im); patchEngines({ image: im }); return Promise.resolve({ ok: true, value: { image: im } }); }
-      case 'config.setImageMemory':
-        { var imm = !!(args && args.on); cfgSet('imageMemory', imm); patchEngines({ imageMemory: imm }); return Promise.resolve({ ok: true, value: { imageMemory: imm } }); }
-      case 'config.setImageEnhanceOffer':
-        { var ieo = !!(args && args.on); cfgSet('imageEnhanceOffer', ieo); patchEngines({ imageEnhanceOffer: ieo }); return Promise.resolve({ ok: true, value: { imageEnhanceOffer: ieo } }); }
       case 'config.setPrefixes': {
         var list = (args && args.prefixes);
         if (!Array.isArray(list)) return Promise.resolve({ ok: false, reason: 'prefixes must be an array' });
@@ -6823,8 +6845,6 @@
         cfgSet('personality', cleanP);
         return Promise.resolve({ ok: true, value: { personality: cleanP } });
       }
-      case 'config.setPersonaAnchor':
-        { var paOn = !!(args && args.on); cfgSet('personaAnchor', paOn); return Promise.resolve({ ok: true, value: { personaAnchor: paOn } }); }
       case 'config.setCharacter': {
         var nm = (args && args.name != null) ? String(args.name).trim() : null;
         if (!nm) { cfgSet('character', null); applyConfigChange(); return Promise.resolve({ ok: true, value: { character: null } }); }
@@ -6895,8 +6915,6 @@
         cfgSet('imageQueueMax', n); patchEngines({ imageQueueMax: n });
         return Promise.resolve({ ok: true, value: { imageQueueMax: n } });
       }
-      case 'config.setAutoMod':
-        { var am = !!(args && args.on); cfgSet('autoMod', am); patchEngines({ autoMod: am }); return Promise.resolve({ ok: true, value: { autoMod: am } }); }
       case 'config.setAutoModRules': {
         var rules = (args && args.rules);
         if (!Array.isArray(rules)) return Promise.resolve({ ok: false, reason: 'rules must be an array' });
@@ -6922,48 +6940,10 @@
         cfgSet('gate:' + gk, !!(args && args.on));
         return Promise.resolve({ ok: true, value: { key: gk, on: !!(args && args.on) } });
       }
-      case 'config.setDMReplies':
-        { var dr = !!(args && args.on); cfgSet('dmReplies', dr); applyConfigChange(); return Promise.resolve({ ok: true, value: { dmReplies: dr } }); }
-      case 'config.setAckReactions':
-        { var ar = !!(args && args.on); cfgSet('ackReactions', ar); patchEngines({ ackReactions: ar }); return Promise.resolve({ ok: true, value: { ackReactions: ar } }); }
-      case 'config.setSingleParagraph':
-        { var sp = !!(args && args.on); cfgSet('singleParagraph', sp); patchEngines({ singleParagraph: sp }); return Promise.resolve({ ok: true, value: { singleParagraph: sp } }); }
-      case 'config.setLullFiller':
-        { var lf = !!(args && args.on); cfgSet('lullFiller', lf); patchEngines({ lullFiller: lf }); return Promise.resolve({ ok: true, value: { lullFiller: lf } }); }
-      case 'config.setCheckins':
-        { var ck = !!(args && args.on); cfgSet('checkins', ck); patchEngines({ checkins: ck }); return Promise.resolve({ ok: true, value: { checkins: ck } }); }
-      case 'config.setFeedbackLearning':
-        { var fbl = !!(args && args.on); cfgSet('feedbackLearning', fbl); patchEngines({ feedbackLearning: fbl }); return Promise.resolve({ ok: true, value: { feedbackLearning: fbl } }); }
-      case 'config.setConversationMemory':
-        { var cmn = !!(args && args.on); cfgSet('conversationMemory', cmn); patchEngines({ conversationMemory: cmn }); return Promise.resolve({ ok: true, value: { conversationMemory: cmn } }); }
-      case 'config.setContradictionAware':
-        { var can = !!(args && args.on); cfgSet('contradictionAware', can); patchEngines({ contradictionAware: can }); return Promise.resolve({ ok: true, value: { contradictionAware: can } }); }
-      case 'config.setFactMemory':
-        { var fm = !!(args && args.on); cfgSet('factMemory', fm); patchEngines({ factMemory: fm }); return Promise.resolve({ ok: true, value: { factMemory: fm } }); }
       case 'config.setTimeAware':
         { var ta = !!(args && args.on); cfgSet('timeAware', ta);
           if (args && args.offsetMins != null && isFinite(args.offsetMins)) cfgSet('timezoneOffsetMins', Math.max(-840, Math.min(840, Math.round(args.offsetMins))));
           patchEngines({ timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) }); return Promise.resolve({ ok: true, value: { timeAware: ta, timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0) } }); }
-      case 'config.setMoodAware':
-        { var ma = !!(args && args.on); cfgSet('moodAware', ma); patchEngines({ moodAware: ma }); return Promise.resolve({ ok: true, value: { moodAware: ma } }); }
-      case 'config.setChannelSummary':
-        { var csm = !!(args && args.on); cfgSet('channelSummary', csm); patchEngines({ channelSummary: csm }); return Promise.resolve({ ok: true, value: { channelSummary: csm } }); }
-      case 'config.setAdaptivePace':
-        { var apn = !!(args && args.on); cfgSet('adaptivePace', apn); patchEngines({ adaptivePace: apn }); return Promise.resolve({ ok: true, value: { adaptivePace: apn } }); }
-      case 'config.setWorkingMemory':
-        { var wmn = !!(args && args.on); cfgSet('workingMemory', wmn); patchEngines({ workingMemory: wmn }); return Promise.resolve({ ok: true, value: { workingMemory: wmn } }); }
-      case 'config.setIdleDeliberation':
-        { var idn = !!(args && args.on); cfgSet('idleDeliberation', idn); patchEngines({ idleDeliberation: idn }); return Promise.resolve({ ok: true, value: { idleDeliberation: idn } }); }
-      case 'config.setDeferredIntents':
-        { var din = !!(args && args.on); cfgSet('deferredIntents', din); patchEngines({ deferredIntents: din }); return Promise.resolve({ ok: true, value: { deferredIntents: din } }); }
-      case 'config.setAttentionManager':
-        { var amn = !!(args && args.on); cfgSet('attentionManager', amn); patchEngines({ attentionManager: amn }); return Promise.resolve({ ok: true, value: { attentionManager: amn } }); }
-      case 'config.setSelfKnowledge':
-        { var skn = !!(args && args.on); cfgSet('selfKnowledge', skn); patchEngines({ selfKnowledge: skn }); return Promise.resolve({ ok: true, value: { selfKnowledge: skn } }); }
-      case 'config.setCleanOutput':
-        { var con = !!(args && args.on); cfgSet('cleanOutput', con); patchEngines({ cleanOutput: con }); return Promise.resolve({ ok: true, value: { cleanOutput: con } }); }
-      case 'config.setTranslate':
-        { var trn = !!(args && args.on); cfgSet('translate', trn); patchEngines({ translate: trn }); return Promise.resolve({ ok: true, value: { translate: trn } }); }
       case 'config.setUserLang':
         { var ulE = engineFor(args && args.channelId); if (!ulE) return Promise.resolve({ ok: false, reason: 'no channel' }); return ulE.setUserLang(args && args.id, (args && args.lang) || null).then(function (v) { return { ok: true, value: { lang: v } }; }); }
       case 'config.setDeviceTime':
@@ -6977,32 +6957,12 @@
           patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
         { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
-      case 'config.setUserModeling':
-        { var umn = !!(args && args.on); cfgSet('userModeling', umn); patchEngines({ userModeling: umn }); return Promise.resolve({ ok: true, value: { userModeling: umn } }); }
       case 'config.setSemanticRecall':
         { var srn = !!(args && args.on); cfgSet('semanticRecall', srn); if (srn) embedLoader.preload(cfgGet('embedModel','Xenova/bge-small-en-v1.5')); patchEngines({ semanticRecall: srn }); return Promise.resolve({ ok: true, value: { semanticRecall: srn, embedder: embedLoader.state() } }); }
       case 'config.setExactTokens':
         { var etn = !!(args && args.on); cfgSet('exactTokens', etn); if (etn) tokLoader.preload(); patchEngines({ exactTokens: etn }); return Promise.resolve({ ok: true, value: { exactTokens: etn, tokenizer: tokLoader.state() } }); }
       case 'work.get':
         { var ew = engineFor(args && args.channelId); if (!ew) return Promise.resolve({ ok: true, value: null }); return ew.workLoad().then(function (w) { return { ok: true, value: w }; }); }
-      case 'config.setEpisodeGraph':
-        { var egn = !!(args && args.on); cfgSet('episodeGraph', egn); patchEngines({ episodeGraph: egn }); return Promise.resolve({ ok: true, value: { episodeGraph: egn } }); }
-      case 'config.setIdleConsolidation':
-        { var icn = !!(args && args.on); cfgSet('idleConsolidation', icn); patchEngines({ idleConsolidation: icn }); return Promise.resolve({ ok: true, value: { idleConsolidation: icn } }); }
-      case 'config.setGoalObjects':
-        { var gob = !!(args && args.on); cfgSet('goalObjects', gob); patchEngines({ goalObjects: gob }); return Promise.resolve({ ok: true, value: { goalObjects: gob } }); }
-      case 'config.setReflection':
-        { var rfl = !!(args && args.on); cfgSet('reflection', rfl); patchEngines({ reflection: rfl }); return Promise.resolve({ ok: true, value: { reflection: rfl } }); }
-      case 'config.setEpisodicMemory':
-        { var epi = !!(args && args.on); cfgSet('episodicMemory', epi); patchEngines({ episodicMemory: epi }); return Promise.resolve({ ok: true, value: { episodicMemory: epi } }); }
-      case 'config.setRelationshipTrust':
-        { var rtr = !!(args && args.on); cfgSet('relationshipTrust', rtr); patchEngines({ relationshipTrust: rtr }); return Promise.resolve({ ok: true, value: { relationshipTrust: rtr } }); }
-      case 'config.setOwnAffect':
-        { var oaf = !!(args && args.on); cfgSet('ownAffect', oaf); patchEngines({ ownAffect: oaf }); return Promise.resolve({ ok: true, value: { ownAffect: oaf } }); }
-      case 'config.setProceduralModes':
-        { var prm = !!(args && args.on); cfgSet('proceduralModes', prm); patchEngines({ proceduralModes: prm }); return Promise.resolve({ ok: true, value: { proceduralModes: prm } }); }
-      case 'config.setReactionSummon':
-        { var rsm = !!(args && args.on); cfgSet('reactionSummon', rsm); patchEngines({ reactionSummon: rsm }); return Promise.resolve({ ok: true, value: { reactionSummon: rsm } }); }
       case 'config.setProcRules': {
         // Validate + clean: [{ emoji, mode, minutes }] -> [{ emoji, mode (sanitized later by the
         // engine), durationMs }]. Hard caps here so malformed panel input can't smuggle anything in.
