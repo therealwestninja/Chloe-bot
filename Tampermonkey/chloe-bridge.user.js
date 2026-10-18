@@ -3917,7 +3917,7 @@
         })
         .then(function (r) {
           var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
-          var intent = (r && r.intent) ? r.intent : null;   // standing-intention update from the brain
+          var intent = null;   // ADV-A3 defense-in-depth: INTENT persistence was a covert-injection vector (a Discord msg could plant a hidden standing-intention that later guided replies); it is removed page-side, and the engine now IGNORES any intent a (possibly forged / direct-postMessage) result carries so it can never be revived.
           if (!text) {
             // GAP FIX (item 2): a tool-ONLY reply (no prose) strips to empty text. If it carried action tools,
             // still RUN them before bailing — otherwise a bare `tool: remindme {...}` turn would do nothing.
@@ -6279,6 +6279,27 @@
     traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
     return e;
   }
+  // Diagnostics hygiene: a diag dump may be pasted into a public GitHub issue, so strip PII that is NOT needed to
+  // debug the bot — IP addresses, emails, and the user/locale/country/region fields Discord error bodies can carry.
+  // Error CODES are deliberately KEPT (see errBrief) — they are what you need, and carry no personal data.
+  function scrubPII(s) {
+    var t = String(s == null ? '' : s);
+    t = t.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]');                                          // IPv4
+    t = t.replace(/\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi, '[ip6]');                            // IPv6 (>=4 groups: never a clock/snowflake)
+    t = t.replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, '[email]');                             // email
+    t = t.replace(/("(?:locale|country|region|email|phone|ip|real_name|username_global)"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"');  // known PII JSON fields in an embedded body
+    return t;
+  }
+  // A compact, PII-FREE rendering of a Discord error body for diagnostics: keep the error CODE + short message (what
+  // surfaces the problem), drop everything else (user objects, field-level `errors` that can carry names/locale/etc.).
+  function errBrief(body) {
+    if (!body || typeof body !== 'object') return '';
+    var parts = [];
+    if (body.code != null) parts.push('code=' + body.code);
+    if (body.message) parts.push('msg="' + scrubPII(String(body.message)).slice(0, 200) + '"');
+    if (body.retry_after != null) parts.push('retry_after=' + body.retry_after);
+    return parts.length ? '{' + parts.join(' ') + '}' : '';
+  }
   // Bootstrap log: console.log + pushEvent so messages appear in both the browser console
   // and the panel activity feed. Use for anything a mod operator needs to see at a glance.
   function bLog(msg) { console.log(msg); pushEvent('log', msg); }
@@ -6399,7 +6420,7 @@
           .then(function () { return requestJSON(method, path, opts, _tries + 1); });
       }
       var body = null; try { body = JSON.parse(r.responseText); } catch (e) {}
-      if (r.status < 200 || r.status >= 300) { trace('http', 'HTTP ' + r.status + ' on ' + method + ' ' + path); var err = new Error('HTTP ' + r.status + (body ? ' ' + JSON.stringify(body) : '')); err.status = r.status; err.body = body; throw err; }
+      if (r.status < 200 || r.status >= 300) { trace('http', 'HTTP ' + r.status + ' on ' + method + ' ' + path); var err = new Error('HTTP ' + r.status + (body ? ' ' + errBrief(body) : '')); err.status = r.status; err.body = body; throw err; }   // err.message surfaces the status + Discord error CODE (errBrief), NOT the full body (which can carry user PII); err.body kept object-only for internal code-reads
       return body;
     });
   }
@@ -7151,7 +7172,7 @@
       applyConfigChange();  // rebuild (and restart if live) with the fresh identity
       maybeDetectMemberCount();   // fire-and-forget: scale reaction significance to the server
       return { ok: true, value: { id: me.id, username: me.username, bot: me.bot } };
-    }).catch(function (e) { return { ok: false, reason: 'HTTP ' + (e.status || '?'), body: e.body || null }; });
+    }).catch(function (e) { return { ok: false, reason: 'HTTP ' + (e.status || '?'), body: errBrief(e.body) || null }; });   // surface the error code, not the PII-bearing raw body
   }
   function statusSnapshot() {
     try { return statusSnapshotCore(); } catch (e) { return { version: VERSION, snapshotError: String((e && e.message) || e), channelId: cfgGet('channelId', ''), running: false }; }
@@ -7290,7 +7311,7 @@
         var list = (args && args.prefixes);
         if (!Array.isArray(list)) return Promise.resolve({ ok: false, reason: 'prefixes must be an array' });
         var clean = [];
-        list.forEach(function (p) { p = String(p || '').trim(); if (p && p !== '!chloe' && clean.indexOf(p) < 0) clean.push(p); });
+        list.forEach(function (p) { p = String(p || '').trim().slice(0, 64); if (p && p !== '!chloe' && clean.indexOf(p) < 0 && clean.length < 64) clean.push(p); });   // re-validate: per-prefix + count caps
         cfgSet('commandPrefixes', clean); patchEngines({ commandPrefixes: clean });
         return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
       }
@@ -7314,12 +7335,13 @@
         if (!Array.isArray(bl)) return Promise.resolve({ ok: false, reason: 'beats must be an array' });
         var cleanB = [];
         bl.forEach(function (b) {
+          if (cleanB.length >= 200) return;   // re-validate: array-length cap (client cap is bypassable)
           if (!b || !b.id || !b.intervalMs) return;
-          var o = { id: String(b.id), intervalMs: Number(b.intervalMs) || 0 };
+          var o = { id: String(b.id).slice(0, 80), intervalMs: Number(b.intervalMs) || 0 };
           if (!o.intervalMs) return;
-          if (Array.isArray(b.texts) && b.texts.length) o.texts = b.texts.map(String);
-          else if (b.text) o.text = String(b.text);
-          else if (b.prompt) o.prompt = String(b.prompt);
+          if (Array.isArray(b.texts) && b.texts.length) o.texts = b.texts.slice(0, 20).map(function (t) { return String(t).slice(0, 2000); });
+          else if (b.text) o.text = String(b.text).slice(0, 2000);
+          else if (b.prompt) o.prompt = String(b.prompt).slice(0, 2000);
           else return;   // a beat with nothing to say is dropped
           if (b.activeWithinMs != null) o.activeWithinMs = Number(b.activeWithinMs) || 0;
           cleanB.push(o);
@@ -7341,7 +7363,10 @@
       case 'config.setCharacter': {
         var nm = (args && args.name != null) ? String(args.name).trim() : null;
         if (!nm) { cfgSet('character', null); applyConfigChange(); return Promise.resolve({ ok: true, value: { character: null } }); }
-        var ch = { name: nm.slice(0, 80), instruction: String((args && args.instruction) || '').slice(0, 8000), avatar: String((args && args.avatar) || '').slice(0, 2000) };
+        var rawAv = String((args && args.avatar) || '').slice(0, 2000);
+        var avLow = rawAv.toLowerCase().replace(/^\s+/, '');
+        var avOk = rawAv && (avLow.indexOf('http://') === 0 || avLow.indexOf('https://') === 0 || avLow.indexOf('blob:') === 0 || avLow.indexOf('data:image/') === 0) && avLow.indexOf('javascript:') !== 0 && avLow.indexOf('vbscript:') !== 0 && avLow.indexOf('data:text/html') !== 0;
+        var ch = { name: nm.slice(0, 80), instruction: String((args && args.instruction) || '').slice(0, 8000), avatar: avOk ? rawAv : '' };   // re-validate: avatar scheme allowlist (a forged setCharacter could carry javascript:/data:text/html)
         cfgSet('character', ch); applyConfigChange();
         return Promise.resolve({ ok: true, value: { character: { name: ch.name } } });
       }
@@ -7364,7 +7389,7 @@
         var rawC = (args && args.channels);
         if (!Array.isArray(rawC)) return Promise.resolve({ ok: false, reason: 'channels must be an array of channel ids' });
         var cleanC = [], seenC = {};
-        rawC.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && c !== primaryChannel() && !seenC[c]) { seenC[c] = 1; cleanC.push(c); } });
+        rawC.forEach(function (c) { c = String(c || '').trim(); if (/^\d{15,25}$/.test(c) && c !== primaryChannel() && !seenC[c] && cleanC.length < 64) { seenC[c] = 1; cleanC.push(c); } });   // re-validate: Discord snowflake range + count cap (client caps are bypassable via direct postMessage)
         cfgSet('channels', cleanC); applyConfigChange();
         return Promise.resolve({ ok: true, value: { channels: channelList() } });
       }
@@ -7374,7 +7399,7 @@
         if (!Array.isArray(rawA)) return Promise.resolve({ ok: false, reason: 'channels must be an array of channel ids' });
         var cleanA = [], seenA = {};
         var dmsetA = {}; declaredDmChannels().forEach(function (d) { dmsetA[d] = 1; });
-        rawA.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && !seenA[c] && !dmsetA[c]) { seenA[c] = 1; cleanA.push(c); } });   // never let a declared DM sit in the public list
+        rawA.forEach(function (c) { c = String(c || '').trim(); if (/^\d{15,25}$/.test(c) && !seenA[c] && !dmsetA[c] && cleanA.length < 64) { seenA[c] = 1; cleanA.push(c); } });   // snowflake range + count cap; never let a declared DM sit in the public list
         var primary = cleanA[0] || '';
         cfgSet('channelId', primary);
         cfgSet('channels', cleanA.slice(1));
@@ -7386,7 +7411,7 @@
         var rawD = (args && args.channels);
         if (!Array.isArray(rawD)) return Promise.resolve({ ok: false, reason: 'dmChannels must be an array of channel ids' });
         var cleanD = [], seenD = {};
-        rawD.forEach(function (c) { c = String(c || '').trim(); if (/^\d+$/.test(c) && c !== primaryChannel() && !seenD[c]) { seenD[c] = 1; cleanD.push(c); } });
+        rawD.forEach(function (c) { c = String(c || '').trim(); if (/^\d{15,25}$/.test(c) && c !== primaryChannel() && !seenD[c] && cleanD.length < 64) { seenD[c] = 1; cleanD.push(c); } });   // snowflake range + count cap
         cfgSet('dmChannels', cleanD);
         // keep the two boxes mutually exclusive: drop any newly-declared DM from the public extras
         var dmsetD = {}; cleanD.forEach(function (d) { dmsetD[d] = 1; });
@@ -7413,12 +7438,13 @@
         if (!Array.isArray(rules)) return Promise.resolve({ ok: false, reason: 'rules must be an array' });
         var clean = [];
         rules.forEach(function (r) {
+          if (clean.length >= 200) return;   // re-validate: array-length cap
           if (!r || !r.pattern) return;
           var type = (r.type === 'regex' || r.type === 'confusables' || r.type === 'link') ? r.type : 'text';
           var action = (r.action === 'timeout' || r.action === 'softban' || r.action === 'clear' || r.action === 'warn') ? r.action : 'ignore';  // reversible only ('warn' = escalate)
-          var o = { pattern: String(r.pattern), type: type, action: action };
+          var o = { pattern: String(r.pattern).slice(0, 500), type: type, action: action };
           if (r.durationMs) o.durationMs = Number(r.durationMs) || undefined;
-          if (r.reason) o.reason = String(r.reason);
+          if (r.reason) o.reason = String(r.reason).slice(0, 500);
           clean.push(o);
         });
         cfgSet('autoModRules', clean); patchEngines({ autoModRules: clean });
@@ -7445,7 +7471,7 @@
         { var dc = (args && args.clock) ? args.clock : null; var dcVal = dc ? { time: String(dc.time || ''), date: String(dc.date || ''), tz: String(dc.tz || ''), at: Date.now() } : null; if (dcVal) GM_setValue(NS + 'deviceClock', dcVal); else GM_deleteValue(NS + 'deviceClock'); patchEngines({ deviceClock: dcVal }); return Promise.resolve({ ok: true, value: { set: !!dc } }); }
       case 'config.setSemanticInjection':
         { var sid = String((args && args.id) || '').trim(); if (!sid) return Promise.resolve({ ok: false, reason: 'id required' });
-          var txt = String((args && args.text) || '').trim(); if (!txt) { semInjectDrop(sid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }
+          var txt = String((args && args.text) || '').trim().slice(0, 4000); if (!txt) { semInjectDrop(sid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }   // re-validate: cap opNote/injection length (prompt-injection surface, client cap bypassable)
           semInjectUpsert({ id: sid, text: txt, priority: (args && args.priority) || null, ttlMs: ((args && args.ttlMs) > 0 ? args.ttlMs : null), at: Date.now() });
           patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
@@ -7500,9 +7526,13 @@
       case 'bridge.shutdown':
         { if (!tabBridge || TAB_ROLE !== 'queen') return Promise.resolve({ ok: false, reason: 'no bridge / not the queen' }); tabBridge.shutdownWorker(String((args && args.id) || '')); return Promise.resolve({ ok: true, value: { id: (args && args.id) || null } }); }
       case 'diag':
-        { var snap = statusSnapshot(); console.log('[chloe] diag', snap); return Promise.resolve({ ok: true, value: snap }); }
+        { var snap = statusSnapshot(); try { if (snap && snap.operatorNote) snap.operatorNote = scrubPII(snap.operatorNote); } catch (e) {} console.log('[chloe] diag', snap); return Promise.resolve({ ok: true, value: snap }); }   // scrub any PII the operator may have pasted into the note
       case 'diag.trace':
-        return Promise.resolve({ ok: true, value: traceRing.slice().concat([{ t: Date.now(), tag: 'link', msg: 'control-link: last=' + (linkStats.lastCmd || 'none') + ' ' + (linkStats.lastOutcome || '') + (linkStats.lastMs != null ? ' ' + linkStats.lastMs + 'ms' : '') + (linkStats.inflight ? (' | inflight=' + linkStats.inflight.cmd) : '') + ' | counts=' + JSON.stringify(linkStats.counts) }]) });
+        { var tr = traceRing.slice().concat([{ t: Date.now(), tag: 'link', msg: 'control-link: last=' + (linkStats.lastCmd || 'none') + ' ' + (linkStats.lastOutcome || '') + (linkStats.lastMs != null ? ' ' + linkStats.lastMs + 'ms' : '') + (linkStats.inflight ? (' | inflight=' + linkStats.inflight.cmd) : '') + ' | counts=' + JSON.stringify(linkStats.counts) }]);
+          // Defense-in-depth: redact PII from every trace line before it leaves the engine (errBrief already keeps HTTP
+          // bodies code-only, but a future trace could carry an IP/email/locale — this is the last gate before clipboard).
+          var scrubbed = tr.map(function (e) { return { t: e.t, tag: e.tag, msg: scrubPII(e.msg) }; });
+          return Promise.resolve({ ok: true, value: scrubbed }); }
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
       case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); cfgSet('autoResume', true); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
