@@ -1395,6 +1395,8 @@
 
   // ---- small DOM helpers (no innerHTML for data; textContent is parser- and XSS-safe)
   function byId(id) { return document.getElementById(id); }
+  // Batch 20: ten identical remove-all-children loops share one helper (pure move).
+  function clearBox(el) { while (el.firstChild) el.removeChild(el.firstChild); }
   // Generic toggle wiring table: [checkboxId, command, statusField]. One row owns BOTH the populate
   // (restore from status) AND the save (change -> command), so the two can never drift apart — the
   // class of bug where a checkbox saves but never restores (or vice versa) is structurally impossible
@@ -1467,8 +1469,10 @@
   // Batch 14: one ok/fail log shape for call handlers. okMsg may be a string or a
   // function(res) for messages built from the reply value (evaluated only on success,
   // so a null res can never throw inside the message expression).
-  function logRes(res, okMsg, failPrefix) {
-    if (res && res.ok) log(typeof okMsg === 'function' ? okMsg(res) : okMsg);
+  // Batch 19: optional onOk(res) runs after the success log, for the one extra statement
+  // (echo, clear, re-render, delayed refresh) that kept a handler off this helper.
+  function logRes(res, okMsg, failPrefix, onOk) {
+    if (res && res.ok) { log(typeof okMsg === 'function' ? okMsg(res) : okMsg); if (onOk) onOk(res); }
     else log((failPrefix || 'failed') + ': ' + ((res && res.reason) || 'unknown'));
   }
   // Classify a log line into a timeline event by its bracketed tag. Pure presentation — the engine
@@ -1548,37 +1552,44 @@
     el.value = incoming;
     lastApplied[key] = incoming;
   }
+  // Batch 16: channelsBox + dmChannelsBox used near-identical comment-preserving merges
+  // (keep the user's // comment on a line that already carries a stored ID, drop removed
+  // channels, append new IDs bare). One helper, same guards, same merge.
+  function mergeIdBox(boxId, ids) {
+    var box = byId(boxId);
+    if (!box || document.activeElement === box || boxDirty[boxId]) return;
+    var existing = box.value.split('\n');
+    var merged = [];
+    ids.forEach(function (id) {
+      var found = existing.filter(function (l) { return l.replace(/\/\/.*/, '').trim() === id; });
+      merged.push(found.length ? found[0] : id);
+    });
+    box.value = merged.join('\n');
+    boxDirty[boxId] = false;
+  }
+  // Batch 21: the two status-driven selects share one guarded write (unfocused and
+  // changed only — assigning the current value would be a no-op, so the equality
+  // check is free and keeps the two writers from drifting apart).
+  function setSelectIfClean(id, incoming) { var el = byId(id); if (el && document.activeElement !== el && el.value !== incoming) el.value = incoming; }
+  // Batch 16: the nine one-off checkbox lines (mixed !! vs !==false defaults) as
+  // [checkboxId, statusField, defaultOn]. checked = defaultOn ? (s[f] !== false) : (!!s[f]).
+  var EXTRA_TOGGLES = [
+    ['ackChk', 'ackReactions', true],
+    ['timeChk', 'timeAware', false],
+    ['goalChk', 'goalObjects', true],
+    ['sleepChk', 'idleConsolidation', true],
+    ['paceChk', 'adaptivePace', true],
+    ['workChk', 'workingMemory', false],
+    ['delibChk', 'idleDeliberation', false],
+    ['epiGraphChk', 'episodeGraph', true],
+    ['deviceTimeChk', 'deviceTime', false]
+  ];
   function applyStatus(s) {
     setText('verTxt', s.version || '\u2013');
     setText('tokTxt', s.hasToken ? 'set' : 'not set');
     setText('botTxt', s.botUserId ? s.botUserId : 'unverified');
-    var cb = byId('channelsBox');
-    if (cb && document.activeElement !== cb && !boxDirty.channelsBox) {
-      var chans = (s.publicChannels && s.publicChannels.length) ? s.publicChannels : (s.channelId ? [s.channelId] : []);
-      // Merge stored channel IDs back into the textarea preserving any // comments the user typed.
-      // A line that already starts with a stored ID is left untouched; lines for removed channels
-      // are dropped; IDs not yet in the textarea are appended as bare IDs.
-      var existing = cb.value.split('\n');
-      var merged = [];
-      chans.forEach(function (id) {
-        var found = existing.filter(function (l) { return l.replace(/\/\/.*/, '').trim() === id; });
-        merged.push(found.length ? found[0] : id);
-      });
-      cb.value = merged.join('\n');
-      boxDirty.channelsBox = false;
-    }
-    var db = byId('dmChannelsBox');
-    if (db && document.activeElement !== db && !boxDirty.dmChannelsBox) {
-      var dms = s.dmChannels || [];
-      var existingD = db.value.split('\n');
-      var mergedD = [];
-      dms.forEach(function (id) {
-        var found = existingD.filter(function (l) { return l.replace(/\/\/.*/, '').trim() === id; });
-        mergedD.push(found.length ? found[0] : id);
-      });
-      db.value = mergedD.join('\n');
-      boxDirty.dmChannelsBox = false;
-    }
+    mergeIdBox('channelsBox', (s.publicChannels && s.publicChannels.length) ? s.publicChannels : (s.channelId ? [s.channelId] : []));
+    mergeIdBox('dmChannelsBox', s.dmChannels || []);
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
     setText('runTxt', s.running ? 'running' : 'stopped');
@@ -1591,27 +1602,19 @@
       setText('sb_brain', (br.state === 'open' ? 'down' : (br.srtt + 'ms')));
     } else { setText('sb_brain', s.running ? 'warming' : '\u2013'); }
 
-    if (s.addressMode) { var sel = byId('modeSel'); if (sel && document.activeElement !== sel && sel.value !== s.addressMode) sel.value = s.addressMode; }
-    var ac = byId('ackChk'); if (ac) ac.checked = (s.ackReactions !== false);
+    if (s.addressMode) setSelectIfClean('modeSel', s.addressMode);
     applyToggleStates(s);
-    var tm = byId('timeChk'); if (tm) tm.checked = !!s.timeAware;
-    var go = byId('goalChk'); if (go) go.checked = (s.goalObjects !== false);
-    var sl = byId('sleepChk'); if (sl) sl.checked = (s.idleConsolidation !== false);
-    var pa = byId('paceChk'); if (pa) pa.checked = (s.adaptivePace !== false);
-    var wk = byId('workChk'); if (wk) wk.checked = !!s.workingMemory;
-    var dl = byId('delibChk'); if (dl) dl.checked = !!s.idleDeliberation;
+    EXTRA_TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = t[2] ? (s[t[1]] !== false) : (!!s[t[1]]); });
     var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
-    var eg = byId('epiGraphChk'); if (eg) eg.checked = (s.episodeGraph !== false);
     if ('procRules' in s) setIfClean('procRules', 'procRules', JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1));
     var tz = byId('tzOffset');
     if (tz && s.timezoneOffsetMins != null) {
       var tzWant = String(s.timezoneOffsetMins);
       if (document.activeElement !== tz && (!boxDirty.tzOffset || tz.value === tzWant)) { tz.value = s.timezoneOffsetMins; boxDirty.tzOffset = false; }
     }
-    var dt = byId('deviceTimeChk'); if (dt) dt.checked = !!s.deviceTime;
     if ('operatorNote' in s) setIfClean('opNoteInput', 'opNote', s.operatorNote || '');
     if ('imageQueueMax' in s) setIfClean('imageQueueInput', 'imageQueue', String(s.imageQueueMax || 8));
-    var em = byId('engageModeSel'); if (em && document.activeElement !== em) em.value = s.engageMode || 'normal';
+    setSelectIfClean('engageModeSel', s.engageMode || 'normal');
     if ('commandPrefixes' in s) setIfClean('prefixInput', 'prefixes', (s.commandPrefixes || []).join(', '));
     var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
     var ni = byId('noticeInput');
@@ -1635,9 +1638,11 @@
   // (refreshMods populates window.__modSet); per-user actions and batch actions share modAct/opAct.
   window.__modSet = window.__modSet || {};
   window.__roster = [];
+  // Batch 21: the roster checkbox list is queried in two places; one accessor.
+  function uselBoxes() { return document.querySelectorAll('#rosterList .usel'); }
   function rosterSelected() {
     var out = [];
-    var rows = document.querySelectorAll('#rosterList .usel');
+    var rows = uselBoxes();
     for (var i = 0; i < rows.length; i++) { if (rows[i].checked) out.push(rows[i].getAttribute('data-id')); }
     return out;
   }
@@ -1669,7 +1674,7 @@
       var nx = openRows[oi].nextSibling;
       if (nx && nx.classList && nx.classList.contains('udetail')) { var c = openRows[oi].querySelector('.usel'); if (c) keepOpen[c.getAttribute('data-id')] = true; }
     }
-    while (box.firstChild) box.removeChild(box.firstChild);
+    clearBox(box);
     setText('rosterCount', list.length + (list.length === 1 ? ' person' : ' people'));
     byId('rosterEmpty').style.display = list.length ? 'none' : 'block';
     var filt = (byId('rosterFilter') && byId('rosterFilter').value || '').toLowerCase().trim();
@@ -1765,26 +1770,27 @@
     rightcol.appendChild(del);
     wrap.appendChild(ta); wrap.appendChild(rightcol);
 
+    // Batch 17: one kind→command/idKey table; arg objects are still built per call so the
+    // channelId is read fresh at click/blur time, never frozen at row-build time.
+    var memKind = kind === 'fact'
+      ? { edit: 'memory.editFact', del: 'memory.deleteFact', idKey: 'factId' }
+      : { edit: 'memory.editInsight', del: 'memory.deleteInsight', idKey: 'insId' };
+    function memKeyArgs() { var a = { channelId: selChannel(), id: uid }; a[memKind.idKey] = rec.id; return a; }
+    function memEditArgs(text, importance) { var a = memKeyArgs(); a.text = text; if (kind === 'fact') a.importance = importance; return a; }
     var dirty = false;
     ta.addEventListener('input', function () { dirty = true; autoGrow(ta); });
     if (imp) imp.addEventListener('change', function () { dirty = true; saveRow(); });
     function saveRow() {
       var text = ta.value.trim();
       if (!text) { return removeRow(); }   // emptied box = delete
-      var cmd = kind === 'fact' ? 'memory.editFact' : 'memory.editInsight';
-      var args = kind === 'fact'
-        ? { channelId: selChannel(), id: uid, factId: rec.id, text: text, importance: imp ? Number(imp.value) : undefined }
-        : { channelId: selChannel(), id: uid, insId: rec.id, text: text };
-      call(cmd, args).then(function (res) {
+      call(memKind.edit, memEditArgs(text, imp ? Number(imp.value) : undefined)).then(function (res) {
         dirty = false;
         if (res && res.ok) { flashSaved(ind); if (onChanged) onChanged(res.value); }
         else { ind.textContent = 'error'; ind.className = 'memind err'; }
       });
     }
     function removeRow() {
-      var cmd = kind === 'fact' ? 'memory.deleteFact' : 'memory.deleteInsight';
-      var args = kind === 'fact' ? { channelId: selChannel(), id: uid, factId: rec.id } : { channelId: selChannel(), id: uid, insId: rec.id };
-      call(cmd, args).then(function (res) { if (res && res.ok) { wrap.parentNode && wrap.parentNode.removeChild(wrap); if (onChanged) onChanged(res.value); } else log('delete memory failed: ' + ((res && res.reason) || 'unknown')); });
+      call(memKind.del, memKeyArgs()).then(function (res) { if (res && res.ok) { wrap.parentNode && wrap.parentNode.removeChild(wrap); if (onChanged) onChanged(res.value); } else log('delete memory failed: ' + ((res && res.reason) || 'unknown')); });
     }
     ta.addEventListener('blur', function () { if (dirty) saveRow(); });
     del.addEventListener('click', removeRow);
@@ -1793,7 +1799,7 @@
   function autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.max(28, ta.scrollHeight) + 'px'; }
 
   function renderMemoryEditor(dr, p) {
-    while (dr.firstChild) dr.removeChild(dr.firstChild);
+    clearBox(dr);
     var uid = p.id;
     var loading = document.createElement('div'); loading.className = 'note'; loading.textContent = 'loading memory\u2026';
     dr.appendChild(loading);
@@ -1920,7 +1926,7 @@
     var chans = (st && st.channels) || (st && st.publicChannels) || ((st && st.channelId) ? [st.channelId] : []) || [];
     if (!chans.length) return;   // F14: never wipe the selector on a chan-less status
     var cur = el.value;
-    while (el.firstChild) el.removeChild(el.firstChild);
+    clearBox(el);
     chans.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; el.appendChild(o); });
     if (cur && chans.indexOf(cur) >= 0) el.value = cur;
     el.style.display = chans.length > 1 ? '' : 'none';
@@ -1934,6 +1940,11 @@
     var editingMem = ae && (ae.className === 'membox' || ae.className === 'memimp');
     return (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl) || editingMem;
   }
+  // Batch 18: both refresh() exits (status-ok and status-fail) ended in the same
+  // roster.get → renderRoster tail; one helper so the two paths can't drift apart.
+  function refreshRoster() {
+    return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r && r.ok) renderRoster(r.value || []); });
+  }
   function refresh() {
     return call('status').then(function (res) {
       if (!res || !res.ok) {
@@ -1942,7 +1953,7 @@
         var rd0 = byId('runDot'); if (rd0) rd0.className = 'dot idle';
         var sd0 = byId('sb_run_dot'); if (sd0) sd0.className = 'dot idle';
         if (rosterBusy()) return null;
-        return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r && r.ok) renderRoster(r.value || []); });
+        return refreshRoster();
       }
       setLink(true);
       applyStatus(res.value);
@@ -1950,7 +1961,7 @@
       applyPersonality(res.value);
       // Don't churn the roster under the user mid-interaction (state stays put; manual refresh still works).
       if (rosterBusy()) return null;
-      return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r && r.ok) renderRoster(r.value || []); });
+      return refreshRoster();
     });
   }
   function setLink(alive) {
@@ -1989,8 +2000,7 @@
   });
   byId('setTokenBtn').addEventListener('click', function () {
     call('token.prompt').then(function (res) {
-      if (res && res.ok) log('token prompt opened in the userscript' + (res.value && res.value.hasToken ? ' (token present)' : ''));
-      else log('token prompt failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, function (r) { return 'token prompt opened in the userscript' + (r.value && r.value.hasToken ? ' (token present)' : ''); }, 'token prompt failed');
       setTimeout(refresh, 500);
     });
   });
@@ -2012,8 +2022,7 @@
   byId('pollBtn').addEventListener('click', function () {
     log('polling once ...');
     call('poll.once', { channelId: selChannel() }, 20000).then(function (res) {
-      if (res && res.ok) { var pv = res.value || {}; var nn = (pv.newUsers && pv.newUsers.length) || 0; log('poll: ' + pv.fetched + ' fetched, ' + pv.ingested + ' ingested, ' + nn + ' new'); }
-      else log('poll failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, function (r) { var pv = r.value || {}; var nn = (pv.newUsers && pv.newUsers.length) || 0; return 'poll: ' + pv.fetched + ' fetched, ' + pv.ingested + ' ingested, ' + nn + ' new'; }, 'poll failed');
       refresh();
     });
   });
@@ -2127,14 +2136,7 @@
     });
   });
   byId('saveProcRulesBtn').addEventListener('click', function () {
-    var txt = byId('procRules').value.trim();
-    var rules;
-    try { rules = txt ? JSON.parse(txt) : []; } catch (e) { log('reaction modes: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
-    if (!Array.isArray(rules)) { log('reaction modes: expected a JSON array'); return; }
-    call('config.setProcRules', { rules: rules }).then(function (res) {
-      if (res && res.ok) { log('reaction modes saved: ' + res.value.count + ' rule(s)'); byId('procRules').value = JSON.stringify(res.value.rules, null, 1); lastApplied.procRules = byId('procRules').value; }
-      else log('reaction modes failed: ' + ((res && res.reason) || 'unknown'));
-    });
+    saveJsonList({ box: 'procRules', cmd: 'config.setProcRules', arg: 'rules', appliedKey: 'procRules', valueKey: 'rules', label: 'reaction modes', unit: 'rule(s)', indent: 1 });
   });
   byId('pinNoticeBtn').addEventListener('click', function () {
     var txt = byId('noticeInput').value.trim();
@@ -2153,8 +2155,9 @@
   byId('prefixInput').addEventListener('change', function () {
     var parts = byId('prefixInput').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     call('config.setPrefixes', { prefixes: parts }).then(function (res) {
-      if (res && res.ok) { var cps = (res.value && res.value.commandPrefixes) || []; log('extra prefixes: ' + (cps.join(', ') || '(none)')); byId('prefixInput').value = cps.join(', '); lastApplied.prefixes = byId('prefixInput').value; }
-      else log('failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, function (r) { var cps = (r.value && r.value.commandPrefixes) || []; return 'extra prefixes: ' + (cps.join(', ') || '(none)'); }, 'failed', function (r) {
+        var cps = (r.value && r.value.commandPrefixes) || []; byId('prefixInput').value = cps.join(', '); lastApplied.prefixes = byId('prefixInput').value;
+      });
     });
   });
   byId('engageModeSel').addEventListener('change', function () {
@@ -2164,38 +2167,39 @@
   });
   byId('imageQueueInput').addEventListener('change', function () {
     call('config.setImageQueue', { max: byId('imageQueueInput').value }).then(function (res) {
-      if (res && res.ok) { log('image queue depth: ' + res.value.imageQueueMax); byId('imageQueueInput').value = res.value.imageQueueMax; lastApplied.imageQueue = byId('imageQueueInput').value; }
-      else log('failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, function (r) { return 'image queue depth: ' + r.value.imageQueueMax; }, 'failed', function (r) {
+        byId('imageQueueInput').value = r.value.imageQueueMax; lastApplied.imageQueue = byId('imageQueueInput').value;
+      });
     });
   });
   ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) {
     var el = byId('gate_' + g);
     if (el) el.addEventListener('change', function () {
       call('config.setGate', { key: g, on: el.checked }).then(function (res) {
-        if (res && res.ok) log('output gate ' + g + ': ' + ((res.value && res.value.on) ? 'allowed' : 'blocked'));
-        else log('output gate ' + g + ' failed: ' + ((res && res.reason) || 'unknown'));
+        logRes(res, function (r) { return 'output gate ' + g + ': ' + ((r.value && r.value.on) ? 'allowed' : 'blocked'); }, 'output gate ' + g + ' failed');
       });
     });
   });
-  byId('saveBeatsBtn').addEventListener('click', function () {
-    var txt = byId('beatsBox').value.trim();
-    var beats;
-    try { beats = txt ? JSON.parse(txt) : []; } catch (e) { log('beats: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
-    if (!Array.isArray(beats)) { log('beats: expected a JSON array'); return; }
-    call('config.setBeats', { beats: beats }).then(function (res) {
-      if (res && res.ok) { log('beats saved: ' + res.value.count + ' beat(s)'); byId('beatsBox').value = JSON.stringify(res.value.beats, null, 2); lastApplied.beats = byId('beatsBox').value; }
-      else log('beats failed: ' + ((res && res.reason) || 'unknown'));
+  // Batch 16: beats + auto-mod saves share one parse-array → set-command → echo shape.
+  // Batch 18: procRules joined as the third user (it stringifies with indent 1, not 2).
+  // opt = { box, cmd, arg, appliedKey, valueKey, label, unit, indent }. All log lines byte-identical.
+  function saveJsonList(opt) {
+    var box = byId(opt.box); if (!box) return;
+    var txt = box.value.trim();
+    var arr;
+    try { arr = txt ? JSON.parse(txt) : []; } catch (e) { log(opt.label + ': invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
+    if (!Array.isArray(arr)) { log(opt.label + ': expected a JSON array'); return; }
+    var args = {}; args[opt.arg] = arr;
+    call(opt.cmd, args).then(function (res) {
+      if (res && res.ok) { log(opt.label + ' saved: ' + res.value.count + ' ' + opt.unit); box.value = JSON.stringify(res.value[opt.valueKey], null, opt.indent == null ? 2 : opt.indent); lastApplied[opt.appliedKey] = box.value; }
+      else log(opt.label + ' failed: ' + ((res && res.reason) || 'unknown'));
     });
+  }
+  byId('saveBeatsBtn').addEventListener('click', function () {
+    saveJsonList({ box: 'beatsBox', cmd: 'config.setBeats', arg: 'beats', appliedKey: 'beats', valueKey: 'beats', label: 'beats', unit: 'beat(s)', indent: 2 });
   });
   byId('saveAutoModBtn').addEventListener('click', function () {
-    var txt = byId('autoModRules').value.trim();
-    var rules;
-    try { rules = txt ? JSON.parse(txt) : []; } catch (e) { log('auto-mod rules: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
-    if (!Array.isArray(rules)) { log('auto-mod rules: expected a JSON array'); return; }
-    call('config.setAutoModRules', { rules: rules }).then(function (res) {
-      if (res && res.ok) { log('auto-mod rules saved: ' + res.value.count + ' rule(s)'); byId('autoModRules').value = JSON.stringify(res.value.rules, null, 2); lastApplied.autoMod = byId('autoModRules').value; }
-      else log('auto-mod rules failed: ' + ((res && res.reason) || 'unknown'));
-    });
+    saveJsonList({ box: 'autoModRules', cmd: 'config.setAutoModRules', arg: 'rules', appliedKey: 'autoMod', valueKey: 'rules', label: 'auto-mod rules', unit: 'rule(s)', indent: 2 });
   });
   byId('clearLogBtn').addEventListener('click', function () { debugLines = []; byId('log').textContent = ''; });
   byId('resetBtn').addEventListener('click', function () {
@@ -2204,6 +2208,13 @@
   });
 
   // ---- People batch actions ----------------------------------------------------------
+  // Batch 16: the permaban path and the generic mod.action path ran the same sequential
+  // per-id chain; one helper counts genuine oks. Log lines unchanged at the call sites.
+  function chainEach(ids, callOne) {
+    var chain = Promise.resolve(), done = 0;
+    ids.forEach(function (id) { chain = chain.then(function () { return callOne(id).then(function (r) { if (r && r.ok) done++; }); }); });
+    return chain.then(function () { return done; });
+  }
   function batchAct(action) {
     var ids = rosterSelected();
     if (!ids.length) { log('select some users first'); return; }
@@ -2213,18 +2224,15 @@
     if (action === 'permaban') {
       if (!window.confirm('Permaban (ban + irreversible memory purge) ' + ids.length + ' user' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
       var pr = window.prompt('Reason (recorded in the mod log):', 'Chloe permaban'); if (pr == null) return;
-      var pchain = Promise.resolve();
-      var pdone = 0;
-      ids.forEach(function (id) { pchain = pchain.then(function () { return call('mod.permaban', { id: id, name: nameFor(id), reason: pr, channelId: selChannel() }).then(function (rr) { if (rr && rr.ok) pdone++; }); }); });
-      pchain.then(function () { log(pdone === ids.length ? ('pruned ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')) : ('prune incomplete: ' + pdone + '/' + ids.length)); refresh(); });
+      chainEach(ids, function (id) { return call('mod.permaban', { id: id, name: nameFor(id), reason: pr, channelId: selChannel() }); })
+        .then(function (pdone) { log(pdone === ids.length ? ('pruned ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')) : ('prune incomplete: ' + pdone + '/' + ids.length)); refresh(); });
       return;
     }
     var args = { action: action };
     if (action === 'timeout') { var d = window.prompt('Timeout ' + ids.length + ' user(s) for how long? (e.g. 30m, 1h, 1d)', '1h'); if (d == null) return; var ms = durToMs(d); if (!ms) { log('bad duration: ' + d); return; } args.durationMs = ms; }
     var r = window.prompt('Reason (optional) for ' + action + ' on ' + ids.length + ' user(s):', ''); if (r) args.reason = r;
-    var chain = Promise.resolve(), done = 0;
-    ids.forEach(function (id) { chain = chain.then(function () { return call('mod.action', Object.assign({ channelId: selChannel(), id: id }, args)).then(function (res) { if (res && res.ok) done++; }); }); });
-    chain.then(function () { log(action + ' \u2192 ' + done + '/' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); refresh(); });
+    chainEach(ids, function (id) { return call('mod.action', Object.assign({ channelId: selChannel(), id: id }, args)); })
+      .then(function (done) { log(action + ' \u2192 ' + done + '/' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); refresh(); });
   }
   (function () {
     var bar = byId('batchBar');
@@ -2237,7 +2245,7 @@
     var all = byId('rosterAll');
     if (all) all.addEventListener('change', function () {
       var on = all.checked;
-      var rows = document.querySelectorAll('#rosterList .usel');
+      var rows = uselBoxes();
       for (var i = 0; i < rows.length; i++) rows[i].checked = on;
       syncBatchBar();
     });
@@ -2277,10 +2285,16 @@
     }
     return null;
   }
+  // Batch 15: one lenient-JSON shape (strict parse, then brace-scan fallback) shared by
+  // the byte path (charDecode) and the paste path (charLoadText).
+  function charParseJsonLoose(text) {
+    try { return JSON.parse(text); } catch (e) {}
+    return charScavenge(text);
+  }
   function charDecode(bytes) {
     if (CHARCBOR && typeof CHARCBOR.decode === 'function') { try { return CHARCBOR.decode(bytes); } catch (e) {} }
     var text = ''; try { text = new TextDecoder('utf-8', { fatal: false }).decode(bytes); } catch (e) {}
-    if (text) { try { return JSON.parse(text); } catch (e) {} var s = charScavenge(text); if (s) return s; }
+    if (text) { var loose = charParseJsonLoose(text); if (loose) return loose; }
     return null;
   }
   function charExtractStores(obj) {
@@ -2309,10 +2323,10 @@
     return out;
   }
   function charNormalize(c) {
-    if (c.roleInstruction === undefined && c.systemMessage != null) c.roleInstruction = c.systemMessage;
-    if (c.roleInstruction === undefined) c.roleInstruction = '';
-    if (!c.name) c.name = 'Unnamed';
-    var instr = String(c.roleInstruction || '');
+    // Batch 15: pure build — the old version wrote roleInstruction/name back onto the input row.
+    var roleInstr = (c.roleInstruction !== undefined) ? c.roleInstruction : (c.systemMessage != null ? c.systemMessage : '');
+    var nm = c.name || 'Unnamed';
+    var instr = String(roleInstr || '');
     // AICC parity: fold in its other persona fields when they're literal text. Skip "@preset"
     // references (e.g. "@roleplay1") — those are AICC-internal aliases that carry no meaning here.
     var gwi = String(c.generalWritingInstructions || '').trim();
@@ -2320,7 +2334,7 @@
     var rem = String(c.reminderMessage || '').trim();
     if (rem) instr += '\n\nKeep in mind: ' + rem;
     var avatar = (c.avatar && c.avatar.url) ? c.avatar.url : (c.avatarUrl || '');
-    return { name: String(c.name), instruction: instr, avatar: avatar, id: (c.id != null ? c.id : null), uuid: c.uuid || null };
+    return { name: String(nm), instruction: instr, avatar: avatar, id: (c.id != null ? c.id : null), uuid: c.uuid || null };
   }
   // respool's replay-from-file: timeless memories already stored on a thread's messages.
   function charMemoriesForCharacter(stores, character) {
@@ -2385,12 +2399,12 @@
   // (mined from aicc-recovery). Returns a normalized FILEID.gz, or null.
   function charExtractFileId(raw) {
     var s = String(raw || '').trim();
-    var m = s.match(/[?&]data=[^~]*~([a-z0-9]{16,}(?:\.gz)?)/i);
-    if (m) return m[1].replace(/\.gz$/i, '') + '.gz';
-    m = s.match(/user\.uploads\.dev\/file\/([a-z0-9]{16,}(?:\.gz)?)/i);
-    if (m) return m[1].replace(/\.gz$/i, '') + '.gz';
-    m = s.match(/^([a-f0-9]{24,})(?:\.gz)?$/i);
-    if (m) return m[1] + '.gz';
+    // Batch 15: one pattern loop — every form normalizes to FILEID.gz the same way.
+    var pats = [/[?&]data=[^~]*~([a-z0-9]{16,}(?:\.gz)?)/i, /user\.uploads\.dev\/file\/([a-z0-9]{16,}(?:\.gz)?)/i, /^([a-f0-9]{24,})(?:\.gz)?$/i];
+    for (var i = 0; i < pats.length; i++) {
+      var m = s.match(pats[i]);
+      if (m) return m[1].replace(/\.gz$/i, '') + '.gz';
+    }
     return null;
   }
 
@@ -2445,7 +2459,7 @@
     // Not a link/id -> try to parse it as raw character JSON directly.
     var startsObj = s.charAt(0) === String.fromCharCode(123) || s.charAt(0) === '[';
     if (startsObj) {
-      var obj = null; try { obj = JSON.parse(s); } catch (e) { obj = charScavenge(s); }
+      var obj = charParseJsonLoose(s);
       if (obj) { charSetStatus('Reading pasted character data\u2026'); charIngestObject(obj, 'the pasted data'); return; }
       charSetStatus('That looked like JSON but could not be parsed. Check it is a complete character export.', 'er');
       return;
@@ -2454,7 +2468,7 @@
   }
 
   function charRenderList() {
-    var box = byId('charList'); while (box.firstChild) box.removeChild(box.firstChild);
+    var box = byId('charList'); clearBox(box);
     byId('charListCard').style.display = CHARSTATE.chars.length ? '' : 'none';
     CHARSTATE.chars.forEach(function (c, idx) {
       var row = document.createElement('div'); row.className = 'urow charrow';
@@ -2483,7 +2497,7 @@
     var mh = byId('charMemHead'), ml = byId('charMemList');
     if (CHARSTATE.memories.length) {
       mh.style.display = ''; ml.style.display = '';
-      while (ml.firstChild) ml.removeChild(ml.firstChild);
+      clearBox(ml);
       CHARSTATE.memories.slice(0, 30).forEach(function (t) { var d = document.createElement('div'); d.textContent = '\u2022 ' + t; ml.appendChild(d); });
       byId('charSeedChk').checked = true; byId('charSeedChk').disabled = false;
     } else {
@@ -2501,7 +2515,10 @@
     if (replace) jobs.push(call('config.setCharacter', { name: c.name, instruction: c.instruction, avatar: c.avatar }));
     if (seed) jobs.push(call('character.seedMemories', { name: c.name, memories: CHARSTATE.memories, channelId: selChannel() }));
     if (!jobs.length) { setText('charInstallNote', 'nothing selected to apply'); return; }
-    Promise.all(jobs).then(function () {
+    // Batch 15: gated on genuine engine oks (was blind success — a failed setCharacter still said done).
+    Promise.all(jobs).then(function (rs) {
+      var bad = (rs || []).filter(function (r) { return !(r && r.ok); })[0];
+      if (bad) { setText('charInstallNote', 'could not apply: ' + (bad.reason || 'unknown')); return; }
       setText('charInstallNote', 'done \u2014 she is now ' + c.name + (seed ? ' (with ' + CHARSTATE.memories.length + ' memories)' : ''));
       log('character installed: ' + c.name + (replace ? ' (personality replaced)' : '') + (seed ? ', ' + CHARSTATE.memories.length + ' memories seeded' : ''));
       refresh();
@@ -2548,7 +2565,7 @@
   function renderMods(list) {
     rebuildModSet(list);   // keep the roster's MOD badges in sync
     if (window.__roster && window.__roster.length) renderRoster(window.__roster);
-    var box = byId('modListBox'); while (box.firstChild) box.removeChild(box.firstChild);
+    var box = byId('modListBox'); clearBox(box);
     setText('modCount', list.length + (list.length === 1 ? ' mod' : ' mods'));
     if (!list.length) { var em = document.createElement('div'); em.className = 'note'; em.textContent = 'no mods yet \u2014 add your own Discord user ID so you can run !chloe commands in-channel'; box.appendChild(em); return; }
     list.forEach(function (id) {
@@ -2556,8 +2573,7 @@
       var s = document.createElement('span'); s.className = 'grow'; s.textContent = id; row.appendChild(s);
       row.appendChild(mkBtn('remove', 'ghost', function () {
         call('mod.removeMod', { id: id }).then(function (res) {
-          if (res && res.ok) { log('removed mod ' + id); renderMods(res.value || []); }
-          else log('remove mod failed: ' + ((res && res.reason) || 'unknown'));
+          logRes(res, 'removed mod ' + id, 'remove mod failed', function (r) { renderMods(r.value || []); });
         });
       }));
       box.appendChild(row);
@@ -2569,8 +2585,7 @@
   byId('addModBtn').addEventListener('click', function () {
     var raw = byId('modInput').value; var ci = raw.indexOf('//'); var v = (ci >= 0 ? raw.slice(0, ci) : raw).trim(); if (!v) { log('enter a user ID'); return; }
     call('mod.addMod', { id: v }).then(function (res) {
-      if (res && res.ok) { log('added mod ' + v); byId('modInput').value = ''; renderMods(res.value || []); }
-      else log('add mod failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, 'added mod ' + v, 'add mod failed', function (r) { byId('modInput').value = ''; renderMods(r.value || []); });
     });
   });
   // ---- export: download all state as a gzip-compressed JSON file ------------------
@@ -2678,8 +2693,7 @@
     var pd = {};
     DIAL_KEYS.forEach(function (k) { var el = byId('dial_' + k); if (el) pd[k] = Number(el.value) / 100; });
     call('config.setPersonality', { personality: pd }).then(function (res) {
-      if (res && res.ok) { dialDirty = {}; log('personality dials saved'); }
-      else log('save failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, 'personality dials saved', 'save failed', function () { dialDirty = {}; });
     });
   });
   byId('personaAnchorChk').addEventListener('change', function () {
@@ -2690,16 +2704,15 @@
   });
   byId('personaClearBtn').addEventListener('click', function () {
     call('persona.clear', { channelId: selChannel() }).then(function (res) {
-      if (res && res.ok) log('anchored note cleared');
-      else log('clear note failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, 'anchored note cleared', 'clear note failed');
       refreshPersonaNote();
     });
   });
   function refreshTokState() {
     call('bridge.status').then(function (res) {
       var v = (res && res.ok && res.value) ? res.value : null;
-      var et = byId('exactTokChk'); if (et && v) et.checked = (v.exactTokens !== false);
-      var cl = byId('cleanChk'); if (cl && v) cl.checked = (v.cleanOutput !== false);
+      // Batch 21: the two default-on tokenizer flags share one guarded write.
+      [['exactTokChk', 'exactTokens'], ['cleanChk', 'cleanOutput']].forEach(function (t) { var el = byId(t[0]); if (el && v) el.checked = (v[t[1]] !== false); });
       var trc = byId('translateChk'); if (trc && v) { trc.checked = !!v.translate; var tn = byId('translateNote'); if (tn) tn.style.display = v.translate ? '' : 'none'; }
       var st = v ? (v.tokenizer || 'idle') : 'unknown';
       var label = st === 'ready' ? 'tokenizer: ready (exact counts)' : st === 'loading' ? 'tokenizer: loading\u2026 (estimate for now)' : st === 'fallback' ? 'tokenizer: using safe estimate (chars/4)' : 'tokenizer: ' + st;
@@ -2713,7 +2726,7 @@
       if (!w) { card.style.display = 'none'; return; }
       card.style.display = '';
       var box = byId('workspaceBox'); if (!box) return;
-      while (box.firstChild) box.removeChild(box.firstChild);
+      clearBox(box);
       function line(label, val) {
         var d = document.createElement('div'); d.style.margin = '3px 0';
         var b = document.createElement('strong'); b.textContent = label + ': ';
@@ -2748,7 +2761,7 @@
       }
       if (!poolInit && byId('poolSizeInput')) { byId('poolSizeInput').value = v.poolSize || 0; poolInit = true; }
       var box = byId('workersBox');
-      while (box.firstChild) box.removeChild(box.firstChild);
+      clearBox(box);
       ids.forEach(function (id) {
         var row = document.createElement('div');
         row.className = 'row';
@@ -2771,21 +2784,19 @@
   byId('workersBtn').addEventListener('click', refreshWorkers);
   byId('savePoolBtn').addEventListener('click', function () {
     call('config.setPoolSize', { size: Number(byId('poolSizeInput').value) }).then(function (res) {
-      if (res && res.ok) log('pool target set to ' + (res.value && res.value.poolSize) + ((res.value && res.value.poolSize) ? ' (queen will keep that many workers alive)' : ' (manual spawning only)'));
-      else log('pool set failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, function (r) { return 'pool target set to ' + (r.value && r.value.poolSize) + ((r.value && r.value.poolSize) ? ' (queen will keep that many workers alive)' : ' (manual spawning only)'); }, 'pool set failed');
     });
   });
   byId('spawnWorkerBtn').addEventListener('click', function () {
     call('bridge.spawn').then(function (res) {
-      if (res && res.ok) { log('spawning a worker tab (it joins within ~15s; if nothing opens, allow popups for this site)'); setTimeout(refreshWorkers, 2000); }
-      else log('spawn failed: ' + ((res && res.reason) || 'unknown'));
+      logRes(res, 'spawning a worker tab (it joins within ~15s; if nothing opens, allow popups for this site)', 'spawn failed', function () { setTimeout(refreshWorkers, 2000); });
     });
   });
   refreshWorkers();
   function renderBanned(rows) {
     var box = byId('bannedList'); var empty = byId('bannedEmpty');
     if (!box) return;
-    while (box.firstChild) box.removeChild(box.firstChild);
+    clearBox(box);
     if (!rows || !rows.length) { if (empty) empty.style.display = ''; return; }
     if (empty) empty.style.display = 'none';
     rows.forEach(function (b) {
@@ -2803,8 +2814,7 @@
       btn.addEventListener('click', function () {
         if (!window.confirm('Remove ' + (b.name || b.id) + ' from Chloe’s blocklist?\n\nThis does NOT lift their Discord server ban — do that separately if needed.')) return;
         call('mod.unban', { id: b.id, name: b.name, channelId: selChannel() }).then(function (res) {
-          if (res && res.ok) { log('unbanned ' + (b.name || b.id) + ' from Chloe’s blocklist'); refreshBanned(); }
-          else log('unban failed: ' + ((res && res.reason) || 'unknown'));
+          logRes(res, 'unbanned ' + (b.name || b.id) + ' from Chloe’s blocklist', 'unban failed', function () { refreshBanned(); });
         });
       });
       row.appendChild(info); row.appendChild(btn);
@@ -2858,7 +2868,7 @@
   // Debug surface toggle (collapsed by default).
   byId('debugHead').addEventListener('click', function () { byId('debugBox').classList.toggle('open'); });
   byId('feedClearBtn').addEventListener('click', function () {
-    var feed = byId('feed'); while (feed.firstChild) feed.removeChild(feed.firstChild);
+    var feed = byId('feed'); clearBox(feed);
     var em = document.createElement('div'); em.className = 'feedempty'; em.id = 'feedEmpty'; em.textContent = 'Feed cleared.'; feed.appendChild(em);
   });
 </script>

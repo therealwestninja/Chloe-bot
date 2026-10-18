@@ -4,6 +4,10 @@ A free, locally hosted, Perchance-backed Discord bot that runs entirely in your 
 
 Since v0.24.0 Chloe is **multi-tab**: the tab you set up is the *queen* (it owns the token, the Discord traffic, and all state), and you can spawn disposable *worker* tabs whose only job is lending their AI/image generators — so text replies and image generation run in parallel instead of queuing on one tab.
 
+## Running Bridge page **LIVE** at
+
+[https://perchance.org/weld-chloe-bridge](https://perchance.org/weld-chloe-bridge)
+
 ## Requirements
 
 - Chrome (or any browser with a userscript manager)
