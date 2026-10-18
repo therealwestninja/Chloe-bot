@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.0
+// @version      0.90.3
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1641,7 +1641,8 @@
         if (!p) p = { id: id, name: msg.author.username, firstSeen: seenAt, lastSeen: seenAt, interactionCount: 0, state: 'active', lifecycle: 'quiet', recent: [] };
         p.name = p.name || msg.author.username;
         p.firstSeen = Math.min(p.firstSeen || seenAt, seenAt);
-        if (p.recent.length < cfg.recentWindow) p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
+        var dupH = false; for (var hi = 0; hi < p.recent.length; hi++) { if (String(p.recent[hi].id) === String(msg.id)) { dupH = true; break; } }
+        if (!dupH && p.recent.length < cfg.recentWindow) p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
         return ensureIndexed(id).then(function () { return store.set(partKey(id), p); });
       });
     }
@@ -3023,7 +3024,7 @@
       if (!id && !name) return Promise.resolve({ ok: false, reason: 'need a user id or username to block' });
       // Re-read immediately before write to minimise stale-snapshot window (dict keys don't collide
       // for different users, so concurrent blocks of distinct users are safe either way).
-      return getBlocklist().then(function () { return getBlocklist(); }).then(function (bl) {
+      return getBlocklist().then(function (bl) {
         var meta = { at: clock.now(), by: opts.byModId || null, reason: opts.reason || null };
         if (id) bl.ids[id] = meta;
         if (name) bl.names[name.toLowerCase()] = meta;
@@ -3114,6 +3115,7 @@
         p.lastSeen = Math.max(p.lastSeen || 0, seenAt);
         if (!p.firstSeen) p.firstSeen = seenAt;
         // rolling window of THIS user's lines (observed facts only; no inferences hardened in)
+        var seenIds = {}; p.recent = p.recent.filter(function (ln) { var k = String(ln.id); if (k === String(msg.id) || seenIds[k]) return false; seenIds[k] = true; return true; });
         p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
         if (p.recent.length > cfg.recentWindow) p.recent = p.recent.slice(-cfg.recentWindow);
         lastLineId = msg.id;   // track newest line so `forget-that` (no reply/target) can drop it
@@ -5863,7 +5865,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.0';
+  var VERSION = '0.90.3';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -5899,7 +5901,7 @@
   // existing install keeps its memory; every additional channel lives under 'ch:{id}:'.
   function makeStore(pfx) {
     var INDEX_GM_KEY = NS + pfx + 'roster:index';
-    function readIndex() { var v = GM_getValue(INDEX_GM_KEY, null); if (!v) return []; try { return JSON.parse(v) || []; } catch (e) { return []; } }
+    function readIndex() { var v = GM_getValue(INDEX_GM_KEY, null); if (!v) return []; try { var pa = JSON.parse(v) || []; return Array.isArray(pa) ? pa : []; } catch (e) { return []; } }
     var s = {
       get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + pfx + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { return null; } }); },
       set: function (k, v) { GM_setValue(NS + pfx + k, JSON.stringify(v)); return Promise.resolve(true); },
@@ -5982,6 +5984,7 @@
     return new Promise(function (resolve, reject) {
       GM_xmlhttpRequest({
         method: method, url: API + path,
+        timeout: (opts && opts.timeoutMs) || 25000,
         headers: Object.assign({ 'Authorization': 'Bot ' + token, 'User-Agent': UA },
                                opts.json ? { 'Content-Type': 'application/json' } : {},
                                opts.headers || {}),
@@ -6296,6 +6299,19 @@
   function replyTarget(o) { return (o && o !== 'null') ? o : '*'; }
   var callPending = new Map(); var callSeq = 0;
   var seenReqNonces = new Set();   // de-dupe fanned-out page requests so a config command applies once
+  // v0.90.2: control-link observability + reply hardening (hang diagnosis).
+  // lastCmd/At/Ms/Outcome always describe the last COMPLETED reply (never the in-flight
+  // command itself, which made status report pending/null about itself); inflight tracks live.
+  var linkStats = { lastCmd: null, lastAt: 0, lastMs: null, lastOutcome: null, counts: {}, inflight: null };
+  function linkSnapshot() { var s = { lastCmd: linkStats.lastCmd, lastAt: linkStats.lastAt, lastMs: linkStats.lastMs, lastOutcome: linkStats.lastOutcome }; if (linkStats.inflight) s.inflight = linkStats.inflight; return s; }
+  function linkTraceSlow(cmd, ms, outcome) { try { if (ms != null && ms > 10000) trace('link', 'slow reply: ' + cmd + ' took ' + ms + 'ms (' + outcome + ')'); } catch (e) {} }
+  function sendRes(source, origin, obj) {
+    var payload = obj;
+    try { payload = JSON.parse(JSON.stringify(obj)); } catch (e) { payload = { __chloe: 1, kind: 'res', nonce: (obj && obj.nonce), ok: false, reason: 'unserializable response' }; }
+    try { source.postMessage(payload, replyTarget(origin)); }
+    catch (e) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: (obj && obj.nonce), ok: false, reason: 'reply post failed' }, '*'); } catch (e2) {} }
+  }
+  var pollInflight = {};
   function callPage(method, args, timeoutMs) {
     return new Promise(function (resolve) {
       if (!pageSource) { resolve({ ok: false, reason: 'no control page linked (open the Chloe generator tab)' }); return; }
@@ -6653,6 +6669,9 @@
     }).catch(function (e) { return { ok: false, reason: 'HTTP ' + (e.status || '?'), body: e.body || null }; });
   }
   function statusSnapshot() {
+    try { return statusSnapshotCore(); } catch (e) { return { version: VERSION, snapshotError: String((e && e.message) || e), channelId: cfgGet('channelId', ''), running: false }; }
+  }
+  function statusSnapshotCore() {
     return {
       version: VERSION, hasToken: hasToken(),
       channelId: cfgGet('channelId', ''), botUserId: cfgGet('botUserId', ''), botName: cfgGet('botName', ''),
@@ -6714,6 +6733,7 @@
       character: cfgGet('character', null),
       gates: { emoji: gate('emoji', true), pings: gate('pings', false), everyone: gate('everyone', false), links: gate('links', false), channelLinks: gate('channelLinks', false) },
       pageLinked: !!pageSource,
+      link: linkSnapshot(),
       running: Object.keys(engines).some(function (c) { return engines[c] && engines[c].isRunning && engines[c].isRunning(); }),
       lastPoll: lastPoll
     };
@@ -6799,6 +6819,7 @@
         var DIALS = ['kindness', 'sarcasm', 'curiosity', 'playfulness', 'formality', 'verbosity'];
         var cleanP = {};
         DIALS.forEach(function (k) { if (rawP[k] != null && isFinite(rawP[k])) cleanP[k] = Math.max(0, Math.min(1, Number(rawP[k]))); });
+        var prevP = cfgGet('personality', null) || {}; DIALS.forEach(function (k) { if (cleanP[k] == null && prevP[k] != null && isFinite(prevP[k])) cleanP[k] = Math.max(0, Math.min(1, Number(prevP[k]))); });
         cfgSet('personality', cleanP);
         return Promise.resolve({ ok: true, value: { personality: cleanP } });
       }
@@ -6952,7 +6973,7 @@
       case 'config.setSemanticInjection':
         { var sid = String((args && args.id) || '').trim(); if (!sid) return Promise.resolve({ ok: false, reason: 'id required' });
           var txt = String((args && args.text) || '').trim(); if (!txt) { semInjectDrop(sid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid, cleared: true } }); }
-          semInjectUpsert({ id: sid, text: txt, priority: (args && args.priority) || null, ttlMs: (args && args.ttlMs) || null, at: Date.now() });
+          semInjectUpsert({ id: sid, text: txt, priority: (args && args.priority) || null, ttlMs: ((args && args.ttlMs) > 0 ? args.ttlMs : null), at: Date.now() });
           patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: sid } }); }
       case 'config.clearSemanticInjection':
         { var cid = String((args && args.id) || '').trim(); if (cid) semInjectDrop(cid); patchEngines({ semanticInjections: semInjectList() }); return Promise.resolve({ ok: true, value: { id: cid, cleared: true } }); }
@@ -7028,12 +7049,12 @@
       case 'diag':
         { var snap = statusSnapshot(); console.log('[chloe] diag', snap); return Promise.resolve({ ok: true, value: snap }); }
       case 'diag.trace':
-        return Promise.resolve({ ok: true, value: traceRing.slice() });
+        return Promise.resolve({ ok: true, value: traceRing.slice().concat([{ t: Date.now(), tag: 'link', msg: 'control-link: last=' + (linkStats.lastCmd || 'none') + ' ' + (linkStats.lastOutcome || '') + (linkStats.lastMs != null ? ' ' + linkStats.lastMs + 'ms' : '') + (linkStats.inflight ? (' | inflight=' + linkStats.inflight.cmd) : '') + ' | counts=' + JSON.stringify(linkStats.counts) }]) });
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
       case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); cfgSet('autoResume', true); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
       case 'stop':            eachEngine(function (e) { e.stop(); }); cfgSet('autoResume', false); return Promise.resolve({ ok: true, value: statusSnapshot() });
-      case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); return e2.pollOnce().then(function (s) { return { ok: true, value: s }; }).catch(function (err) { return { ok: false, reason: err.message }; }); }
+      case 'poll.once':       { var e2 = engineFor(args && args.channelId); if (!e2) return Promise.resolve({ ok: false, reason: 'no channel set' }); var pk = 'poll:' + (args && args.channelId); if (pollInflight[pk]) return pollInflight[pk].then(function (s) { return { ok: true, value: s, coalesced: true }; }); var pp = e2.pollOnce(); pollInflight[pk] = pp; return pp.then(function (s) { delete pollInflight[pk]; return { ok: true, value: s }; }, function (err) { delete pollInflight[pk]; return { ok: false, reason: (err && err.message) || 'poll failed' }; }); }
       case 'roster.get':      { var e3 = engineFor(args && args.channelId); if (!e3) return Promise.resolve({ ok: true, value: [] }); return e3.getRoster().then(function (r) { return { ok: true, value: r }; }); }
       case 'memory.get':        { var em1 = engineFor(args && args.channelId); if (!em1) return Promise.resolve({ ok: false, reason: 'no channel' }); return em1.getMemory(args && args.id).then(function (v) { return { ok: true, value: v }; }); }
       case 'memory.editFact':   { var em2 = engineFor(args && args.channelId); if (!em2) return Promise.resolve({ ok: false, reason: 'no channel' }); return em2.editFact(args && args.id, args && args.factId, { text: args && args.text, importance: args && args.importance }).then(function (v) { return v ? { ok: true, value: v } : { ok: false, reason: 'not found' }; }); }
@@ -7170,9 +7191,11 @@
       seenReqNonces.add(nonce);
       if (seenReqNonces.size > 400) { var it = seenReqNonces.values().next(); if (!it.done) seenReqNonces.delete(it.value); }
     }
+    var linkAt = Date.now(); linkStats.inflight = { cmd: d.cmd, at: linkAt };
+    linkStats.counts[d.cmd] = (linkStats.counts[d.cmd] || 0) + 1;
     Promise.resolve().then(function () { return dispatch(d.cmd, d.args); })
-      .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; try { source.postMessage(res, replyTarget(origin)); } catch (e) {} })
-      .catch(function (err) { trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); try { source.postMessage({ __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }, replyTarget(origin)); } catch (e) {} });
+      .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; var ms = Date.now() - linkAt; var out = (res && res.ok) ? 'replied-ok' : 'replied-fail'; linkStats.lastCmd = d.cmd; linkStats.lastAt = linkAt; linkStats.lastMs = ms; linkStats.lastOutcome = out; linkStats.inflight = null; linkTraceSlow(d.cmd, ms, out); sendRes(source, origin, res); })
+      .catch(function (err) { var ms2 = Date.now() - linkAt; linkStats.lastCmd = d.cmd; linkStats.lastAt = linkAt; linkStats.lastMs = ms2; linkStats.lastOutcome = 'replied-error'; linkStats.inflight = null; linkTraceSlow(d.cmd, ms2, 'replied-error'); trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); sendRes(source, origin, { __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }); });
   });
 
   // ---- D1: tab bridge (queen/worker) ---------------------------------------------------
@@ -7252,6 +7275,7 @@
   } else {
     trace('bridge', 'no bus available (BroadcastChannel + GM listener both missing) \u2014 single-tab mode');
   }
+  setInterval(function () { try { pushEvent('hello', { version: VERSION, role: TAB_ROLE, at: Date.now(), running: (function () { try { var es = ensureEngines(); for (var i = 0; i < es.length; i++) { if (es[i].isRunning && es[i].isRunning()) return true; } return false; } catch (e) { return null; } })(), link: linkSnapshot() }); } catch (e) {} }, 15000);
   function spawnWorker() {
     var url = location.href.split('#')[0] + '#chloe-worker';
     try { GM_openInTab(url, { active: false, insert: true }); return { ok: true, value: { url: url } }; }
@@ -7277,7 +7301,7 @@
         return st.listIndex().then(function (ids) {
           (ids || []).forEach(function (id) { GM_deleteValue(NS + pfx + 'u:' + id); });
           // clear archived ("historical friend") users too, via their index
-          var archIdx = []; try { archIdx = JSON.parse(GM_getValue(NS + pfx + 'arch:index:' + ch, '[]')) || []; } catch (e) {}
+          var archIdx = []; try { var aj = JSON.parse(GM_getValue(NS + pfx + 'arch:index:' + ch, '[]')) || []; archIdx = Array.isArray(aj) ? aj : []; } catch (e) {}
           archIdx.forEach(function (id) { GM_deleteValue(NS + pfx + 'arch:' + ch + ':u:' + id); });
           // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
@@ -7361,7 +7385,7 @@
       var pfx = prefixFor(ch);
       var chData = {};
       // roster index + all user partitions
-      var idx = []; try { idx = JSON.parse(GM_getValue(NS + pfx + 'roster:index', '[]')) || []; } catch (e) {}
+      var idx = []; try { var pj = JSON.parse(GM_getValue(NS + pfx + 'roster:index', '[]')) || []; idx = Array.isArray(pj) ? pj : []; } catch (e) {}
       chData['roster:index'] = idx;
       idx.forEach(function (id) { var v = GM_getValue(NS + pfx + 'u:' + id, null); if (v != null) chData['u:' + id] = v; });
       // archive index + archive partitions

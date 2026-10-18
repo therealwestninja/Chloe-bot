@@ -139,6 +139,8 @@
   .urow .ustate{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
   .urow .ustate.active{color:var(--good);border-color:var(--good)}
   .urow .ustate.ignored,.urow .ustate.soft-ban,.urow .ustate.timeout{color:var(--warn);border-color:var(--warn)}
+  /* giant version strings (ADV5: 5000 chars) must not blow out the status bar — ellipsis, full text kept in DOM */
+  #verTxt{display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .urow .ubadge{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--sel);color:#fff}
   .urow .uactions{display:flex;gap:3px;flex-shrink:0}
   .udetail{padding:8px 12px 12px 40px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12px}
@@ -192,10 +194,10 @@
 <div id="app">
   <header class="cmdbar">
     <div class="brand">
-      <span class="vital"><span class="dot" id="runDot"></span></span>
+      <span class="vital"><span class="dot off" id="runDot"></span></span>
       <span class="wordmark">Chloe</span>
     </div>
-    <span class="pill"><span class="dot" id="linkDot"></span><span id="linkTxt">connecting&hellip;</span></span>
+    <span class="pill"><span class="dot idle" id="linkDot"></span><span id="linkTxt">connecting&hellip;</span></span>
     <span class="pill"><span id="runTxt">stopped</span></span>
     <select id="viewChannelSel" title="channel for the roster, mod log, and mode" style="display:none"></select>
     <span class="spacer"></span>
@@ -207,14 +209,14 @@
 
   <!-- status bar: one strip, color = state only. Sourced from the same status poll. -->
   <div class="statusbar" id="statusbar">
-    <span class="stat"><span class="dot" id="sb_run_dot"></span><b id="sb_run">stopped</b></span>
+    <span class="stat"><span class="dot off" id="sb_run_dot"></span><b id="sb_run">stopped</b></span>
     <span class="statsep"></span>
-    <span class="stat">bridge <b id="verTxt">&ndash;</b></span>
-    <span class="stat">token <b id="tokTxt">&ndash;</b></span>
-    <span class="stat">bot <b id="botTxt">&ndash;</b></span>
-    <span class="stat">brain <b id="sb_brain">&ndash;</b></span>
+    <span class="stat">bridge <b id="verTxt">&hellip;</b></span>
+    <span class="stat">token <b id="tokTxt">&hellip;</b></span>
+    <span class="stat">bot <b id="botTxt">&hellip;</b></span>
+    <span class="stat">brain <b id="sb_brain">&hellip;</b></span>
     <span class="stat" id="sb_workers_wrap" style="display:none">workers <b id="sb_workers">0</b></span>
-    <span class="stat">last poll <b id="pollTxt">&ndash;</b></span>
+    <span class="stat">last poll <b id="pollTxt">&hellip;</b></span>
   </div>
 
   <!-- activity feed (primary surface) -->
@@ -348,7 +350,7 @@
         <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
-        <label class="chip"><input type="checkbox" id="convMemChk" checked> remember the full back-and-forth (her own messages + resolve who/what others @-mention)</label>
+        <label class="chip"><input type="checkbox" id="convMemChk"> remember the full back-and-forth (her own messages + resolve who/what others @-mention)</label>
         <label class="chip"><input type="checkbox" id="feedbackChk"> learn what lands &mdash; adapt reply style from reactions, follow-ups &amp; <code>!chloe good/bad</code></label>
         <label class="chip"><input type="checkbox" id="semanticChk"> recall memories by meaning, not keywords (loads a small local model once; revisited memories stay sharper)</label>
         <label class="chip"><input type="checkbox" id="userModelChk"> match each person&rsquo;s register (mirror how long &amp; how playfully they write)</label>
@@ -746,7 +748,6 @@
           log('poll: ' + v.fetched + ' fetched, ' + v.ingested + ' ingested, ' + (v.newUsers ? v.newUsers.length : 0) + ' new');
         }
         if (v.replied) log('Chloe replied -> ' + v.replied);
-        renderFromStatus(v);
         refresh();
       }
       return;
@@ -773,7 +774,7 @@
       else if (d.method === 'editimage') handler = editimage;
       var send = function (res) {
         dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
-        try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: res.ok, value: res.value, reason: res.reason }, ev.origin); } catch (e) {}
+        try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: !!(res && res.ok), value: (res && res.value), reason: (res && res.reason) }, ev.origin); } catch (e) {}
       };
       if (!handler) { send({ ok: false, reason: 'unknown method: ' + d.method }); return; }
       Promise.resolve().then(function () { return handler(d.args || {}); }).then(send)
@@ -794,7 +795,7 @@
     if (a.channelRecent) return 'ctxLines=' + a.channelRecent.length;
     return '';
   }
-  function renderFromStatus() {}  // placeholder; status refresh handles rendering
+  // (Batch 11: renderFromStatus placeholder removed — status refresh handles rendering.)
 
   // Post a request to every window that could host the userscript's listener. In Perchance's embed
   // the panel's window.top may be the outer shell frame (no listener) while the userscript runs in a
@@ -1490,7 +1491,13 @@
     ms.textContent = String(line).replace(/^\[chloe\.[a-z0-9]+\]\s*/i, '');   // strip the tag; the chip shows the type
     row.appendChild(ts); row.appendChild(tg); row.appendChild(ms);
     feed.appendChild(row);
-    while (feed.childNodes.length > FEED_MAX + 1) feed.removeChild(feed.firstChild);
+    // Cap: evict oldest real rows first — never the empty-placeholder (it must survive to announce emptiness).
+    while (feed.childNodes.length > FEED_MAX + 1) {
+      var victim = null, kids = feed.childNodes;
+      for (var vi = 0; vi < kids.length; vi++) { if (!kids[vi].id || kids[vi].id !== 'feedEmpty') { victim = kids[vi]; break; } }
+      if (!victim) break;
+      feed.removeChild(victim);
+    }
     feed.scrollTop = feed.scrollHeight;
   }
 
@@ -1504,12 +1511,42 @@
   }
 
   // ---- status + roster rendering ----------------------------------------------------
+  // F6 (Batch 3): config text fields must survive the 5s status refresh while holding an
+  // unsaved user draft. lastApplied records what WE last wrote per field; a value that
+  // differs is a user draft and is skipped. Focused fields were already skipped via
+  // activeElement. Absent status fields leave the box alone entirely. Save-success
+  // handlers record their server echo too, so the next status converges instead of
+  // misreading the echo as a draft (serializations match, so equality does the work).
+  var lastApplied = {};
+  // Batch 9: the same draft-clobber family covers the channel boxes, notice input and tz
+  // offset — free-typed lines the server merge would drop (merge only keeps server IDs).
+  // boxDirty marks user-typed-but-uncommitted content via input events; writers skip dirty
+  // boxes (focused boxes were already skipped). setChannels success clears the channel
+  // dirties; a merge that runs clears its own box's flag; notice/tz converge on match.
+  var boxDirty = {};
+  ['channelsBox', 'dmChannelsBox', 'noticeInput', 'tzOffset'].forEach(function (id) {
+    var el = byId(id); if (el) el.addEventListener('input', function () { boxDirty[id] = true; });
+  });
+  // Seed the baseline at load (boxes start empty): a draft typed before the first status
+  // then differs from the seed and is preserved, instead of being clobbered by first touch.
+  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['imageQueueInput', 'imageQueue']].forEach(function (pair) {
+    var el = byId(pair[0]); if (el) lastApplied[pair[1]] = el.value;
+  });
+  function setIfClean(id, key, incoming) {
+    var el = byId(id);
+    if (!el) return;
+    if (document.activeElement === el) return;
+    var cur = el.value;
+    if ((key in lastApplied) && cur !== lastApplied[key] && cur !== incoming) return;  // user-dirty: keep
+    el.value = incoming;
+    lastApplied[key] = incoming;
+  }
   function applyStatus(s) {
     setText('verTxt', s.version || '\u2013');
     setText('tokTxt', s.hasToken ? 'set' : 'not set');
     setText('botTxt', s.botUserId ? s.botUserId : 'unverified');
     var cb = byId('channelsBox');
-    if (cb && document.activeElement !== cb) {
+    if (cb && document.activeElement !== cb && !boxDirty.channelsBox) {
       var chans = (s.publicChannels && s.publicChannels.length) ? s.publicChannels : (s.channelId ? [s.channelId] : []);
       // Merge stored channel IDs back into the textarea preserving any // comments the user typed.
       // A line that already starts with a stored ID is left untouched; lines for removed channels
@@ -1521,9 +1558,10 @@
         merged.push(found.length ? found[0] : id);
       });
       cb.value = merged.join('\n');
+      boxDirty.channelsBox = false;
     }
     var db = byId('dmChannelsBox');
-    if (db && document.activeElement !== db) {
+    if (db && document.activeElement !== db && !boxDirty.dmChannelsBox) {
       var dms = s.dmChannels || [];
       var existingD = db.value.split('\n');
       var mergedD = [];
@@ -1532,20 +1570,21 @@
         mergedD.push(found.length ? found[0] : id);
       });
       db.value = mergedD.join('\n');
+      boxDirty.dmChannelsBox = false;
     }
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
     setText('runTxt', s.running ? 'running' : 'stopped');
     // status bar mirrors the run state with one state-colored dot + label
     var sbDot = byId('sb_run_dot'); if (sbDot) sbDot.className = 'dot ' + (s.running ? 'on' : 'off');
-    setText('sb_run', s.running ? 'online' : 'stopped');
+    setText('sb_run', s.running ? 'running' : 'stopped');
     // brain latency (the adaptive meter snapshot, when present) — green/amber/red by health
     if (s.brain && s.brain.respond && s.brain.respond.srtt != null) {
       var br = s.brain.respond;
       setText('sb_brain', (br.state === 'open' ? 'down' : (br.srtt + 'ms')));
     } else { setText('sb_brain', s.running ? 'warming' : '\u2013'); }
 
-    if (s.addressMode) { var sel = byId('modeSel'); if (sel && sel.value !== s.addressMode) sel.value = s.addressMode; }
+    if (s.addressMode) { var sel = byId('modeSel'); if (sel && document.activeElement !== sel && sel.value !== s.addressMode) sel.value = s.addressMode; }
     var ac = byId('ackChk'); if (ac) ac.checked = (s.ackReactions !== false);
     applyToggleStates(s);
     var tm = byId('timeChk'); if (tm) tm.checked = !!s.timeAware;
@@ -1556,20 +1595,32 @@
     var dl = byId('delibChk'); if (dl) dl.checked = !!s.idleDeliberation;
     var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
     var eg = byId('epiGraphChk'); if (eg) eg.checked = (s.episodeGraph !== false);
-    var pr = byId('procRules'); if (pr && document.activeElement !== pr) pr.value = JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1);
-    var tz = byId('tzOffset'); if (tz && s.timezoneOffsetMins != null) tz.value = s.timezoneOffsetMins;
+    if ('procRules' in s) setIfClean('procRules', 'procRules', JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1));
+    var tz = byId('tzOffset');
+    if (tz && s.timezoneOffsetMins != null) {
+      var tzWant = String(s.timezoneOffsetMins);
+      if (document.activeElement !== tz && (!boxDirty.tzOffset || tz.value === tzWant)) { tz.value = s.timezoneOffsetMins; boxDirty.tzOffset = false; }
+    }
     var dt = byId('deviceTimeChk'); if (dt) dt.checked = !!s.deviceTime;
-    var oni = byId('opNoteInput'); if (oni && document.activeElement !== oni) oni.value = s.operatorNote || '';
-    var iq = byId('imageQueueInput'); if (iq && document.activeElement !== iq) iq.value = s.imageQueueMax || 8;
+    if ('operatorNote' in s) setIfClean('opNoteInput', 'opNote', s.operatorNote || '');
+    if ('imageQueueMax' in s) setIfClean('imageQueueInput', 'imageQueue', String(s.imageQueueMax || 8));
     var em = byId('engageModeSel'); if (em && document.activeElement !== em) em.value = s.engageMode || 'normal';
-    var px = byId('prefixInput'); if (px && document.activeElement !== px) px.value = (s.commandPrefixes || []).join(', ');
+    if ('commandPrefixes' in s) setIfClean('prefixInput', 'prefixes', (s.commandPrefixes || []).join(', '));
     var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
-    var ni = byId('noticeInput'); if (ni && document.activeElement !== ni && s.noticeText) ni.value = s.noticeText;
-    if (s.gates) { ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) { var el = byId('gate_' + g); if (el) el.checked = !!s.gates[g]; }); }
-    var amr = byId('autoModRules'); if (amr && document.activeElement !== amr) amr.value = JSON.stringify(s.autoModRules || [], null, 2);
-    var bb = byId('beatsBox'); if (bb && document.activeElement !== bb) bb.value = JSON.stringify(s.beats || [], null, 2);
+    var ni = byId('noticeInput');
+    if (ni && s.noticeText) {
+      if (document.activeElement !== ni && (!boxDirty.noticeInput || ni.value === s.noticeText)) { ni.value = s.noticeText; boxDirty.noticeInput = false; }
+    }
+    // Output gates: missing object means all off (explicit default, not stale-keep).
+    var gates = s.gates || {}; ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) { var el = byId('gate_' + g); if (el) el.checked = !!gates[g]; });
+    if ('autoModRules' in s) setIfClean('autoModRules', 'autoMod', JSON.stringify(s.autoModRules || [], null, 2));
+    if ('beats' in s) setIfClean('beatsBox', 'beats', JSON.stringify(s.beats || [], null, 2));
+    // Last poll: missing object resets (no stale numbers); a half-shape guards each field.
     if (s.lastPoll) {
-      setText('pollTxt', s.lastPoll.ingested + ' new of ' + s.lastPoll.fetched);
+      var lp = s.lastPoll;
+      setText('pollTxt', (lp.ingested != null ? lp.ingested : '\u2013') + ' new of ' + (lp.fetched != null ? lp.fetched : '\u2013'));
+    } else {
+      setText('pollTxt', '\u2013');
     }
   }
 
@@ -1637,7 +1688,7 @@
 
       var meta = document.createElement('div'); meta.className = 'umeta';
       var st = document.createElement('span'); var stateName = (p.state || 'active');
-      st.className = 'ustate ' + stateName; st.textContent = stateName + (p.strikes ? ' \u00b7 ' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') : '');
+      st.className = 'ustate ' + String(stateName).replace(/\s+/g, '-'); st.textContent = stateName + (p.strikes ? ' \u00b7 ' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') : '');
       meta.appendChild(st);
       var idEl = document.createElement('span'); idEl.className = 'uid'; idEl.textContent = p.id; meta.appendChild(idEl);
       var seen = document.createElement('span'); seen.className = 'uid'; seen.textContent = fmtTime(p.lastSeen) + ' \u00b7 ' + (p.recent ? p.recent.length : 0) + ' lines'; meta.appendChild(seen);
@@ -1806,10 +1857,11 @@
     if (!ids || !ids.length) return;
     var target = makeMod ? 'mod.addMod' : 'mod.removeMod';
     var chain = Promise.resolve();
-    ids.forEach(function (id) { chain = chain.then(function () { return call(target, { id: id }); }); });
+    var opOk = 0;
+    ids.forEach(function (id) { chain = chain.then(function () { return call(target, { id: id }).then(function (r) { if (r && r.ok) { opOk++; return r; } return r; }); }); });
     chain.then(function (res) {
-      if (res && res.ok) { (res.value || []).forEach && rebuildModSet(res.value); }
-      log((makeMod ? 'mod' : 'unmod') + ' \u2192 ' + ids.length + ' user' + (ids.length === 1 ? '' : 's'));
+      if (opOk === ids.length && res && res.ok) { (res.value || []).forEach && rebuildModSet(res.value); log((makeMod ? 'mod' : 'unmod') + ' \u2192 ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); }
+      else log((makeMod ? 'mod' : 'unmod') + ' failed: ' + opOk + '/' + ids.length + ' applied' + ((res && res.reason) ? (' (' + res.reason + ')') : ''));
       refreshMods(); refresh();
     });
   }
@@ -1830,8 +1882,8 @@
       var pr = window.prompt('Reason for permabanning ' + person.name + ' (recorded in the mod log):', 'Chloe permaban');
       if (pr == null) return;  // cancelled here; the userscript will also ask for a final confirm
       call('mod.permaban', { id: person.id, name: person.name, reason: pr, channelId: selChannel() }).then(function (res) {
-        if (res.ok) { var v = res.value || {}; log('prune -> ' + person.name + ': ' + (v.banned ? 'Discord banned + ' : '') + 'blocked + purged' + (v.localOnly ? ' (local only — Discord server ban skipped)' : '')); refresh(); }
-        else log('permaban -> ' + (res.reason || 'failed'));
+        if (res && res.ok) { var v = res.value || {}; log('prune -> ' + person.name + ': ' + (v.banned ? 'Discord banned + ' : '') + 'blocked + purged' + (v.localOnly ? ' (local only — Discord server ban skipped)' : '')); refresh(); }
+        else log('permaban -> ' + ((res && res.reason) || 'failed'));
       });
       return;
     }
@@ -1848,8 +1900,8 @@
       var r = window.prompt('Reason (optional) for ' + action + ' on ' + person.name + ':', ''); if (r) args.reason = r;
     }
     call('mod.action', Object.assign({ channelId: selChannel() }, args)).then(function (res) {
-      if (res.ok) { log(action + ' -> ' + (res.value && res.value.ack ? res.value.ack : 'ok')); refresh(); }
-      else log(action + ' -> ' + (res.reason || 'failed'));
+      if (res && res.ok) { log(action + ' -> ' + (res.value && res.value.ack ? res.value.ack : 'ok')); refresh(); }
+      else log(action + ' -> ' + ((res && res.reason) || 'failed'));
     });
   }
 
@@ -1857,28 +1909,40 @@
   function selChannel() { var el = byId('viewChannelSel'); return (el && el.value) ? el.value : null; }
   function renderChannelSel(st) {
     var el = byId('viewChannelSel');
-    var chans = (st && st.channels) || [];
+    var chans = (st && st.channels) || (st && st.publicChannels) || ((st && st.channelId) ? [st.channelId] : []) || [];
+    if (!chans.length) return;   // F14: never wipe the selector on a chan-less status
     var cur = el.value;
     while (el.firstChild) el.removeChild(el.firstChild);
     chans.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; el.appendChild(o); });
     if (cur && chans.indexOf(cur) >= 0) el.value = cur;
     el.style.display = chans.length > 1 ? '' : 'none';
   }
+  // F5 (Batch 2): roster freshness must not depend on status — the transports are
+  // independent and status is the flaky one. Both refresh paths share this guard so the
+  // "don't churn under the user" rule can't drift apart between them.
+  function rosterBusy() {
+    var filtEl = byId('rosterFilter');
+    var ae = document.activeElement;
+    var editingMem = ae && (ae.className === 'membox' || ae.className === 'memimp');
+    return (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl) || editingMem;
+  }
   function refresh() {
     return call('status').then(function (res) {
-      if (!res.ok) { setLink(false); return; }   // dot goes amber "waiting"; no banner, no alarm
+      if (!res || !res.ok) {
+        setLink(false);   // dot goes amber "waiting"; no banner, no alarm
+        setText('runTxt', '\u2026'); setText('sb_run', '\u2026');
+        var rd0 = byId('runDot'); if (rd0) rd0.className = 'dot idle';
+        var sd0 = byId('sb_run_dot'); if (sd0) sd0.className = 'dot idle';
+        if (rosterBusy()) return null;
+        return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r && r.ok) renderRoster(r.value || []); });
+      }
       setLink(true);
       applyStatus(res.value);
       renderChannelSel(res.value);
       applyPersonality(res.value);
-      // Don't churn the roster under the user mid-interaction: if they've selected rows or are
-      // typing in the filter, skip the periodic re-render (state stays put; manual refresh still works).
-      var filtEl = byId('rosterFilter');
-      var ae = document.activeElement;
-      var editingMem = ae && (ae.className === 'membox' || ae.className === 'memimp');
-      var busy = (typeof rosterSelected === 'function' && rosterSelected().length) || (filtEl && document.activeElement === filtEl) || editingMem;
-      if (busy) return null;
-      return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r.ok) renderRoster(r.value || []); });
+      // Don't churn the roster under the user mid-interaction (state stays put; manual refresh still works).
+      if (rosterBusy()) return null;
+      return call('roster.get', { channelId: selChannel() }).then(function (r) { if (r && r.ok) renderRoster(r.value || []); });
     });
   }
   function setLink(alive) {
@@ -1906,43 +1970,49 @@
     var dms = parseBox('dmChannelsBox');
     if (!pub.length) { log('enter at least one public channel ID (one per line)'); return; }
     // Save DMs FIRST so the public save's mutual-exclusion sees the current DM set, then save public.
-    call('config.setDmChannels', { channels: dms }).then(function () {
+    call('config.setDmChannels', { channels: dms }).then(function (dmRes) {
+      if (dmRes && !dmRes.ok) { log('save DM channels failed: ' + (dmRes.reason || 'unknown')); return null; }
       return call('config.setAllChannels', { channels: pub });
     }).then(function (res) {
-      if (res && res.ok) { log('channels saved \u2014 primary ' + (res.value.primary || '?') + (res.value.channels.length > 1 ? ' (+' + (res.value.channels.length - 1) + ' more)' : '') + (dms.length ? (' \u00b7 ' + dms.length + ' DM' + (dms.length === 1 ? '' : 's')) : '')); refresh(); }
+      if (!res) return;
+      if (res && res.ok) { boxDirty.channelsBox = false; boxDirty.dmChannelsBox = false; var chs = (res.value && res.value.channels) || []; log('channels saved \u2014 primary ' + ((res.value && res.value.primary) || '?') + (chs.length > 1 ? ' (+' + (chs.length - 1) + ' more)' : '') + (dms.length ? (' \u00b7 ' + dms.length + ' DM' + (dms.length === 1 ? '' : 's')) : '')); refresh(); }
       else log('save channels failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('setTokenBtn').addEventListener('click', function () {
-    call('token.prompt').then(function (res) { log('token prompt opened in the userscript' + (res.ok && res.value && res.value.hasToken ? ' (token present)' : '')); setTimeout(refresh, 500); });
+    call('token.prompt').then(function (res) {
+      if (res && res.ok) log('token prompt opened in the userscript' + (res.value && res.value.hasToken ? ' (token present)' : ''));
+      else log('token prompt failed: ' + ((res && res.reason) || 'unknown'));
+      setTimeout(refresh, 500);
+    });
   });
   byId('validateBtn').addEventListener('click', function () {
     log('validating token via /users/@me ...');
     call('token.validate', null, 15000).then(function (res) {
-      if (res.ok && res.value) log('token OK -> ' + res.value.username + ' (' + res.value.id + '), bot=' + res.value.bot);
-      else if (res.ok) log('token validated, but the userscript returned no identity (try again)');
-      else log('token validation failed: ' + (res.reason || 'error') + (res.body ? ' ' + JSON.stringify(res.body) : ''));
+      if (res && res.ok && res.value) log('token OK -> ' + res.value.username + ' (' + res.value.id + '), bot=' + res.value.bot);
+      else if (res && res.ok) log('token validated, but the userscript returned no identity (try again)');
+      else log('token validation failed: ' + ((res && res.reason) || 'error') + (res && res.body ? ' ' + JSON.stringify(res.body) : ''));
       refresh();
     });
   });
   byId('startBtn').addEventListener('click', function () {
-    call('start').then(function (res) { log(res.ok ? 'started T0 polling' : ('start failed: ' + res.reason)); refresh(); });
+    call('start').then(function (res) { log(res && res.ok ? 'started T0 polling' : ('start failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
   });
   byId('stopBtn').addEventListener('click', function () {
-    call('stop').then(function () { log('stopped'); refresh(); });
+    call('stop').then(function (res) { log(res && res.ok ? 'stopped' : ('stop failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
   });
   byId('pollBtn').addEventListener('click', function () {
     log('polling once ...');
     call('poll.once', { channelId: selChannel() }, 20000).then(function (res) {
-      if (res.ok) log('poll: ' + res.value.fetched + ' fetched, ' + res.value.ingested + ' ingested, ' + res.value.newUsers.length + ' new');
-      else log('poll failed: ' + res.reason);
+      if (res && res.ok) { var pv = res.value || {}; var nn = (pv.newUsers && pv.newUsers.length) || 0; log('poll: ' + pv.fetched + ' fetched, ' + pv.ingested + ' ingested, ' + nn + ' new'); }
+      else log('poll failed: ' + ((res && res.reason) || 'unknown'));
       refresh();
     });
   });
   byId('refreshBtn').addEventListener('click', refresh);
   byId('modeSel').addEventListener('change', function () {
     call('config.setMode', { mode: byId('modeSel').value }).then(function (res) {
-      log(res.ok ? ('reply mode: ' + res.value.addressMode) : ('set mode failed: ' + res.reason));
+      log(res && res.ok ? ('reply mode: ' + res.value.addressMode) : ('set mode failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('ackChk').addEventListener('change', function () {
@@ -1987,15 +2057,15 @@
   setInterval(function () { try { pushDeviceTime(); } catch (e) {} }, 60000);
   (function () { var b = byId('opNoteSetBtn'); if (b) b.addEventListener('click', function () {
     var txt = (byId('opNoteInput').value || '').trim();
-    var ttl = parseInt(byId('opNoteTtl').value, 10) || 0;
-    if (!txt) { call('config.clearSemanticInjection', { id: 'opnote' }).then(function () { log('operator note cleared (empty)'); }); return; }
+    var ttl = Math.max(0, parseInt(byId('opNoteTtl').value, 10) || 0);   // Batch 11: negatives instant-expired server-side (no-op write) — floor at 0 here
+    if (!txt) { call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { log(res && res.ok ? 'operator note cleared (empty)' : ('clear failed: ' + ((res && res.reason) || 'unknown'))); }); return; }
     call('config.setSemanticInjection', { id: 'opnote', text: txt, ttlMs: ttl || null }).then(function (res) {
       log(res && res.ok ? ('operator note set' + (ttl ? ' (will expire)' : '')) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   }); })();
   (function () { var b = byId('opNoteClearBtn'); if (b) b.addEventListener('click', function () {
     byId('opNoteInput').value = '';
-    call('config.clearSemanticInjection', { id: 'opnote' }).then(function () { log('operator note cleared'); });
+    call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { log(res && res.ok ? 'operator note cleared' : ('clear failed: ' + ((res && res.reason) || 'unknown'))); });
   }); })();
   byId('goalChk').addEventListener('change', function () {
     call('config.setGoalObjects', { on: byId('goalChk').checked }).then(function (res) {
@@ -2054,8 +2124,8 @@
     try { rules = txt ? JSON.parse(txt) : []; } catch (e) { log('reaction modes: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
     if (!Array.isArray(rules)) { log('reaction modes: expected a JSON array'); return; }
     call('config.setProcRules', { rules: rules }).then(function (res) {
-      if (res.ok) { log('reaction modes saved: ' + res.value.count + ' rule(s)'); byId('procRules').value = JSON.stringify(res.value.rules, null, 1); }
-      else log('reaction modes failed: ' + res.reason);
+      if (res && res.ok) { log('reaction modes saved: ' + res.value.count + ' rule(s)'); byId('procRules').value = JSON.stringify(res.value.rules, null, 1); lastApplied.procRules = byId('procRules').value; }
+      else log('reaction modes failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('pinNoticeBtn').addEventListener('click', function () {
@@ -2066,35 +2136,36 @@
       args.force = true;
     }
     call('mod.pinNotice', Object.assign({ channelId: selChannel() }, args)).then(function (res) {
-      if (res.ok && res.value && res.value.already) log('transparency notice already pinned');
-      else if (res.ok) log('transparency notice posted and pinned');
-      else log('pin notice failed: ' + res.reason);
+      if (res && res.ok && res.value && res.value.already) log('transparency notice already pinned');
+      else if (res && res.ok) log('transparency notice posted and pinned');
+      else log('pin notice failed: ' + ((res && res.reason) || 'unknown'));
       refresh();
     });
   });
   byId('prefixInput').addEventListener('change', function () {
     var parts = byId('prefixInput').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
     call('config.setPrefixes', { prefixes: parts }).then(function (res) {
-      if (res.ok) { log('extra prefixes: ' + (res.value.commandPrefixes.join(', ') || '(none)')); byId('prefixInput').value = res.value.commandPrefixes.join(', '); }
-      else log('failed: ' + res.reason);
+      if (res && res.ok) { var cps = (res.value && res.value.commandPrefixes) || []; log('extra prefixes: ' + (cps.join(', ') || '(none)')); byId('prefixInput').value = cps.join(', '); lastApplied.prefixes = byId('prefixInput').value; }
+      else log('failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('engageModeSel').addEventListener('change', function () {
     call('config.setEngageMode', { mode: byId('engageModeSel').value, channelId: selChannel() }).then(function (res) {
-      log(res.ok ? ('engagement mode: ' + res.value.engageMode) : ('failed: ' + res.reason));
+      log(res && res.ok ? ('engagement mode: ' + res.value.engageMode) : ('failed: ' + ((res && res.reason) || 'unknown')));
     });
   });
   byId('imageQueueInput').addEventListener('change', function () {
     call('config.setImageQueue', { max: byId('imageQueueInput').value }).then(function (res) {
-      if (res.ok) { log('image queue depth: ' + res.value.imageQueueMax); byId('imageQueueInput').value = res.value.imageQueueMax; }
-      else log('failed: ' + res.reason);
+      if (res && res.ok) { log('image queue depth: ' + res.value.imageQueueMax); byId('imageQueueInput').value = res.value.imageQueueMax; lastApplied.imageQueue = byId('imageQueueInput').value; }
+      else log('failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) {
     var el = byId('gate_' + g);
     if (el) el.addEventListener('change', function () {
       call('config.setGate', { key: g, on: el.checked }).then(function (res) {
-        if (res && res.ok) log('output gate ' + g + ': ' + (res.value.on ? 'allowed' : 'blocked'));
+        if (res && res.ok) log('output gate ' + g + ': ' + ((res.value && res.value.on) ? 'allowed' : 'blocked'));
+        else log('output gate ' + g + ' failed: ' + ((res && res.reason) || 'unknown'));
       });
     });
   });
@@ -2104,8 +2175,8 @@
     try { beats = txt ? JSON.parse(txt) : []; } catch (e) { log('beats: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
     if (!Array.isArray(beats)) { log('beats: expected a JSON array'); return; }
     call('config.setBeats', { beats: beats }).then(function (res) {
-      if (res.ok) { log('beats saved: ' + res.value.count + ' beat(s)'); byId('beatsBox').value = JSON.stringify(res.value.beats, null, 2); }
-      else log('beats failed: ' + res.reason);
+      if (res && res.ok) { log('beats saved: ' + res.value.count + ' beat(s)'); byId('beatsBox').value = JSON.stringify(res.value.beats, null, 2); lastApplied.beats = byId('beatsBox').value; }
+      else log('beats failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('saveAutoModBtn').addEventListener('click', function () {
@@ -2114,14 +2185,14 @@
     try { rules = txt ? JSON.parse(txt) : []; } catch (e) { log('auto-mod rules: invalid JSON \u2014 ' + ((e && e.message) || e)); return; }
     if (!Array.isArray(rules)) { log('auto-mod rules: expected a JSON array'); return; }
     call('config.setAutoModRules', { rules: rules }).then(function (res) {
-      if (res.ok) { log('auto-mod rules saved: ' + res.value.count + ' rule(s)'); byId('autoModRules').value = JSON.stringify(res.value.rules, null, 2); }
-      else log('auto-mod rules failed: ' + res.reason);
+      if (res && res.ok) { log('auto-mod rules saved: ' + res.value.count + ' rule(s)'); byId('autoModRules').value = JSON.stringify(res.value.rules, null, 2); lastApplied.autoMod = byId('autoModRules').value; }
+      else log('auto-mod rules failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('clearLogBtn').addEventListener('click', function () { debugLines = []; byId('log').textContent = ''; });
   byId('resetBtn').addEventListener('click', function () {
     if (!window.confirm('Reset T0 state (cursor, roster, ring)? The token is kept.')) return;
-    call('reset').then(function () { log('T0 state reset'); refresh(); });
+    call('reset').then(function (res) { log(res && res.ok ? 'T0 state reset' : ('reset failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
   });
 
   // ---- People batch actions ----------------------------------------------------------
@@ -2135,8 +2206,9 @@
       if (!window.confirm('Permaban (ban + irreversible memory purge) ' + ids.length + ' user' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
       var pr = window.prompt('Reason (recorded in the mod log):', 'Chloe permaban'); if (pr == null) return;
       var pchain = Promise.resolve();
-      ids.forEach(function (id) { pchain = pchain.then(function () { return call('mod.permaban', { id: id, name: nameFor(id), reason: pr, channelId: selChannel() }); }); });
-      pchain.then(function () { log('pruned ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); refresh(); });
+      var pdone = 0;
+      ids.forEach(function (id) { pchain = pchain.then(function () { return call('mod.permaban', { id: id, name: nameFor(id), reason: pr, channelId: selChannel() }).then(function (rr) { if (rr && rr.ok) pdone++; }); }); });
+      pchain.then(function () { log(pdone === ids.length ? ('pruned ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')) : ('prune incomplete: ' + pdone + '/' + ids.length)); refresh(); });
       return;
     }
     var args = { action: action };
@@ -2456,7 +2528,11 @@
       });
     });
     var cb = byId('charClearBtn'); if (cb) cb.addEventListener('click', function () {
-      call('config.setCharacter', { name: null }).then(function () { setText('charCurrent', 'default Chloe'); log('character cleared \u2014 back to default Chloe'); refresh(); });
+      call('config.setCharacter', { name: null }).then(function (res) {
+        if (res && res.ok) { setText('charCurrent', 'default Chloe'); log('character cleared \u2014 back to default Chloe'); }
+        else setText('charInstallNote', 'could not clear: ' + ((res && res.reason) || 'unknown'));
+        refresh();
+      });
     });
   })();
 
@@ -2471,17 +2547,20 @@
       var row = document.createElement('div'); row.className = 'row'; row.style.padding = '3px 0';
       var s = document.createElement('span'); s.className = 'grow'; s.textContent = id; row.appendChild(s);
       row.appendChild(mkBtn('remove', 'ghost', function () {
-        call('mod.removeMod', { id: id }).then(function (res) { if (res.ok) { log('removed mod ' + id); renderMods(res.value || []); } });
+        call('mod.removeMod', { id: id }).then(function (res) {
+          if (res && res.ok) { log('removed mod ' + id); renderMods(res.value || []); }
+          else log('remove mod failed: ' + ((res && res.reason) || 'unknown'));
+        });
       }));
       box.appendChild(row);
     });
   }
-  function refreshMods() { call('mod.listMods').then(function (res) { if (res.ok) renderMods(res.value || []); }); }
+  function refreshMods() { call('mod.listMods').then(function (res) { if (res && res.ok) renderMods(res.value || []); }); }
   byId('addModBtn').addEventListener('click', function () {
     var raw = byId('modInput').value; var ci = raw.indexOf('//'); var v = (ci >= 0 ? raw.slice(0, ci) : raw).trim(); if (!v) { log('enter a user ID'); return; }
     call('mod.addMod', { id: v }).then(function (res) {
-      if (res.ok) { log('added mod ' + v); byId('modInput').value = ''; renderMods(res.value || []); }
-      else log('add mod failed: ' + res.reason);
+      if (res && res.ok) { log('added mod ' + v); byId('modInput').value = ''; renderMods(res.value || []); }
+      else log('add mod failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   // ---- export: download all state as a gzip-compressed JSON file ------------------
@@ -2555,7 +2634,8 @@
 
   byId('diagBtn').addEventListener('click', function () {
     call('diag.trace').then(function (res) {
-      var ring = (res && res.value) || [];
+      if (!res || !res.ok) { log('diagnostics failed: ' + ((res && res.reason) || 'unknown')); return; }
+      var ring = res.value || [];
       if (!ring.length) { log('diagnostics ring is empty'); return; }
       var lines = ring.map(function (e) { return new Date(e.t || 0).toLocaleTimeString() + '  [' + e.tag + '] ' + e.msg; });
       log('--- diagnostics (' + ring.length + ' events) ---');
@@ -2565,6 +2645,8 @@
   });
   var DIAL_KEYS = ['kindness', 'sarcasm', 'curiosity', 'playfulness', 'formality', 'verbosity'];
   var dialsInitialized = false;
+  var dialDirty = {};   // dials the user has dragged: server refresh must not clobber them (Batch 5)
+  DIAL_KEYS.forEach(function (k) { var el = byId('dial_' + k); if (el) el.addEventListener('input', function () { dialDirty[k] = true; }); });
   function refreshPersonaNote() {
     call('persona.get', { channelId: selChannel() }).then(function (res) {
       var n = (res && res.ok) ? res.value : null;
@@ -2573,8 +2655,9 @@
   }
   function applyPersonality(st) {
     if (!st) return;
-    if (!dialsInitialized && st.personality) {
-      DIAL_KEYS.forEach(function (k) { var el = byId('dial_' + k); if (el && st.personality[k] != null) el.value = Math.round(st.personality[k] * 100); });
+    // Clean dials follow the server; user-dragged (dirty) or focused dials are left alone.
+    if (st.personality) {
+      DIAL_KEYS.forEach(function (k) { var el = byId('dial_' + k); if (el && st.personality[k] != null && !dialDirty[k] && document.activeElement !== el) el.value = Math.round(st.personality[k] * 100); });
       dialsInitialized = true;
     }
     var chk = byId('personaAnchorChk'); if (chk) chk.checked = !!st.personaAnchor;
@@ -2584,14 +2667,22 @@
     var pd = {};
     DIAL_KEYS.forEach(function (k) { var el = byId('dial_' + k); if (el) pd[k] = Number(el.value) / 100; });
     call('config.setPersonality', { personality: pd }).then(function (res) {
-      log(res && res.ok ? 'personality dials saved' : ('save failed: ' + ((res && res.reason) || 'unknown')));
+      if (res && res.ok) { dialDirty = {}; log('personality dials saved'); }
+      else log('save failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('personaAnchorChk').addEventListener('change', function () {
-    call('config.setPersonaAnchor', { on: byId('personaAnchorChk').checked });
+    var on = byId('personaAnchorChk').checked;
+    call('config.setPersonaAnchor', { on: on }).then(function (res) {
+      log(res && res.ok ? ('anchored notes: ' + (on ? 'on' : 'off')) : ('anchor failed: ' + ((res && res.reason) || 'unknown')));
+    });
   });
   byId('personaClearBtn').addEventListener('click', function () {
-    call('persona.clear', { channelId: selChannel() }).then(refreshPersonaNote);
+    call('persona.clear', { channelId: selChannel() }).then(function (res) {
+      if (res && res.ok) log('anchored note cleared');
+      else log('clear note failed: ' + ((res && res.reason) || 'unknown'));
+      refreshPersonaNote();
+    });
   });
   function refreshTokState() {
     call('bridge.status').then(function (res) {
@@ -2669,7 +2760,8 @@
   byId('workersBtn').addEventListener('click', refreshWorkers);
   byId('savePoolBtn').addEventListener('click', function () {
     call('config.setPoolSize', { size: Number(byId('poolSizeInput').value) }).then(function (res) {
-      if (res && res.ok) log('pool target set to ' + res.value.poolSize + (res.value.poolSize ? ' (queen will keep that many workers alive)' : ' (manual spawning only)'));
+      if (res && res.ok) log('pool target set to ' + (res.value && res.value.poolSize) + ((res.value && res.value.poolSize) ? ' (queen will keep that many workers alive)' : ' (manual spawning only)'));
+      else log('pool set failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
   byId('spawnWorkerBtn').addEventListener('click', function () {
@@ -2717,7 +2809,8 @@
 
   byId('modLogBtn').addEventListener('click', function () {
     call('mod.modlog', { channelId: selChannel() }).then(function (res) {
-      var l = (res && res.value) || [];
+      if (!res || !res.ok) { log('mod log failed: ' + ((res && res.reason) || 'unknown')); return; }
+      var l = res.value || [];
       if (!l.length) { log('mod log is empty'); return; }
       log('--- mod log (' + l.length + ') ---');
       l.slice(-20).forEach(function (e) {
