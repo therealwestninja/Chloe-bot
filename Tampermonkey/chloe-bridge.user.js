@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.4
+// @version      0.90.5
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -5977,7 +5977,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.4';
+  var VERSION = '0.90.5';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6492,6 +6492,31 @@
   // otherwise, or on any worker failure/loss mid-job, it runs locally via callPage. The engine
   // never knows the difference: same promise, same {ok, value} shape.
   var brainMeter = ChloeT0.createBrainMeter({});   // per-kind latency (Jacobson) + circuit breaker
+  // ---- local brain lines: one running local call per backend, the rest wait in a FIFO line
+  // The control page lines incoming brain calls up the same way (textLine/imageLine), and the
+  // Perchance backend serves one generation per slot — so firing N locals concurrently just piled
+  // them behind waiting_for_prev with every timeout burning from dispatch. Instead each local call
+  // starts the moment the previous one on its line settles, and its timeout covers the run only,
+  // not the queue wait. Worker-offloaded jobs keep their own parallelism (one broker per worker
+  // tab) and never touch these lines. Pure promise chaining (no timers): Node-testable.
+  function makeLocalLine() {
+    var line = [];
+    var running = false;
+    function settle() { running = false; pump(); }
+    function pump() {
+      if (running) return;
+      var next = line.shift();
+      if (!next) return;
+      running = true;
+      try { Promise.resolve().then(next.run).then(settle, settle); }
+      catch (e) { settle(); }
+    }
+    return {
+      push: function (run) { line.push({ run: run }); pump(); }
+    };
+  }
+  var localTextLine = makeLocalLine();
+  var localImageLine = makeLocalLine();
   function brainCall(kind, args, timeoutMs) {
     // Breaker first: while the brain is down, calls fail INSTANTLY (with one probe per window)
     // instead of each burning a full timeout — the poll loop stays snappy through an outage.
@@ -6504,7 +6529,19 @@
       var character = cfgGet('character', null);
       if (character) args = Object.assign({}, args || {}, { character: character });
     }
-    function local() { return callPage(kind, args, timeoutMs); }
+    function local() {
+      // Down the line: callPage (and its timeout) starts only when the previous local on this
+      // backend's line settles — the timeout covers the run, never the queue wait. Resolves
+      // exactly as callPage would (it never rejects); the breaker accounts the round trip.
+      return new Promise(function (resolve) {
+        var line = (kind === 'paint') ? localImageLine : localTextLine;
+        line.push(function () {
+          var r = null;
+          try { r = callPage(kind, args, timeoutMs); } catch (e) { r = { ok: false, reason: String((e && e.message) || e) }; }
+          return Promise.resolve(r).then(resolve, resolve);
+        });
+      });
+    }
     var t0 = Date.now();
     var p = (tabBridge && TAB_ROLE === 'queen')
       ? tabBridge.dispatchJob('brain', { kind: kind, args: args, timeoutMs: timeoutMs }, timeoutMs + 5000, local)
@@ -6522,8 +6559,9 @@
   // Fan an ARRAY of independent jobs out concurrently — the map step of the deliberation loop's
   // map-reduce. Each job rides brainCall (so each leases a distinct idle worker via dispatchJob's
   // round-robin busy/idle gating; the genuinely parallel resource is one broker PER worker tab).
-  // With K idle workers and N jobs, the first K run in parallel and the rest queue behind them; with
-  // K=0 (single-tab) it degrades to sequential-local, identical results, just slower. Resolves an
+  // Jobs that fall back to local run one at a time down the local line (each starts as soon as the
+  // previous settles, with its timeout covering the run only); with K=0 (single-tab) the whole batch
+  // degrades to sequential-local, identical results, just slower. Resolves an
   // array of {ok,value} in input order. A single job's failure doesn't sink the batch.
   function brainCallBatch(kind, argsList, timeoutMs) {
     if (!Array.isArray(argsList) || !argsList.length) return Promise.resolve([]);
