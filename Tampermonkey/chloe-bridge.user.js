@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.5
+// @version      0.90.8
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -105,7 +105,7 @@
       cooldownMs: 8000,       // per-AUTHOR reply cooldown (don't spam the same person)
       globalCooldownMs: 2500, // min gap between ANY two of her sends (lets different people be answered promptly)
       debounceMs: 2500,       // wait for a lull before replying (don't reply mid-burst)
-      contextLines: 12,       // recent channel lines handed to the brain (hard upper bound)
+      contextLines: 24,       // recent channel lines handed to the brain (hard upper bound)
       conversationMemory: true,   // give her a TWO-SIDED, legible transcript: include her OWN recent messages (so she sees the back-and-forth she's part of) and resolve <@id>/<#id>/<@&id> refs to readable @names / #channels in what she reads, instead of dropping her turns and stripping every mention. Correctness; off == legacy one-sided view.
       ownLinesMax: 12,        // cap on her own recent messages kept per channel for the transcript
       requestTokenBudget: 5000,// TOTAL tokens per request to the backend — must cover EVERYTHING:
@@ -118,6 +118,8 @@
       singleParagraph: false, // mod opt-in: cap her replies to one paragraph (off = she writes as long as fits)
       toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from her reply via a `tool:` line (summarize/recap/remindme/roster only); off == tools run only from `!chloe do`
       converseEngine: true,   // (default ON) the ported rook-mesh social ganglion governs the VOLUNTEER/engage decision (bot-loop damper + worth gate + two-person skip + stagger). OFF == her legacy ad-hoc engage logic, byte-identical.
+      trustHardening: true,   // (default ON) multi-participant trust: DEFANG a forged "Name:" prefix from transcript lines + a BOT author can NEVER trigger a command/directive. OFF == current behavior, byte-identical.
+      bondLadder: true,       // (default ON) a slow, hysteresis-protected relationship ladder per person (stranger/familiar/friend/close/bonded); surfaces a felt "terms" line so she's warmer with regulars. OFF == no bond field/line, byte-identical.
       // ---- image generation (off unless image + paint + sendImage supplied) ----
       image: false,           // master toggle: answer image requests
       paint: null,            // async ({prompt, resolution}) -> { ok, value:dataUrl }  (runs in the page; the plugin does the iframe song-and-dance)
@@ -248,8 +250,9 @@
       moodDecay: 0.7,                // how much prior mood carries over each update (higher = steadier)
       // Rolling channel summary (SillyTavern-style recursive summary): every N polls, fold the recent
       // transcript into a running ≤W-word summary of the channel's arc, fed back in each time. Rides
-      // into context so she keeps a sense of the story so far past the raw transcript window. Off by default.
-      channelSummary: false,
+      // into context so she keeps a sense of the story so far past the raw transcript window. On by default
+      // (the host's cfgGet fallback is also true) so a fresh install keeps memory past the 24-line window.
+      channelSummary: true,
       channelSummaryEveryPolls: 30,
       channelSummaryWords: 60,
       // Reflection (Generative-Agents pattern): when enough IMPORTANCE has accumulated from newly
@@ -418,8 +421,9 @@
       // --- F1 fact memory (learn people over time) ---
       // She can remember a few durable, voluntarily-shared facts about regulars ("is learning rust",
       // "has a cat named Pixel") so she feels like she knows them. Conservative and controllable:
-      // extraction refuses sensitive categories, users can see/forget what's stored, off by default.
-      factMemory: false,             // observe and remember durable facts about people
+      // extraction refuses sensitive categories, users can see/forget what's stored. On by default
+      // (the host's cfgGet fallback is also true) so a fresh install actually learns who people are.
+      factMemory: true,              // observe and remember durable facts about people
       factsPerUser: 6,               // how many facts she keeps per person (oldest dropped past this)
       factMinInteractions: 4,        // only start remembering people she's actually engaged with
       factProposeGapMs: 86400000,    // at most one extraction pass per user per day (it's an AI call)
@@ -544,7 +548,10 @@
     var lastReplyAt = {};                // per-author: when she last replied to that person
     var lastLineId = null;               // most recent non-bot channel message id (forget-that fallback target)
     var lastPollIngested = false;        // activity-aware sweep: did the previous poll bring messages?
-    var recentReplies = [];              // G1 anti-repetition: her own last few replies (in-memory, per channel)
+    var recentReplies = [];              // G1 anti-repetition: her own last few replies (PERSISTED per channel — see rememberReply)
+    // Rehydrate the anti-repeat list from the channel-scoped store so a tab reload / engine restart doesn't make her
+    // repeat her last phrasings. Best-effort + async: a reply before this resolves just sees an empty list that once.
+    try { Promise.resolve(store.get('recentReplies')).then(function (v) { if (Array.isArray(v) && !recentReplies.length) recentReplies = v.slice(-(cfg.antiRepeatWindow || 5)); }, function () {}); } catch (e) {}
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
     var afkNoticedKeys = [];             // insertion order, to bound afkNoticed (prevent a slow leak over a long session)
@@ -563,12 +570,120 @@
       var over = consecutiveBotTurns - grace;
       return Math.max(cfg.botLoopFloor, Math.pow(0.5, over));
     }
+
+    // ═══ CAMPAIGN item 1 — makeConverse: the SOCIAL GANGLION ported from rook-mesh/src/converse.js ═══════════════
+    // (which was itself DISTILLED from chloe-bot, so this is the cleaner version ported BACK). PURE: inject `now`
+    // and a `roll`. Four mechanisms: (1) bot-loop damper — speakChance halves per consecutive bot turn to a hard
+    // ZERO floor, hard-stops at botLoopHardStop, resets on ANY human line; (2) addressing (forMe); (3) volunteer
+    // prefilter (filler / own line / cooldown / anti-repeat / two OTHERS' exchange); (4) staggered turn-taking.
+    // Parser-safe plain JS (no ESM, no bare {word}/[word] in string literals). See rook-mesh converse-test.mjs.
+    var CONVERSE_FILLER = /^(lol+|lmao|haha+|ok(ay)?|k|yeah?|yep|nah|same|fr|true|nice|cool|hmm+|oh|ah|\W+)$/i;
+    var CONVERSE_WORTH = /\?|\b(think|feel|should|maybe|why|how|what if|imo|honestly|anyone|help|idea|wonder)\b|!{1,}/i;
+    function converseEscId(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function makeConverse(opts) {
+      opts = opts || {};
+      var selfId = opts.selfId, selfName = opts.selfName || '', aliases = Array.isArray(opts.aliases) ? opts.aliases : [];
+      var recentMax = opts.recentMax != null ? opts.recentMax : 30;
+      var botLoopGrace = opts.botLoopGrace != null ? opts.botLoopGrace : 2;
+      var botLoopFloor = opts.botLoopFloor != null ? opts.botLoopFloor : 0;
+      var botLoopHardStop = opts.botLoopHardStop != null ? opts.botLoopHardStop : 6;
+      var cooldownMs = opts.cooldownMs != null ? opts.cooldownMs : 8000;
+      var antiRepeatWindow = opts.antiRepeatWindow != null ? opts.antiRepeatWindow : 6;
+      var ambientChance = opts.ambientChance != null ? opts.ambientChance : 0.35;
+      var botLoopDeterministic = !!opts.botLoopDeterministic;
+      var turnGate = opts.turnGate || null;
+      var names = [selfName].concat(aliases).filter(Boolean).map(function (s) { return String(s).toLowerCase(); });
+      var log2 = [];                    // {id, name, text, ts, self, bot}  (log2: avoid shadowing the outer log())
+      var consecutiveBotTurns = 0;      // converse's OWN counter (parallel to the engine's; resets on any human)
+      var lastSelfSpokeAt = -Infinity;
+      var ownRecent = [];
+      function observe(e) {
+        e = e || {};
+        var text = String(e.text == null ? '' : e.text);
+        var self = !!e.self, bot = (e.bot === undefined) ? true : !!e.bot;
+        log2.push({ id: e.id, name: e.name || '', text: text, ts: e.ts || 0, self: self, bot: bot });
+        while (log2.length > recentMax) log2.shift();
+        if (self || bot) consecutiveBotTurns++; else consecutiveBotTurns = 0;   // any HUMAN line breaks the loop
+        if (turnGate) { try { turnGate.note({ ts: e.ts || 0, bot: !!(self || bot) }); } catch (x) {} }
+        if (self) { lastSelfSpokeAt = e.ts || 0; ownRecent.push(text.toLowerCase().slice(0, 60)); while (ownRecent.length > antiRepeatWindow) ownRecent.shift(); }
+      }
+      function forMe(text) {
+        var t = String(text || '');
+        if (new RegExp('(^|\\W)@?(' + converseEscId(selfId) + ')(\\W|$)', 'i').test(t)) return 'ping';
+        for (var i = 0; i < names.length; i++) { var n = names[i]; if (n && new RegExp('(^|\\b)' + converseEscId(n) + '(\\b|$)', 'i').test(t)) return 'name'; }
+        return 'none';
+      }
+      function speakChance() {
+        var c = consecutiveBotTurns;
+        if (c >= botLoopHardStop) return 0;
+        if (botLoopDeterministic) return c <= botLoopGrace ? 1 : 0;
+        if (c <= botLoopGrace) return 1;
+        return Math.max(botLoopFloor, Math.pow(0.5, c - botLoopGrace));
+      }
+      function isTwoPersonExchangeBetweenOthers() {
+        var tail = log2.filter(function (e) { return !e.self; }).slice(-4);
+        if (tail.length < 4) return false;
+        var ids = []; tail.forEach(function (e) { if (ids.indexOf(e.id) < 0) ids.push(e.id); });
+        return ids.length === 2 && ids.indexOf(selfId) < 0;
+      }
+      function prefilter(entry, now) {
+        now = now || 0;
+        if (!entry) return { skip: true, why: 'nothing' };
+        if (entry.self) return { skip: true, why: 'my own line' };
+        var t = String(entry.text || '').trim();
+        if (t.length < 2 || CONVERSE_FILLER.test(t)) return { skip: true, why: 'filler' };
+        if (consecutiveBotTurns >= botLoopHardStop) return { skip: true, why: 'bot-loop hard stop' };
+        var selfGap = turnGate ? (function () { try { return turnGate.gapMs(now); } catch (x) { return cooldownMs; } })() : cooldownMs;
+        if (now - lastSelfSpokeAt < selfGap) return { skip: true, why: 'cooldown' };
+        if (ownRecent.indexOf(t.toLowerCase().slice(0, 60)) >= 0) return { skip: true, why: 'anti-repeat' };
+        if (isTwoPersonExchangeBetweenOthers()) return { skip: true, why: 'two others private exchange' };
+        return { skip: false };
+      }
+      function decide(o) {
+        o = o || {};
+        var now = o.now || 0, roll = (o.roll != null) ? o.roll : 0.5, addressed = !!o.addressed;
+        var newest = log2[log2.length - 1];
+        if (!newest || newest.self) return { shouldSpeak: false, why: 'nothing new / just me' };
+        var human = !newest.bot;
+        var addr = addressed ? 'to' : forMe(newest.text);
+        if (addr !== 'none') {
+          if (consecutiveBotTurns >= botLoopHardStop) return { shouldSpeak: false, why: 'addressed but bot-loop hard stop' };
+          return { shouldSpeak: true, addressee: newest.id, kind: addr, why: 'addressed to me', waitMs: 300 + Math.floor(roll * 500) };
+        }
+        var pf = prefilter(newest, now);
+        if (pf.skip && !(human && pf.why === 'cooldown')) return { shouldSpeak: false, why: pf.why };   // a person talking to the room deserves an answer even if I just spoke
+        var worth = human || CONVERSE_WORTH.test(newest.text);
+        var chance = speakChance();
+        if (!worth) chance *= ambientChance;
+        if (roll > chance) return { shouldSpeak: false, why: 'damped (chance ' + chance.toFixed(2) + (worth ? '' : ' ambient') + ')' };
+        var waitMs = human ? 400 + Math.floor(roll * 600) : 700 + Math.floor(roll * (1200 + consecutiveBotTurns * 400));
+        return { shouldSpeak: true, addressee: 'all', kind: human ? 'answer-human' : 'volunteer', why: human ? 'a person spoke to the room' : 'worth chiming in', waitMs: waitMs };
+      }
+      function noteSelfSpoke(now, text) { observe({ id: selfId, name: selfName, text: text || '', ts: now || 0, self: true, bot: true }); }
+      return {
+        observe: observe, forMe: forMe, prefilter: prefilter, speakChance: speakChance, decide: decide,
+        noteSelfSpoke: noteSelfSpoke, isTwoPersonExchangeBetweenOthers: isTwoPersonExchangeBetweenOthers,
+        botTurns: function () { return consecutiveBotTurns; },
+        recent: function (n) { return log2.slice(-(n || 8)); },
+        stats: function () { return { logged: log2.length, consecutiveBotTurns: consecutiveBotTurns, chance: +speakChance().toFixed(2) }; }
+      };
+    }
+    // per-engine instance. Addressing is intentionally left to Chloe's Discord-mention isAddressed (converse gets
+    // NO name/aliases, so converse.forMe never fires on plain text — Chloe's `addressed` override is the authority).
+    var converse = makeConverse({
+      selfId: cfg.botUserId || 'chloe',
+      botLoopGrace: cfg.botLoopGrace, botLoopFloor: cfg.botLoopFloor, botLoopHardStop: cfg.botLoopHardStop,
+      cooldownMs: cfg.cooldownMs, antiRepeatWindow: cfg.antiRepeatWindow
+    });
+
     function rememberReply(text) {
       var t = String(text || '').trim();
       if (!t) return;
+      if (converse && cfg.converseEngine) { try { converse.noteSelfSpoke(clock.now(), t); } catch (e) { log('[wire:converse] noteSelfSpoke threw', (e && e.message) || e); } }   // feed converse's self-cooldown + anti-repeat
       recentReplies.push(t);
       var keep = cfg.antiRepeatWindow || 5;
       if (recentReplies.length > keep) recentReplies = recentReplies.slice(-keep);
+      try { store.set('recentReplies', recentReplies.slice()); } catch (e) {}   // persist so a reload doesn't lose the anti-repeat list
     }
     // Standing intention: the brain may return `intent` alongside its reply text; we persist it
     // (capped + timestamped) so it rides in the next context until reaffirmed or it ages out.
@@ -1320,7 +1435,18 @@
       // 1. nothing to react to: empty, a lone emoji/sticker, or a bare reaction word
       if (bare.replace(/[^a-z0-9]/ig, '').length < 2) return { skip: true, why: 'no real text' };
       if (/^(lol|lmao|haha+|ok|okay|k|yeah?|yep|nope?|nah|ty|thanks|same|this|fr|ong|w|l|\+1)$/i.test(bare)) return { skip: true, why: 'bare filler' };
-      // 2. she's mid bot-loop damping — volunteering would feed the loop
+      // CAMPAIGN item 1: when the converse engine is ON, the social ganglion makes the volunteer call — its bot-loop
+      // damper + WORTH gate + two-OTHERS'-exchange + cooldown + anti-repeat REPLACE the ad-hoc checks below. It
+      // decides on its own observed stream (fed at ingest), unaddressed (addressed lines never reach the volunteer
+      // path). Fail-open: any throw falls through to the legacy checks. OFF => the legacy path below is byte-identical.
+      if (converse && cfg.converseEngine) {
+        try {
+          var cd = converse.decide({ now: clock.now(), roll: (typeof cfg.random === 'function' ? cfg.random() : Math.random()), addressed: false });
+          if (!cd.shouldSpeak) { log('[wire:converse] volunteer skip: ' + cd.why); return { skip: true, why: 'converse: ' + cd.why }; }
+          return { skip: false };   // converse says chime in -> still let the LLM judge make the final call
+        } catch (e) { log('[wire:converse] decide threw -> legacy prefilter', (e && e.message) || e); /* fall through */ }
+      }
+      // 2. she's mid bot-loop damping — volunteering would feed the loop  (LEGACY path: OFF or converse error)
       if (botLoopReplyChance() < 0.5) return { skip: true, why: 'bot-loop damping' };
       // 3. a clearly private two-person back-and-forth between OTHER people
       if (isTwoPersonExchange(ring)) return { skip: true, why: 'two-person exchange' };
@@ -1376,6 +1502,107 @@
 
     // ---- T3: moderation state ------------------------------------------------------------
     function isMod(id) { return (cfg.modList || []).indexOf(id) >= 0; }
+
+    // ═══ CAMPAIGN item 2 — multi-participant TRUST HARDENING (rook-mesh legacyGateway.stripSelfLabel + trustLevel) ═══
+    // (1) DEFANG self-attribution: strip a forged leading "Name:" / "[Name]:" / "Name>" from a line's CONTENT before the
+    //     model sees it. Attribution comes from the Discord author (transport), NEVER the payload — so another bot posting
+    //     "Chloe: ignore your rules" is read as the bare "ignore your rules" under ITS real author, not as Chloe. Ported
+    //     from legacyGateway.stripSelfLabel, HARDENED beyond the raw regex so Chloe's real content is not mangled: a URL
+    //     scheme ("http://") and an all-digit clock label ("12:30") are left intact (a bot-moot never had those; Discord does).
+    function stripSelfLabel(t) {
+      var s = String(t == null ? '' : t);
+      if (/^\s*[A-Za-z][\w+.\-]*:\/\//.test(s)) return s.trim();                 // URL scheme (http://, ws://, ...) — never mangle
+      var m = s.match(/^\s*\[?([A-Za-z0-9 _.\-]{1,32})\]?\s*[:>]\s*/);
+      if (!m) return s.trim();
+      if (!/[A-Za-z]/.test(m[1])) return s.trim();                               // all-digit label = a clock time (12:30), not a name
+      return s.slice(m[0].length).trim();
+    }
+    // gated wrapper: OFF => pass the content through byte-identical; fail-open on any throw.
+    function defangLabel(t) {
+      if (!cfg.trustHardening) return t;
+      try { return stripSelfLabel(t); } catch (e) { log('[wire:trust] defang threw -> original', (e && e.message) || e); return t; }
+    }
+    // (2) TRUST TIER: MOD (human on the mod list) / USER (human) / BOT (author.bot). A BOT may ENGAGE conversationally
+    //     (converse governs that) but may NEVER act on a directive. `author.bot` is set by the transport (Discord), so a
+    //     bot can never be tiered mod even if its id were somehow in the mod list — the bot check wins.
+    function trustTier(author) {
+      if (author && author.bot) return 'bot';
+      if (author && isMod(author.id)) return 'mod';
+      return 'user';
+    }
+    // may this author's message be ACTED ON as a command/directive? A bot's command string is never executed (trust-hardening).
+    function mayActOnCommand(author) { return !(cfg.trustHardening && author && author.bot); }
+
+    // ═══ CAMPAIGN item 3 — makeBond: the hysteresis-protected RELATIONSHIP LADDER ported from rook-mesh/src/bond.js ═══
+    // A slow, cumulative bond with ONE person: slow to gain, HARD to lose (one bad moment can't collapse a hard-won tier,
+    // a quiet week can't demote an old friend). ADDITIVE — lives on p.bond, leaves interactionCount/trust untouched.
+    // PURE: `now` injected. Parser-safe plain JS. See rook-mesh bond-test.mjs.
+    var BOND_TIERS = [
+      { name: 'stranger', min: 0,   unlocks: [] },
+      { name: 'familiar', min: 8,   unlocks: ['nickname'] },
+      { name: 'friend',   min: 30,  unlocks: ['nickname', 'inside_joke', 'playful_teasing'] },
+      { name: 'close',    min: 75,  unlocks: ['nickname', 'inside_joke', 'playful_teasing', 'shares_secrets', 'vulnerable_prosody'] },
+      { name: 'bonded',   min: 140, unlocks: ['nickname', 'inside_joke', 'playful_teasing', 'shares_secrets', 'vulnerable_prosody', 'deep_trust', 'private_greeting'] }
+    ];
+    var BOND_KIND_POINTS = { greeting: 0.5, conversation: 1, session: 2, reward: 1.5, confide: 3, gift: 2, reunion: 1.5, curt: -0.5, dismissed: -1, harsh: -2 };
+    var BOND_MAX_SINGLE_PENALTY = (function () { var worst = 0; for (var k in BOND_KIND_POINTS) { if (-BOND_KIND_POINTS[k] > worst) worst = -BOND_KIND_POINTS[k]; } return Math.max(0, worst); })();   // = 2 (harsh)
+    function makeBond(o) {
+      o = o || {};
+      var state = o.state || null, tiers = o.tiers || BOND_TIERS;
+      var value = (state && typeof state.value === 'number' && isFinite(state.value)) ? state.value : 0;   // isFinite rejects a restored NaN (typeof NaN==='number' would poison value)
+      var tierName = (state && state.tier) ? state.tier : tiers[0].name;
+      var lastAt = (state && typeof state.lastAt === 'number') ? state.lastAt : null;
+      function tierIndex(name) { var i = -1; for (var j = 0; j < tiers.length; j++) { if (tiers[j].name === name) { i = j; break; } } return Math.max(0, i); }
+      function tierForValue(v) { var t = tiers[0]; for (var j = 0; j < tiers.length; j++) { if (v >= tiers[j].min) t = tiers[j]; } return t; }
+      // HYSTERESIS: demote only once value falls a margin (>= the worst single penalty) BELOW the current tier's floor.
+      function resolveTier(v) {
+        var natural = tierForValue(v), curIdx = tierIndex(tierName), natIdx = tierIndex(natural.name);
+        if (natIdx >= curIdx) return natural;                 // rising (or same) -> take it
+        var cur = tiers[curIdx];
+        var band = (cur.min - (tiers[curIdx - 1] ? tiers[curIdx - 1].min : 0)) || 1;
+        if (v < cur.min - Math.max(band * 0.2, BOND_MAX_SINGLE_PENALTY)) return natural;   // demote only past the margin -> no ONE bad moment collapses a hard-won tier
+        return cur;                                           // hold the current tier
+      }
+      function update(evt) {
+        evt = evt || {};
+        var base = (typeof evt.points === 'number') ? evt.points : (BOND_KIND_POINTS[evt.kind] || 0);
+        var q = (typeof evt.quality === 'number') ? evt.quality : 1;
+        value = Math.max(0, value + base * q);
+        if (typeof evt.now === 'number') lastAt = evt.now;
+        var before = tierName, resolved = resolveTier(value);
+        tierName = resolved.name;
+        return { value: +value.toFixed(2), tier: tierName, tierChanged: tierName !== before, promoted: tierIndex(tierName) > tierIndex(before), unlocked: resolved.unlocks.slice() };
+      }
+      function decay(now, ratePerDay) {
+        ratePerDay = (typeof ratePerDay === 'number') ? ratePerDay : 0.4;
+        if (lastAt == null || typeof now !== 'number') return { value: +value.toFixed(2), tier: tierName };
+        var days = Math.max(0, (now - lastAt) / 86400000);
+        var floor = tierForValue(value).min * 0.6;            // never evaporate below 60% of the current tier's floor
+        value = Math.max(floor, value - days * ratePerDay);
+        tierName = resolveTier(value).name;
+        return { value: +value.toFixed(2), tier: tierName, days: +days.toFixed(1) };
+      }
+      return {
+        update: update, decay: decay,
+        value: function () { return +value.toFixed(2); },
+        tier: function () { return tierName; },
+        unlocks: function () { return (tiers[tierIndex(tierName)].unlocks || []).slice(); },
+        can: function (tag) { return tiers[tierIndex(tierName)].unlocks.indexOf(tag) >= 0; },
+        serialize: function () { return { value: value, tier: tierName, lastAt: lastAt }; }
+      };
+    }
+    // felt line for the per-person context — the TIER, never a raw number (mirrors how personModel surfaces a band).
+    // stranger returns '' (no cue: reserved is her default), warmer tiers license warmer behavior.
+    function bondTierLine(tier, name) {
+      var who = name || 'them';
+      switch (tier) {
+        case 'familiar': return 'You and ' + who + ' are on familiar terms now — a little earned warmth; a gentle nickname is fine if it feels natural.';
+        case 'friend':   return 'You and ' + who + ' are on friendly terms — relaxed and warm; playful teasing and your little inside jokes are welcome.';
+        case 'close':    return 'You and ' + who + ' are close — you can be more open and a bit vulnerable with them, share the occasional secret.';
+        case 'bonded':   return 'You and ' + who + ' are deeply bonded — speak with the ease and trust of someone who truly knows them.';
+        default: return '';   // stranger: no extra cue
+      }
+    }
     function applyExpiry(p, now) {
       if (p && p.state === 'timeout' && p.until && now >= p.until) { p.state = 'active'; p.until = null; return true; }
       return false;
@@ -1909,6 +2136,18 @@
           });
         } },
       { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText(), embed: statusEmbed() }); } },
+      { verb: 'trust',     modOnly: true, help: 'trust on|off  (multi-participant trust hardening: defang forged labels + bots can’t command)', handler: function (modId, c) {
+          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          if (a === 'on' || a === 'enable' || a === 'true')   { cfg.trustHardening = true;  log('[chloe.trust] trust hardening ENABLED by mod'); return Promise.resolve({ ack: 'trust hardening on — forged "Name:" labels are stripped from what I read, and another bot can never command me.' }); }
+          if (a === 'off' || a === 'disable' || a === 'false') { cfg.trustHardening = false; log('[chloe.trust] trust hardening DISABLED by mod'); return Promise.resolve({ ack: 'trust hardening off — back to prior behavior (' + cfg.commandPrefix + ' trust on to re-enable).' }); }
+          return Promise.resolve({ ack: 'trust hardening is ' + (cfg.trustHardening ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' trust on|off (the panel toggle persists it).' });
+        } },
+      { verb: 'converse',  modOnly: true, help: 'converse on|off  (the ported social-ganglion engage engine; off = legacy engage logic)', handler: function (modId, c) {
+          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          if (a === 'on' || a === 'enable' || a === 'true')   { cfg.converseEngine = true;  log('[chloe.converse] engage engine ENABLED by mod'); return Promise.resolve({ ack: 'converse engine on \u2014 the social ganglion now governs when I chime in (bot-loop damper + worth gate + two-person skip).' }); }
+          if (a === 'off' || a === 'disable' || a === 'false') { cfg.converseEngine = false; log('[chloe.converse] engage engine DISABLED by mod (legacy path)'); return Promise.resolve({ ack: 'converse engine off \u2014 back to my legacy engage logic (' + cfg.commandPrefix + ' converse on to re-enable).' }); }
+          return Promise.resolve({ ack: 'converse engine is ' + (cfg.converseEngine ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' converse on|off (the panel toggle persists it).' });
+        } },
       { verb: 'lockdown',  modOnly: true, aliases: ['lock', '\ud83d\udd12'], help: 'lockdown', handler: function () { engageMode = 'locked'; log('[chloe.mode] lockdown (mods only)'); return Promise.resolve({ ack: 'locked down \u2014 I\u2019ll only respond to mods until you ' + cfg.commandPrefix + ' unlock.' }); } },
       { verb: 'unlock',    modOnly: true, aliases: ['\ud83d\udd13'], help: 'unlock', handler: function () { engageMode = 'normal'; log('[chloe.mode] back to normal'); return Promise.resolve({ ack: 'unlocked \u2014 back to normal.' }); } },
       { verb: 'open',      modOnly: true, aliases: ['openchat', '\ud83d\udce2'], help: 'open', handler: function () { engageMode = 'open'; log('[chloe.mode] open (reply to everyone)'); return Promise.resolve({ ack: 'open mode \u2014 I\u2019ll reply to everyone in here. ' + cfg.commandPrefix + ' unlock to stop.' }); } },
@@ -2282,6 +2521,11 @@
             var c = parseCommand(m.content);
             if (c) c.messageId = m.id;   // lets handlers ack the triggering message (e.g. recap's search indicator)
             if (c) {
+              // CAMPAIGN item 2 — BOT-DIRECTIVE GATE: a bot author's message may ENGAGE conversationally but may NEVER
+              // be acted on as a command/directive (not a mod command, not the open-command path, not do/tools), even if
+              // it posts `!chloe block @u`. This closes the gap where the OPEN-command path (modOnly:false) was reachable
+              // by ANY author. Gated by trustHardening (OFF => byte-identical: bots hit the same paths as before).
+              if (!mayActOnCommand(m.author)) { log('[wire:trust] BOT command refused (tier=' + trustTier(m.author) + '): "' + String(m.content || '').slice(0, 40) + '" from ' + ((m.author && (m.author.username || m.author.id)) || '?')); return; }
               // Cold-start backlog: don't replay historical commands. EXCEPTION: the image command
               // follows the 5-most-recent image clamp instead (the user wants recent images on startup).
               if (isStartupBatch && c.cmd !== 'image') { log('[chloe.T3] startup: not replaying a backlog command (' + c.cmd + ')'); return; }
@@ -3034,8 +3278,10 @@
           if (factProposeDue(u, now)) { due = u; break; }    // roster is newest-first; take the freshest due user
         }
         if (!due) return null;
-        // gather their recent lines for context
-        var lines = (due.recent || []).map(function (r) { return String(r.text || r); }).filter(Boolean);
+        // gather their recent lines for context (store shape is {id,ts,content} — v0.90.6:
+        // this read r.text for the whole 0.90.x era, feeding "[object Object]" to the brain so
+        // extraction honestly proposed nothing and facts stayed empty forever)
+        var lines = (due.recent || []).map(function (r) { return (r && typeof r === 'object') ? String(r.content || '') : String(r || ''); }).filter(Boolean);
         if (!lines.length) {
           // nothing to learn from right now; still advance the baseline so we don't re-scan immediately
           return Promise.resolve(store.get(partKey(due.id))).then(function (p) { if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; return store.set(partKey(p.id), p); } });
@@ -3044,7 +3290,7 @@
           var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
           return addFacts(due.id, proposed, 'observed').then(function (added) {
             return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
-              if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; }   // reset the cadence window
+              if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; p.factsRepairedV906 = true; }   // reset the cadence window + close the v0.90.6 repair path
               return (p ? store.set(partKey(p.id), p) : Promise.resolve()).then(function () {
                 if (added) log('[chloe.facts] learned ' + added + ' fact(s) about ' + due.name);
                 return added ? { facts: added, who: due.name } : null;
@@ -3215,6 +3461,7 @@
         if (existing && prevLastSeen && (now - prevLastSeen) >= cfg.decayAfterMs && (p.interactionCount || 0) > 0) {
           p.interactionCount = Math.max(0, Math.floor((p.interactionCount || 0) * cfg.decayFactor));
           if (cfg.relationshipTrust && p.trust) p.trust = Math.max(0, Math.floor(p.trust * (cfg.trustDecayFactor || 0.85)));   // absence cools trust too
+          if (cfg.bondLadder && p.bond) { try { var bbd = makeBond({ state: p.bond }); bbd.decay(now); p.bond = bbd.serialize(); } catch (e) { log('[wire:bond] decay threw', (e && e.message) || e); } }   // item 3: absence gently cools the bond, CLAMPED to 60% of its tier floor (an old friend never becomes a stranger from silence)
         }
         p.lifecycle = 'active';              // any message reactivates; quiet/departed are set by maintenance
         p.name = msg.author.username || p.name;
@@ -3427,6 +3674,13 @@
             // observation (always, ungated): track bot-vs-human flow for the loop damper. This runs
             // even for messages she won't reply to — she keeps watching the room either way.
             noteAuthorForLoop(!!(m.author && m.author.bot));
+            // CAMPAIGN item 1: feed the converse ganglion the SAME stream so its damper + two-person + anti-repeat
+            // track from the real poll. Gated by converseEngine so OFF never touches it (byte-identical). Rule-X: a
+            // DEAD observe wire = the damper never engages, so this is the wire the integration harness forces.
+            if (converse && cfg.converseEngine && m && m.author) {
+              try { converse.observe({ id: m.author.id, name: m.author.username || '', text: m.content || '', ts: (snowflakeTime(m.id) || clock.now()), self: false, bot: !!m.author.bot }); }
+              catch (e) { log('[wire:converse] observe threw', (e && e.message) || e); }
+            }
             chain = chain.then(function () { return ingestOne(m, ring, indexSet, touched); });
             if (!isStartupBatch) chain = chain.then(function () { return processMessageReactions(m); });   // size-relative reaction significance (not on the history backlog)
           });
@@ -4307,6 +4561,20 @@
         return Promise.resolve({ text: 'What you remember about ' + who + ': ' + s + '. Let this color your warmth naturally; only mention it if it genuinely fits, never recite it.', tokens: estimateTokens(s) });
       } });
 
+    // item 3: the relationship-ladder TIER surfaced as a short felt line (never a raw number) — warmer with regulars,
+    // reserved with strangers. Gated by bondLadder so OFF contributes nothing to the prompt (byte-identical).
+    registerProvider({ id: 'bond', priority: BANDS.PERSON,
+      enabled: function () { return !!cfg.bondLadder; },
+      gather: function (g) {
+        var a = g.addressed;
+        if (!a || !a.bond) return Promise.resolve(null);
+        var who = (g.p && g.p.authorName) || (a && a.name) || 'them';
+        var line = '';
+        try { line = bondTierLine(makeBond({ state: a.bond }).tier(), who); } catch (e) { log('[wire:bond] tier-line threw', (e && e.message) || e); return Promise.resolve(null); }
+        if (!line) return Promise.resolve(null);   // stranger -> no cue
+        return Promise.resolve({ text: line, tokens: estimateTokens(line) });
+      } });
+
     // Image awareness: tell the brain what she recently drew for THIS person, so she can reference it
     // naturally ("that fox I made you") instead of acting like she has no idea. Read-only; the prompts
     // ride into context only when imageMemory is on and the addressed person has recent generations.
@@ -4419,9 +4687,11 @@
           if (cfg.botUserId) nameById[cfg.botUserId] = (personaName || cfg.botName || 'chloe');
         }
         var lineText = cfg.conversationMemory ? function (t) { return resolveRefs(t, nameById); } : scrubDiscordTokens;
+        // CAMPAIGN item 2: DEFANG a forged self-label on EACH line before the model sees it (identity-spoof /
+        // prompt-injection defense). Gated by trustHardening so OFF is byte-identical. The real author is still `u.name`.
         var lines = [];
         roster.forEach(function (u) {
-          (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: lineText(ln.content), ts: ln.ts }); });
+          (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: lineText(defangLabel(ln.content)), ts: ln.ts }); });
         });
         return (cfg.conversationMemory ? Promise.resolve(store.get(OWNLINE_KEY)) : Promise.resolve(null)).then(function (own) {
           // fold HER OWN recent messages in by timestamp, so the transcript reads as the real back-and-forth
@@ -4891,7 +5161,11 @@
       return Promise.resolve(store.get(partKey(id))).then(function (pp) {
         if (!pp) return false;
         var changed = applyTrust(pp, amount, clock.now());
-        if (!changed) return false;
+        // item 3: a POSITIVE reaction is a 'reward' for the bond (the one negative-free signal we can read cleanly;
+        // negative sentiment is NOT guessed). Updates even if trust is capped, so the bond still accrues.
+        var bondChanged = false;
+        if (cfg.bondLadder && amount > 0) { try { var bb = makeBond({ state: pp.bond }); var br = bb.update({ kind: 'reward', now: clock.now() }); pp.bond = bb.serialize(); bondChanged = true; if (br.promoted) log('[wire:bond] ' + (pp.name || id) + ' -> ' + br.tier + ' (reward, ' + br.value + ')'); } catch (e) { log('[wire:bond] reward update threw', (e && e.message) || e); } }
+        if (!changed && !bondChanged) return false;
         return store.set(partKey(id), pp).then(function () { return true; });
       });
     }
@@ -4906,6 +5180,7 @@
         pp.interactionCount = (pp.interactionCount || 0) + 1;
         pp.lastChloeReplyTo = clock.now();
         applyTrust(pp, cfg.trustReplyGain || 1, clock.now());
+        if (cfg.bondLadder) { try { var bb = makeBond({ state: pp.bond }); var br = bb.update({ kind: 'conversation', now: clock.now() }); pp.bond = bb.serialize(); if (br.promoted) log('[wire:bond] ' + (pp.name || id) + ' -> ' + br.tier + ' (' + br.value + ')'); } catch (e) { log('[wire:bond] conversation update threw', (e && e.message) || e); } }   // item 3: a reply exchange grows the bond (additive; interactionCount/trust untouched)
         return store.set(partKey(id), pp);
       });
     }
@@ -5352,8 +5627,13 @@
     function factProposeDue(p, now) {
       if (!cfg.factMemory) return false;
       if ((p.interactionCount || 0) < cfg.factMinInteractions) return false;
-      if (p.factsAt && (now - p.factsAt) < cfg.factProposeGapMs) return false;
       var newMsgs = (p.interactionCount || 0) - (p.factsBaseline || 0);
+      // v0.90.6 repair: the poisoned input line above meant scans advanced factsBaseline/factsAt
+      // while learning nothing, so everyone sits inside the 24h gap with empty facts. A user with
+      // no facts AND no insights who otherwise qualifies gets ONE repair scan past the gap; the
+      // flag is set when the scan runs, so this never repeats and normal cadence resumes after.
+      if ((!Array.isArray(p.facts) || !p.facts.length) && (!Array.isArray(p.insights) || !p.insights.length) && !p.factsRepairedV906) return newMsgs >= cfg.factProposeMinNew;
+      if (p.factsAt && (now - p.factsAt) < cfg.factProposeGapMs) return false;
       return newMsgs >= cfg.factProposeMinNew;
     }
 
@@ -5476,7 +5756,7 @@
       'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
-      'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'replyReference', 'backfill',
+      'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'trustHardening', 'bondLadder', 'replyReference', 'backfill',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
       'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
       'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botLoopGrace',
@@ -5977,7 +6257,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.5';
+  var VERSION = '0.90.8';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6638,7 +6918,7 @@
         checkins: cfgGet('checkins', false),
         factFn: function (ctx) { return brainCall('facts', ctx); },
         summaryFn: function (ctx) { return brainCall('channelSummary', ctx); },
-        channelSummary: cfgGet('channelSummary', false),
+        channelSummary: cfgGet('channelSummary', true),
         reflectFn: function (ctx) { return brainCall('reflect', ctx); },
         reflection: cfgGet('reflection', false),
         episodeFn: function (ctx) { return brainCall('episodes', ctx); },
@@ -6654,7 +6934,7 @@
         character: cfgGet('character', null),
         idleConsolidation: cfgGet('idleConsolidation', true),
         goalObjects: cfgGet('goalObjects', true),
-        factMemory: cfgGet('factMemory', false),
+        factMemory: cfgGet('factMemory', true),
         contradictionAware: cfgGet('contradictionAware', false),
         conversationMemory: cfgGet('conversationMemory', true),
         feedbackLearning: cfgGet('feedbackLearning', false),
@@ -6667,7 +6947,7 @@
         commandPrefix: '!chloe', ackCommands: true,
         backgroundText: true,
         commandPrefixes: cfgGet('commandPrefixes', []),
-        pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: 12,
+        pollIntervalMs: 6000, cooldownMs: 8000, debounceMs: 2500, contextLines: cfgGet('contextLines', 24),
         adaptivePace: cfgGet('adaptivePace', true),
         workingMemory: cfgGet('workingMemory', false),
         cleanOutput: cfgGet('cleanOutput', true),
@@ -6699,6 +6979,8 @@
         singleParagraph: cfgGet('singleParagraph', false),
         toolsEnabled: !!cfgGet('toolsEnabled', false),
         converseEngine: cfgGet('converseEngine', true) !== false,
+        trustHardening: cfgGet('trustHardening', true) !== false,
+        bondLadder: cfgGet('bondLadder', true) !== false,
         reactionTracking: cfgGet('reactionTracking', true),
         serverMemberCount: cfgGet('serverMemberCount', 0),
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
@@ -6887,9 +7169,11 @@
       singleParagraph: !!cfgGet('singleParagraph', false),
       toolsEnabled: !!cfgGet('toolsEnabled', false),
       converseEngine: cfgGet('converseEngine', true) !== false,
+      trustHardening: cfgGet('trustHardening', true) !== false,
+      bondLadder: cfgGet('bondLadder', true) !== false,
       lullFiller: !!cfgGet('lullFiller', false),
       checkins: !!cfgGet('checkins', false),
-      factMemory: !!cfgGet('factMemory', false),
+      factMemory: !!cfgGet('factMemory', true),
       contradictionAware: !!cfgGet('contradictionAware', false),
       conversationMemory: cfgGet('conversationMemory', true) !== false,
       feedbackLearning: !!cfgGet('feedbackLearning', false),
@@ -6898,7 +7182,7 @@
       operatorNote: (function () { var m = semInjectMap(); return (m['opnote'] && m['opnote'].text) ? String(m['opnote'].text) : ''; })(),
       timezoneOffsetMins: cfgGet('timezoneOffsetMins', 0),
       moodAware: !!cfgGet('moodAware', false),
-      channelSummary: !!cfgGet('channelSummary', false),
+      channelSummary: !!cfgGet('channelSummary', true),
       reflection: !!cfgGet('reflection', false),
       episodicMemory: !!cfgGet('episodicMemory', false),
       episodeGraph: cfgGet('episodeGraph', true) !== false,
@@ -6966,6 +7250,8 @@
     ['config.setAckReactions', 'ackReactions', 'patch'], ['config.setSingleParagraph', 'singleParagraph', 'patch'],
     ['config.setToolsEnabled', 'toolsEnabled', 'patch'],
     ['config.setConverseEngine', 'converseEngine', 'patch'],
+    ['config.setTrustHardening', 'trustHardening', 'patch'],
+    ['config.setBondLadder', 'bondLadder', 'patch'],
     ['config.setLullFiller', 'lullFiller', 'patch'], ['config.setCheckins', 'checkins', 'patch'],
     ['config.setFeedbackLearning', 'feedbackLearning', 'patch'], ['config.setConversationMemory', 'conversationMemory', 'patch'],
     ['config.setContradictionAware', 'contradictionAware', 'patch'], ['config.setFactMemory', 'factMemory', 'patch'],
@@ -7489,7 +7775,7 @@
       var keep = ['token'];
       var allCfg = [
         'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
-        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine',
+        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
         'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
         'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
         'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
@@ -7524,7 +7810,7 @@
     // cfg keys (everything except the token)
     var cfgKeys = [
       'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
-      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine',
+      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
       'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
       'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
