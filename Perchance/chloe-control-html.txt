@@ -777,7 +777,9 @@
     return false;
   }
   var replyTarget = function (o) { return (o && o !== 'null') ? o : '*'; };   // targetOrigin 'null' is dropped by the browser; '*' is the only reach to a null-origin embed (nonce-matched, so safe)
-  var peerWin = null, peerOrigin = null;   // the userscript's window+origin, pinned from its first ORIGIN_OK message
+ var peerWin = null, peerOrigin = null;   // the userscript's window+origin, pinned from its first ORIGIN_OK message
+  var consecStatusFail = 0;   // consecutive status timeouts; after 3 the peer is unpinned so a restarted userscript is rediscovered
+  var lastStartAt = 0;   // Date.now() of the last Start click; used to notice when the bot stops right after starting (dead channel)
 
   window.addEventListener('message', function (ev) {
     var d = ev.data;
@@ -811,6 +813,13 @@
         if (v.replied) log('Chloe replied -> ' + v.replied);
         refresh();
       }
+      if (d.name === 'channelGone' && d.value) {
+        var goneId = (d.value && d.value.channelId) || '';
+        log('channel ' + goneId + ' is unreachable (404 Unknown Channel) — polling paused. Check Setup -> Channels, then Start again.');
+        showChannelBanner('Channel ' + goneId + ' is unreachable (HTTP 404 — wrong ID, the bot was removed, or it has no access). Check Setup -> Channels.');
+        refresh();
+      }
+      if (d.name === 'hello' && d.value) { setLink(true); }
       return;
     }
     if (d.kind === 'call') {
@@ -2124,13 +2133,20 @@
         setText('runTxt', '\u2026'); setText('sb_run', '\u2026');
         var rd0 = byId('runDot'); if (rd0) rd0.className = 'dot idle';
         var sd0 = byId('sb_run_dot'); if (sd0) sd0.className = 'dot idle';
+        consecStatusFail = consecStatusFail + 1;
+        if (consecStatusFail >= 3 && peerWin) { peerWin = null; peerOrigin = null; consecStatusFail = 0; dlog('link: 3 status timeouts — unpinned peer, rediscovering'); }
         if (rosterBusy()) return null;
         return refreshRoster();
       }
+      consecStatusFail = 0;
       setLink(true);
       applyStatus(res.value);
       renderChannelSel(res.value);
       applyPersonality(res.value);
+      if (res.value && !res.value.running && lastStartAt && (Date.now() - lastStartAt < 15000)) {
+        lastStartAt = 0;
+        log('still stopped after Start — the channel is likely unreachable (404). Check Setup -> Channels, then Dump trace ring in System.');
+      }
       // Don't churn the roster under the user mid-interaction (state stays put; manual refresh still works).
       if (rosterBusy()) return null;
       return refreshRoster();
@@ -2193,9 +2209,15 @@
     });
   });
   byId('startBtn').addEventListener('click', function () {
-    call('start').then(function (res) { logRes(res, 'started T0 polling', 'start failed'); refresh(); });
+    lastStartAt = Date.now();
+    call('start').then(function (res) {
+      logRes(res, 'started T0 polling', 'start failed');
+      if (!res || !res.ok) lastStartAt = 0;
+      refresh();
+    });
   });
   byId('stopBtn').addEventListener('click', function () {
+    lastStartAt = 0;
     call('stop').then(function (res) { logRes(res, 'stopped', 'stop failed'); refresh(); });
   });
   byId('pollBtn').addEventListener('click', function () {
