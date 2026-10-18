@@ -1,6 +1,6 @@
 # Chloe-bot — Terms of Service
 
-_Last updated for v0.83.0._
+_Last updated for v0.90.4._
 
 Chloe-bot ("Chloe", "the software") is a free, open, self-hosted Discord bot that runs entirely in the
 **operator's** own web browser via a userscript and a Perchance generator page. There is no hosted
