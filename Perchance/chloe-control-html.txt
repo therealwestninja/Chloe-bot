@@ -1431,7 +1431,7 @@
     ['volChk', 'config.setVolunteer', 'volunteer']
   ];
   function applyToggleStates(s) { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = !!s[t[2]]; }); }
-  function wireToggles() { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (!el) return; el.addEventListener('change', function () { var on = el.checked; call(t[1], { on: on }).then(function (res) { log(res && res.ok ? (t[2] + ': ' + on) : ('failed: ' + ((res && res.reason) || 'unknown'))); }); }); }); }
+  function wireToggles() { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (!el) return; el.addEventListener('change', function () { var on = el.checked; call(t[1], { on: on }).then(function (res) { logRes(res, t[2] + ': ' + on); }); }); }); }
   function setText(id, s) { var el = byId(id); if (el) el.textContent = s; }
   function cell(text) { var td = document.createElement('td'); td.textContent = text == null ? '' : String(text); return td; }
   function mkBtn(label, cls, onClick) {
@@ -1463,6 +1463,13 @@
     var t = new Date().toLocaleTimeString();
     debugAppend(line, t);
     if (!isDebugOnly(line)) feedEvent(line, t);
+  }
+  // Batch 14: one ok/fail log shape for call handlers. okMsg may be a string or a
+  // function(res) for messages built from the reply value (evaluated only on success,
+  // so a null res can never throw inside the message expression).
+  function logRes(res, okMsg, failPrefix) {
+    if (res && res.ok) log(typeof okMsg === 'function' ? okMsg(res) : okMsg);
+    else log((failPrefix || 'failed') + ': ' + ((res && res.reason) || 'unknown'));
   }
   // Classify a log line into a timeline event by its bracketed tag. Pure presentation — the engine
   // already emits every meaningful action through log(); this just types + colors it.
@@ -1777,7 +1784,7 @@
     function removeRow() {
       var cmd = kind === 'fact' ? 'memory.deleteFact' : 'memory.deleteInsight';
       var args = kind === 'fact' ? { channelId: selChannel(), id: uid, factId: rec.id } : { channelId: selChannel(), id: uid, insId: rec.id };
-      call(cmd, args).then(function (res) { if (res && res.ok) { wrap.parentNode && wrap.parentNode.removeChild(wrap); if (onChanged) onChanged(res.value); } });
+      call(cmd, args).then(function (res) { if (res && res.ok) { wrap.parentNode && wrap.parentNode.removeChild(wrap); if (onChanged) onChanged(res.value); } else log('delete memory failed: ' + ((res && res.reason) || 'unknown')); });
     }
     ta.addEventListener('blur', function () { if (dirty) saveRow(); });
     del.addEventListener('click', removeRow);
@@ -1812,6 +1819,7 @@
         var text = addTa.value.trim(); if (!text) return;
         call('memory.addFact', { channelId: selChannel(), id: uid, text: text, importance: Number(addImp.value), name: p.name }).then(function (r) {
           if (r && r.ok) { addTa.value = ''; autoGrow(addTa); renderMemoryEditor(dr, p); log('added a memory for ' + (p.name || uid)); }
+          else log('add memory failed: ' + ((r && r.reason) || 'unknown'));
         });
       }
       addBtn.addEventListener('click', doAdd);
@@ -1858,7 +1866,7 @@
     var target = makeMod ? 'mod.addMod' : 'mod.removeMod';
     var chain = Promise.resolve();
     var opOk = 0;
-    ids.forEach(function (id) { chain = chain.then(function () { return call(target, { id: id }).then(function (r) { if (r && r.ok) { opOk++; return r; } return r; }); }); });
+    ids.forEach(function (id) { chain = chain.then(function () { return call(target, { id: id }).then(function (r) { if (r && r.ok) opOk++; return r; }); }); });
     chain.then(function (res) {
       if (opOk === ids.length && res && res.ok) { (res.value || []).forEach && rebuildModSet(res.value); log((makeMod ? 'mod' : 'unmod') + ' \u2192 ' + ids.length + ' user' + (ids.length === 1 ? '' : 's')); }
       else log((makeMod ? 'mod' : 'unmod') + ' failed: ' + opOk + '/' + ids.length + ' applied' + ((res && res.reason) ? (' (' + res.reason + ')') : ''));
@@ -1996,10 +2004,10 @@
     });
   });
   byId('startBtn').addEventListener('click', function () {
-    call('start').then(function (res) { log(res && res.ok ? 'started T0 polling' : ('start failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
+    call('start').then(function (res) { logRes(res, 'started T0 polling', 'start failed'); refresh(); });
   });
   byId('stopBtn').addEventListener('click', function () {
-    call('stop').then(function (res) { log(res && res.ok ? 'stopped' : ('stop failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
+    call('stop').then(function (res) { logRes(res, 'stopped', 'stop failed'); refresh(); });
   });
   byId('pollBtn').addEventListener('click', function () {
     log('polling once ...');
@@ -2012,18 +2020,18 @@
   byId('refreshBtn').addEventListener('click', refresh);
   byId('modeSel').addEventListener('change', function () {
     call('config.setMode', { mode: byId('modeSel').value }).then(function (res) {
-      log(res && res.ok ? ('reply mode: ' + res.value.addressMode) : ('set mode failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'reply mode: ' + r.value.addressMode; }, 'set mode failed');
     });
   });
   byId('ackChk').addEventListener('change', function () {
     call('config.setAckReactions', { on: byId('ackChk').checked }).then(function (res) {
-      log(res && res.ok ? ('status reactions: ' + res.value.ackReactions) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'status reactions: ' + r.value.ackReactions; }, 'failed');
     });
   });
   function pushTimeAware() {
     var off = parseInt(byId('tzOffset').value, 10); if (!isFinite(off)) off = 0;
     call('config.setTimeAware', { on: byId('timeChk').checked, offsetMins: off }).then(function (res) {
-      log(res && res.ok ? ('time awareness: ' + res.value.timeAware + ' (UTC' + (res.value.timezoneOffsetMins >= 0 ? '+' : '') + res.value.timezoneOffsetMins + 'm)') : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'time awareness: ' + r.value.timeAware + ' (UTC' + (r.value.timezoneOffsetMins >= 0 ? '+' : '') + r.value.timezoneOffsetMins + 'm)'; });
     });
   }
   byId('timeChk').addEventListener('change', pushTimeAware);
@@ -2049,7 +2057,7 @@
   byId('deviceTimeChk').addEventListener('change', function () {
     var on = byId('deviceTimeChk').checked;
     call('config.setDeviceTime', { on: on }).then(function (res) {
-      log(res && res.ok ? ('device time: ' + res.value.deviceTime) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'device time: ' + r.value.deviceTime; });
       if (on) pushDeviceTime(); else { call('config.clearSemanticInjection', { id: 'devicetime' }); call('config.setDeviceClock', { clock: null }); }
     });
   });
@@ -2058,51 +2066,51 @@
   (function () { var b = byId('opNoteSetBtn'); if (b) b.addEventListener('click', function () {
     var txt = (byId('opNoteInput').value || '').trim();
     var ttl = Math.max(0, parseInt(byId('opNoteTtl').value, 10) || 0);   // Batch 11: negatives instant-expired server-side (no-op write) — floor at 0 here
-    if (!txt) { call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { log(res && res.ok ? 'operator note cleared (empty)' : ('clear failed: ' + ((res && res.reason) || 'unknown'))); }); return; }
+    if (!txt) { call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { logRes(res, 'operator note cleared (empty)', 'clear failed'); }); return; }
     call('config.setSemanticInjection', { id: 'opnote', text: txt, ttlMs: ttl || null }).then(function (res) {
-      log(res && res.ok ? ('operator note set' + (ttl ? ' (will expire)' : '')) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, 'operator note set' + (ttl ? ' (will expire)' : ''));
     });
   }); })();
   (function () { var b = byId('opNoteClearBtn'); if (b) b.addEventListener('click', function () {
     byId('opNoteInput').value = '';
-    call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { log(res && res.ok ? 'operator note cleared' : ('clear failed: ' + ((res && res.reason) || 'unknown'))); });
+    call('config.clearSemanticInjection', { id: 'opnote' }).then(function (res) { logRes(res, 'operator note cleared', 'clear failed'); });
   }); })();
   byId('goalChk').addEventListener('change', function () {
     call('config.setGoalObjects', { on: byId('goalChk').checked }).then(function (res) {
-      log(res && res.ok ? ('goals: ' + res.value.goalObjects) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'goals: ' + r.value.goalObjects; });
     });
   });
   byId('sleepChk').addEventListener('change', function () {
     call('config.setIdleConsolidation', { on: byId('sleepChk').checked }).then(function (res) {
-      log(res && res.ok ? ('idle consolidation: ' + res.value.idleConsolidation) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'idle consolidation: ' + r.value.idleConsolidation; });
     });
   });
   byId('paceChk').addEventListener('change', function () {
     call('config.setAdaptivePace', { on: byId('paceChk').checked }).then(function (res) {
-      log(res && res.ok ? ('adaptive pace: ' + res.value.adaptivePace) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'adaptive pace: ' + r.value.adaptivePace; });
     });
   });
   (function(){ var b = byId('refreshWorkBtn'); if (b) b.addEventListener('click', refreshWorkspace); })();
   (function(){ var t = byId('exactTokChk'); if (t) t.addEventListener('change', function () {
     call('config.setExactTokens', { on: t.checked }).then(function (res) {
-      log(res && res.ok ? ('exact tokens: ' + res.value.exactTokens) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'exact tokens: ' + r.value.exactTokens; });
       setTimeout(refreshTokState, 500);
     });
   }); })();
   (function(){ var t = byId('cleanChk'); if (t) t.addEventListener('change', function () {
     call('config.setCleanOutput', { on: t.checked }).then(function (res) {
-      log(res && res.ok ? ('tidy replies: ' + res.value.cleanOutput) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'tidy replies: ' + r.value.cleanOutput; });
     });
   }); })();
   (function(){ var t = byId('translateChk'); if (t) t.addEventListener('change', function () {
     var tn = byId('translateNote'); if (tn) tn.style.display = t.checked ? '' : 'none';
     call('config.setTranslate', { on: t.checked }).then(function (res) {
-      log(res && res.ok ? ('per-user translation: ' + res.value.translate) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'per-user translation: ' + r.value.translate; });
     });
   }); })();
   byId('workChk').addEventListener('change', function () {
     call('config.setWorkingMemory', { on: byId('workChk').checked }).then(function (res) {
-      log(res && res.ok ? ('working memory: ' + res.value.workingMemory) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'working memory: ' + r.value.workingMemory; });
       refreshWorkspace();
     });
   });
@@ -2110,12 +2118,12 @@
     var on = byId('delibChk').checked;
     if (on && !byId('affectChk').checked) { log('deliberation needs \u201cinner weather\u201d (own affect) on \u2014 enable that too'); }
     call('config.setIdleDeliberation', { on: on }).then(function (res) {
-      log(res && res.ok ? ('deliberation: ' + res.value.idleDeliberation) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'deliberation: ' + r.value.idleDeliberation; });
     });
   });
   byId('epiGraphChk').addEventListener('change', function () {
     call('config.setEpisodeGraph', { on: byId('epiGraphChk').checked }).then(function (res) {
-      log(res && res.ok ? ('event graph: ' + res.value.episodeGraph) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'event graph: ' + r.value.episodeGraph; });
     });
   });
   byId('saveProcRulesBtn').addEventListener('click', function () {
@@ -2151,7 +2159,7 @@
   });
   byId('engageModeSel').addEventListener('change', function () {
     call('config.setEngageMode', { mode: byId('engageModeSel').value, channelId: selChannel() }).then(function (res) {
-      log(res && res.ok ? ('engagement mode: ' + res.value.engageMode) : ('failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'engagement mode: ' + r.value.engageMode; });
     });
   });
   byId('imageQueueInput').addEventListener('change', function () {
@@ -2192,7 +2200,7 @@
   byId('clearLogBtn').addEventListener('click', function () { debugLines = []; byId('log').textContent = ''; });
   byId('resetBtn').addEventListener('click', function () {
     if (!window.confirm('Reset T0 state (cursor, roster, ring)? The token is kept.')) return;
-    call('reset').then(function (res) { log(res && res.ok ? 'T0 state reset' : ('reset failed: ' + ((res && res.reason) || 'unknown'))); refresh(); });
+    call('reset').then(function (res) { logRes(res, 'T0 state reset', 'reset failed'); refresh(); });
   });
 
   // ---- People batch actions ----------------------------------------------------------
@@ -2555,7 +2563,9 @@
       box.appendChild(row);
     });
   }
-  function refreshMods() { call('mod.listMods').then(function (res) { if (res && res.ok) renderMods(res.value || []); }); }
+  // Batch 14: one list-refresh shape (ok → render, anything else → quiet keep).
+  function refreshInto(cmd, args, render) { call(cmd, args).then(function (res) { if (res && res.ok) render(res.value || []); }); }
+  function refreshMods() { refreshInto('mod.listMods', null, renderMods); }
   byId('addModBtn').addEventListener('click', function () {
     var raw = byId('modInput').value; var ci = raw.indexOf('//'); var v = (ci >= 0 ? raw.slice(0, ci) : raw).trim(); if (!v) { log('enter a user ID'); return; }
     call('mod.addMod', { id: v }).then(function (res) {
@@ -2564,6 +2574,14 @@
     });
   });
   // ---- export: download all state as a gzip-compressed JSON file ------------------
+  // Batch 13: hoisted out of the click handler (was re-created per export).
+  function downloadPlain(json, ts) {
+    var blobParts = []; blobParts.push(json); var blob = new Blob(blobParts, { type: 'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'chloe-backup-' + ts + '.json'; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    log('backup exported (plain JSON)');
+  }
   byId('exportBtn').addEventListener('click', function () {
     call('export-state').then(function (res) {
       if (!res || !res.ok) { log('export failed: ' + ((res && res.reason) || 'unknown')); return; }
@@ -2585,13 +2603,6 @@
         }).catch(function (e) { log('compression failed: ' + e.message + ' — saving as plain JSON'); downloadPlain(json, ts); });
       } else { downloadPlain(json, ts); }
     });
-    function downloadPlain(json, ts) {
-      var blobParts = []; blobParts.push(json); var blob = new Blob(blobParts, { type: 'application/json' });
-      var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'chloe-backup-' + ts + '.json'; document.body.appendChild(a); a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-      log('backup exported (plain JSON)');
-    }
   });
 
   // ---- import: read a .json.gz or .json backup file and restore --------------------
@@ -2674,7 +2685,7 @@
   byId('personaAnchorChk').addEventListener('change', function () {
     var on = byId('personaAnchorChk').checked;
     call('config.setPersonaAnchor', { on: on }).then(function (res) {
-      log(res && res.ok ? ('anchored notes: ' + (on ? 'on' : 'off')) : ('anchor failed: ' + ((res && res.reason) || 'unknown')));
+      logRes(res, function (r) { return 'anchored notes: ' + (on ? 'on' : 'off'); }, 'anchor failed');
     });
   });
   byId('personaClearBtn').addEventListener('click', function () {
@@ -2800,11 +2811,7 @@
       box.appendChild(row);
     });
   }
-  function refreshBanned() {
-    call('mod.listBanned', { channelId: selChannel() }).then(function (res) {
-      if (res && res.ok) renderBanned(res.value || []);
-    });
-  }
+  function refreshBanned() { refreshInto('mod.listBanned', { channelId: selChannel() }, renderBanned); }
   (function () { var b = byId('refreshBannedBtn'); if (b) b.addEventListener('click', refreshBanned); })();
 
   byId('modLogBtn').addEventListener('click', function () {
