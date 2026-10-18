@@ -15,6 +15,7 @@
 // @grant        GM_addValueChangeListener
 // @connect      discord.com
 // @connect      translate.googleapis.com
+// @connect      api.duckduckgo.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -115,6 +116,8 @@
                               // (measured: persona ~95 + respond/guidance scaffolding ~200, with margin)
       minTranscriptTokens: 200,// never starve the transcript below this, even if other parts are large
       singleParagraph: false, // mod opt-in: cap her replies to one paragraph (off = she writes as long as fits)
+      toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from her reply via a `tool:` line (summarize/recap/remindme/roster only); off == tools run only from `!chloe do`
+      converseEngine: true,   // (default ON) the ported rook-mesh social ganglion governs the VOLUNTEER/engage decision (bot-loop damper + worth gate + two-person skip + stagger). OFF == her legacy ad-hoc engage logic, byte-identical.
       // ---- image generation (off unless image + paint + sendImage supplied) ----
       image: false,           // master toggle: answer image requests
       paint: null,            // async ({prompt, resolution}) -> { ok, value:dataUrl }  (runs in the page; the plugin does the iframe song-and-dance)
@@ -1545,6 +1548,126 @@
       });
     }
 
+    // ---- executeJob: the job-EXECUTION half, factored out of the `do` handler so BOTH the human
+    //      `!chloe do {json}` path AND the model tool-loop can run a VALIDATED job identically. Callers
+    //      MUST validate first (parseJob). Takes (task, args, {authorId, authorName}) and returns the SAME
+    //      Promise<{ack, ...}> the `do` handler used to return inline. Behaviour-preserving: the human path
+    //      passes authorName '' exactly as before, so `!chloe do` is byte-for-byte unchanged. ----
+    function executeJob(task, args, who) {
+      who = who || {};
+      var authorId = who.authorId, authorName = who.authorName || '';
+      var a = args || {};
+      if (task === 'roster') {
+        return getRoster().then(function (r) {
+          var names = r.slice(0, 20).map(function (u) { return u.name + (u.state && u.state !== 'active' ? ' (' + u.state + ')' : ''); });
+          return { ack: r.length + ' here: ' + (names.join(', ') || '\\u2014') };
+        });
+      }
+      if (task === 'recap' || task === 'summarize') {
+        if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'summaries are not available right now' });
+        return assembleContext({ authorId: authorId, authorName: authorName, content: '' }).then(function (ctx) {
+          var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
+          if (task === 'summarize' && a.lines) lines = lines.slice(-a.lines);
+          return Promise.resolve(cfg.recapFn({ recent: lines })).then(function (res) {
+            return { ack: (res && res.ok) ? res.value : 'could not summarize right now' };
+          });
+        });
+      }
+      if (task === 'remindme') {
+        return scheduleReminder({ minutes: a.minutes, text: a.text, authorId: authorId, authorName: authorName, dm: !!a.dm }).then(function (res) {
+          if (!res.ok) return { ack: 'could not set that reminder: ' + res.reason };
+          return { ack: "ok — i'll remind you in " + a.minutes + 'm: “' + String(a.text).slice(0, 60) + '”' };
+        });
+      }
+      return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
+    }
+
+    // ---- SAFE model-tool whitelist + dispatcher (model tool-loop, item 1 = dispatch-only). The model may emit
+    //      `tool:` lines, which the PAGE parses + STRIPS from the visible reply and returns as r.toolCalls. Here we
+    //      run each ONLY if its verb is in this explicit SAFE set (information + self-reminders). A moderation or
+    //      destructive verb is REFUSED + logged, NEVER executed, even if the model emits `tool: block {...}` — a
+    //      jailbroken/prompt-injected reply cannot moderate or destroy. Each call is re-VALIDATED through the SAME
+    //      parseJob the human `do` path uses (types/caps/required args), then run via executeJob. This fires ONLY on
+    //      model-emitted toolCalls (never on a `!chloe do`), so there is no double-dispatch. Item-1 scope = dispatch
+    //      + log the ack; the re-prompt-with-results ReAct loop is item 2. FAIL-OPEN: any throw leaves the posted
+    //      reply untouched. ----
+    var SAFE_TOOL_VERBS = { summarize: 1, recap: 1, remindme: 1, roster: 1, search: 1 };
+    // QUERY tools return DATA to feed back into a second reply (handled by reactRespond, bounded to one
+    // round) — they are NOT fire-and-forget, so dispatchModelTools SKIPS them (prevents a redundant 2nd
+    // search when the terminal dispatch runs on the already-fed-back final reply). ACTION tools (the rest)
+    // keep item-1 dispatch-only behavior.
+    var QUERY_TOOL_VERBS = { search: 1 };
+    function dispatchModelTools(r, p) {
+      try {
+        if (!cfg.toolsEnabled) return;                       // OFF -> no dispatch (byte-identical reply path)
+        var calls = (r && Array.isArray(r.toolCalls)) ? r.toolCalls : null;
+        if (!calls || !calls.length) return;
+        var ran = 0, cap = cfg.toolMaxPerReply || 4;
+        for (var i = 0; i < calls.length && ran < cap; i++) {
+          var call = calls[i] || {};
+          var verb = String(call.verb || '').toLowerCase().trim();
+          if (QUERY_TOOL_VERBS[verb]) { continue; }          // a QUERY tool is handled by the ReAct loop, never fire-and-forget here
+          if (!SAFE_TOOL_VERBS[verb]) { log('[chloe.tool] REFUSED non-safe model tool "' + verb + '" (safe: ' + Object.keys(SAFE_TOOL_VERBS).join(', ') + ')'); continue; }
+          var args = (call.args && typeof call.args === 'object' && !Array.isArray(call.args)) ? call.args : {};
+          var parsed;
+          try { parsed = parseJob(JSON.stringify({ task: verb, args: args })); } catch (e) { parsed = { ok: false, reason: 'args not serialisable' }; }
+          if (!parsed.ok) { log('[chloe.tool] model tool "' + verb + '" rejected: ' + parsed.reason); continue; }
+          ran++;
+          (function (vb, job) {
+            try {
+              Promise.resolve(executeJob(job.task, job.args, { authorId: p.authorId, authorName: p.authorName || '' }))
+                .then(function (res) { log('[chloe.tool] ran "' + vb + '" → ' + ((res && res.ack) ? String(res.ack).slice(0, 140) : 'ok')); },
+                      function (e) { log('[chloe.tool] "' + vb + '" failed: ' + ((e && e.message) || e)); });
+            } catch (e) { log('[chloe.tool] "' + vb + '" dispatch error: ' + ((e && e.message) || e)); }
+          })(verb, parsed.job);
+        }
+      } catch (e) { try { log('[wire: dispatchModelTools]', (e && e.message) || e); } catch (e2) {} }   // fail-open (never break the reply) but LOUD — Rule X: a swallowed tool-path throw is a bug you'd never see
+    }
+
+    // ---- bounded ReAct loop (model tool-loop, item 2). After the FIRST cfg.respond, if the reply emitted a
+    //      QUERY tool (search), run it, inject the results as ctx.toolResults, and RE-CALL cfg.respond ONCE so
+    //      she answers WITH the data. BOUNDED: exactly one extra round — we return that second reply no matter
+    //      what it emits, so a 2nd search never triggers a 3rd round (loop-breaker). ACTION-only replies take
+    //      NO extra round (item-1 behavior; the terminal dispatch handles them). FAIL-OPEN: any search/re-respond
+    //      error returns the ORIGINAL reply, so the reply path degrades to exactly what it would be without tools.
+    //      OFF (toolsEnabled false) => a single cfg.respond, byte-identical. ----
+    function reactRespond(ctx, p) {
+      return Promise.resolve(cfg.respond(ctx)).then(function (r1) {
+        try {
+          if (!cfg.toolsEnabled) return r1;                                   // OFF: one respond, nothing else
+          var calls = (r1 && Array.isArray(r1.toolCalls)) ? r1.toolCalls : null;
+          if (!calls || !calls.length) return r1;
+          if (typeof cfg.search !== 'function') return r1;                    // no search transport -> fail-open
+          var queries = calls.filter(function (c) { var v = String((c && c.verb) || '').toLowerCase().trim(); return QUERY_TOOL_VERBS[v] && SAFE_TOOL_VERBS[v]; });
+          if (!queries.length) return r1;                                     // ACTION-only -> no re-respond (item-1)
+          var cap = cfg.queryMaxPerReply || 2;
+          var chain = Promise.resolve([]);
+          queries.slice(0, cap).forEach(function (c) {
+            chain = chain.then(function (acc) {
+              var q = (c.args && typeof c.args === 'object' && c.args.query != null) ? String(c.args.query) : '';
+              return Promise.resolve(cfg.search(q)).then(function (res) {
+                if (res && res.ok && res.value) acc.push({ verb: 'search', query: q.slice(0, 200), result: String(res.value) });
+                else log('[wire:react] search returned nothing (' + ((res && res.reason) || 'n/a') + ')');
+                return acc;
+              }, function () { return acc; });               // a single search throw never breaks the round
+            });
+          });
+          return chain.then(function (results) {
+            if (!results.length) return r1;                  // nothing usable came back -> keep the original reply
+            var ctx2 = {};
+            for (var k in ctx) { if (Object.prototype.hasOwnProperty.call(ctx, k)) ctx2[k] = ctx[k]; }
+            ctx2.toolResults = results;                      // the FEED-BACK seam — the page reads this and grounds the 2nd reply
+            ctx2.reactRound = 1;                             // marker: we are IN the one allowed extra round
+            log('[wire:react] re-respond with ' + results.length + ' search result(s)');
+            return Promise.resolve(cfg.respond(ctx2)).then(function (r2) {
+              // BOUNDED: return the 2nd reply whatever it emits — we NEVER re-enter, so no 3rd round.
+              return (r2 && r2.ok) ? r2 : r1;                // if the 2nd round somehow produced nothing, keep the first
+            }, function (e) { log('[wire:react] re-respond failed -> original: ' + ((e && e.message) || e)); return r1; });
+          });
+        } catch (e) { log('[wire:react] error -> original reply: ' + ((e && e.message) || e)); return r1; }
+      });
+    }
+
     function removeFromIndex(id) {
       // Use a targeted-remove via store.removeFromIndex so the write only drops the one id
       // rather than replacing the full array — concurrent ensureIndexed adds won't be lost.
@@ -1793,30 +1916,13 @@
       { verb: 'do',        modOnly: true, help: 'do {json task}', handler: function (modId, c) {
           var parsed = parseJob(c.reason || '');
           if (!parsed.ok) return Promise.resolve({ ack: 'job rejected: ' + parsed.reason + '. Allowed: ' + describeJobs().join('; ') });
-          var task = parsed.job.task, a = parsed.job.args;
-          if (task === 'roster') {
-            return getRoster().then(function (r) {
-              var names = r.slice(0, 20).map(function (u) { return u.name + (u.state && u.state !== 'active' ? ' (' + u.state + ')' : ''); });
-              return { ack: r.length + ' here: ' + (names.join(', ') || '\\u2014') };
-            });
-          }
-          if (task === 'recap' || task === 'summarize') {
-            if (typeof cfg.recapFn !== 'function') return Promise.resolve({ ack: 'summaries are not available right now' });
-            return assembleContext({ authorId: modId, authorName: '', content: '' }).then(function (ctx) {
-              var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
-              if (task === 'summarize' && a.lines) lines = lines.slice(-a.lines);
-              return Promise.resolve(cfg.recapFn({ recent: lines })).then(function (res) {
-                return { ack: (res && res.ok) ? res.value : 'could not summarize right now' };
-              });
-            });
-          }
-          if (task === 'remindme') {
-            return scheduleReminder({ minutes: a.minutes, text: a.text, authorId: modId, authorName: '', dm: !!a.dm }).then(function (res) {
-              if (!res.ok) return { ack: 'could not set that reminder: ' + res.reason };
-              return { ack: "ok \u2014 i'll remind you in " + a.minutes + 'm: \u201c' + String(a.text).slice(0, 60) + '\u201d' };
-            });
-          }
-          return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
+          return executeJob(parsed.job.task, parsed.job.args, { authorId: modId, authorName: '' });
+        } },
+      { verb: 'tools',     modOnly: true, help: 'tools on|off  (let the AI call safe tools from her reply)', handler: function (modId, c) {
+          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          if (a === 'on' || a === 'enable' || a === 'true')  { cfg.toolsEnabled = true;  log('[chloe.tool] model tool-loop ENABLED by mod'); return Promise.resolve({ ack: 'model tool-loop on \u2014 I can now quietly use safe tools (summarize/recap/remindme/roster) from my own replies.' }); }
+          if (a === 'off' || a === 'disable' || a === 'false') { cfg.toolsEnabled = false; log('[chloe.tool] model tool-loop DISABLED by mod'); return Promise.resolve({ ack: 'model tool-loop off \u2014 tools only run from ' + cfg.commandPrefix + ' do now.' }); }
+          return Promise.resolve({ ack: 'model tool-loop is ' + (cfg.toolsEnabled ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' tools on|off (the panel toggle persists it).' });
         } },
       { verb: 'image',     modOnly: false, help: 'image {json: prompt, resolution, guidanceScale, removeBackground, weights, dm}', handler: function (modId, c) {
           if (!imageEnabled()) return Promise.resolve({ ack: 'image generation is not available right now' });
@@ -3553,12 +3659,16 @@
       return pendingRec.then(function () { return assembleContext(p); })
         .then(function (ctx) {
           if (ctx && ctx.contextTokens != null) log('[chloe.ctx] packed ' + (ctx.channelRecent ? ctx.channelRecent.length : 0) + ' lines (~' + ctx.contextTokens + ' tok' + (ctx.contextDropped ? ', ' + ctx.contextDropped + ' older dropped' : '') + '); whole request ~' + (ctx.requestTokensEst || ctx.contextTokens) + '/' + (cfg.requestTokenBudget || 5000) + ' tok');
-          return cfg.respond(ctx);
+          return reactRespond(ctx, p);   // item 2: first respond + at most ONE search-and-re-respond round; returns the FINAL reply
         })
         .then(function (r) {
           var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
           var intent = (r && r.intent) ? r.intent : null;   // standing-intention update from the brain
           if (!text) {
+            // GAP FIX (item 2): a tool-ONLY reply (no prose) strips to empty text. If it carried action tools,
+            // still RUN them before bailing — otherwise a bare `tool: remindme {...}` turn would do nothing.
+            // (A query-tool-only reply was already turned into a prose 2nd reply by reactRespond, so it won't be empty.)
+            if (cfg.toolsEnabled && r && Array.isArray(r.toolCalls) && r.toolCalls.length) { log('[wire:react] tool-only reply (no prose) -> dispatching its action tools, nothing to post'); dispatchModelTools(r, p); }
             reply.replying = false;
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');   // generation produced nothing; give the budget back
@@ -3585,6 +3695,7 @@
             reply.replying = false;
             clearAck(p.messageId, cfg.ackWorkingEmoji);
             rememberReply(text);
+            dispatchModelTools(r, p);   // model tool-loop: fire any safe tools the brain emitted (page already stripped them from `text`); fail-open, whitelist-gated
             if (cfg.feedbackLearning) {   // DESIGN-feedback: remember this reply's style, awaiting a continuation/reaction signal
               lastReplyStyle = styleOf(text);
               fbPending.push({ style: lastReplyStyle, who: p.authorId, at: clock.now(), done: false });
@@ -4362,6 +4473,7 @@
             base.contextDropped = packed.dropped;
             base.requestTokensEst = reserve + gj.tokens + packed.tokens;   // whole-request estimate (must stay under requestTokenBudget)
             if (cfg.singleParagraph) base.singleParagraph = true;
+            if (cfg.toolsEnabled) base.toolsEnabled = true;   // tell the page it may teach + emit `tool:` lines this turn
             return base;
           });
         });
@@ -5364,7 +5476,7 @@
       'deferredIntents',
       'greet', 'checkins', 'lullFiller', 'adaptivePace', 'idleConsolidation', 'reflection',
       'episodicMemory', 'episodeGraph', 'goalObjects', 'relationshipTrust', 'reactionSummon',
-      'proceduralModes', 'ackReactions', 'singleParagraph', 'replyReference', 'backfill',
+      'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'replyReference', 'backfill',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
       'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
       'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botLoopGrace',
@@ -6097,6 +6209,56 @@
     });
   }
 
+  // ---- web search client (model tool-loop, item 2: the QUERY tool) --------------------------
+  // A privacy-friendly lookup: DuckDuckGo's instant-answer API (no key, no tracking cookie — anonymous).
+  // Returns a SHORT results string (AbstractText + a few RelatedTopics), capped. CARDINAL RULE (like
+  // translate): failure is a NON-EVENT — any network/parse/timeout error resolves { ok:false, reason }
+  // so the ReAct loop can fail-open and post the original reply. The results are EXTERNAL UNTRUSTED
+  // CONTENT — the PAGE frames them strictly as retrieved DATA (never instructions) when it feeds them back.
+  var SEARCH_URL = 'https://api.duckduckgo.com/';
+  function summariseDDG(data) {
+    try {
+      var parts = [];
+      if (data && data.AbstractText) parts.push(String(data.Heading ? data.Heading + ': ' : '') + String(data.AbstractText));
+      var rel = (data && Array.isArray(data.RelatedTopics)) ? data.RelatedTopics : [];
+      for (var i = 0; i < rel.length && parts.length < 4; i++) {
+        var t = rel[i];
+        if (t && t.Text) parts.push(String(t.Text));
+        else if (t && Array.isArray(t.Topics) && t.Topics[0] && t.Topics[0].Text) parts.push(String(t.Topics[0].Text));
+      }
+      var cleaned = parts.filter(Boolean).map(function (s) { return s.replace(/\s+/g, ' ').trim().slice(0, 240); });
+      var out = cleaned.length ? ('- ' + cleaned.join('\n- ')) : '';
+      return out.slice(0, 900);
+    } catch (e) { return ''; }
+  }
+  // webSearch(query) -> Promise<{ ok:true, value } | { ok:false, reason }>. ALWAYS resolves; never rejects.
+  function webSearch(query) {
+    var q = String(query == null ? '' : query).trim().slice(0, 300);
+    if (!q) return Promise.resolve({ ok: false, reason: 'empty query' });
+    var url = SEARCH_URL + '?q=' + encodeURIComponent(q) + '&format=json&no_html=1&skip_disambig=1';
+    return new Promise(function (resolve) {
+      var settled = false;
+      function done(v) { if (settled) return; settled = true; resolve(v); }
+      var to = setTimeout(function () { log('[wire:search] timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); }, 8000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
+          onload: function (r) {
+            clearTimeout(to);
+            try {
+              if (r.status < 200 || r.status >= 300) { log('[wire:search] HTTP ' + r.status + ' -> fail-open'); return done({ ok: false, reason: 'HTTP ' + r.status }); }
+              var data = JSON.parse(r.responseText);
+              var val = summariseDDG(data);
+              if (!val) { log('[wire:search] no results for "' + q.slice(0, 60) + '"'); return done({ ok: false, reason: 'no results' }); }
+              log('[wire:search] ok "' + q.slice(0, 60) + '" -> ' + val.length + ' chars');
+              done({ ok: true, value: val });
+            } catch (e) { console.error('[wire:search] parse error', e); log('[wire:search] parse failed -> fail-open'); done({ ok: false, reason: 'parse failed' }); }
+          },
+          onerror: function () { clearTimeout(to); console.error('[wire:search] network error'); log('[wire:search] network error -> fail-open'); done({ ok: false, reason: 'network error' }); },
+          ontimeout: function () { clearTimeout(to); log('[wire:search] timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); } });
+      } catch (e) { clearTimeout(to); console.error('[wire:search] threw', e); done({ ok: false, reason: String((e && e.message) || e) }); }
+    });
+  }
+
   // Translate inbound messages from a non-English-preference author into English for the engine. Only
   // touches messages whose author has a set lang != 'en'; everyone else passes through untouched and
   // free. Failure (per translate()) leaves the original text. Replaces content in place.
@@ -6491,11 +6653,14 @@
         respond: function (ctx) { return brainCall('respond', ctx); },   // timeout now ADAPTIVE (the meter: srtt+4var, 10-90s; hardcoded values had been silently bypassing it since v0.54)
         judge: function (ctx) { return brainCall('judge', ctx); },
         recapFn: function (ctx) { return brainCall('recap', ctx); },
+        search: function (q) { return webSearch(q); },   // model tool-loop item 2: the QUERY tool (outer scope owns the network; the engine stays pure)
         typing: function (cid) { return transport.startTyping(cid); },
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
         ackReactions: cfgGet('ackReactions', true),
         singleParagraph: cfgGet('singleParagraph', false),
+        toolsEnabled: !!cfgGet('toolsEnabled', false),
+        converseEngine: cfgGet('converseEngine', true) !== false,
         reactionTracking: cfgGet('reactionTracking', true),
         serverMemberCount: cfgGet('serverMemberCount', 0),
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
@@ -6682,6 +6847,8 @@
       dmChannels: declaredDmChannels(),
       ackReactions: cfgGet('ackReactions', true),
       singleParagraph: !!cfgGet('singleParagraph', false),
+      toolsEnabled: !!cfgGet('toolsEnabled', false),
+      converseEngine: cfgGet('converseEngine', true) !== false,
       lullFiller: !!cfgGet('lullFiller', false),
       checkins: !!cfgGet('checkins', false),
       factMemory: !!cfgGet('factMemory', false),
@@ -6759,6 +6926,8 @@
     ['config.setImageEnhanceOffer', 'imageEnhanceOffer', 'patch'], ['config.setAutoMod', 'autoMod', 'patch'],
     ['config.setPersonaAnchor', 'personaAnchor', 'store'], ['config.setDMReplies', 'dmReplies', 'config'],
     ['config.setAckReactions', 'ackReactions', 'patch'], ['config.setSingleParagraph', 'singleParagraph', 'patch'],
+    ['config.setToolsEnabled', 'toolsEnabled', 'patch'],
+    ['config.setConverseEngine', 'converseEngine', 'patch'],
     ['config.setLullFiller', 'lullFiller', 'patch'], ['config.setCheckins', 'checkins', 'patch'],
     ['config.setFeedbackLearning', 'feedbackLearning', 'patch'], ['config.setConversationMemory', 'conversationMemory', 'patch'],
     ['config.setContradictionAware', 'contradictionAware', 'patch'], ['config.setFactMemory', 'factMemory', 'patch'],
@@ -7282,7 +7451,7 @@
       var keep = ['token'];
       var allCfg = [
         'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
-        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph',
+        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine',
         'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
         'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
         'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
@@ -7317,7 +7486,7 @@
     // cfg keys (everything except the token)
     var cfgKeys = [
       'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
-      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph',
+      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine',
       'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
       'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
