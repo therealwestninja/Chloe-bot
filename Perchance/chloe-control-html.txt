@@ -343,6 +343,11 @@
           <option value="locked">locked (mods only &mdash; raid)</option>
         </select>
       </div>
+      <div class="row" style="margin-top:8px">
+        <label class="note" for="summonRolesInput">summon roles&nbsp;</label>
+        <input class="grow" id="summonRolesInput" placeholder="role IDs that summon her, comma-separated">
+      </div>
+      <div class="note">A role ping arrives as a bare ID with no name attached, so she cannot match it by name the way she matches a written chloe. Paste a role ID here and pinging that role summons her like a direct mention. Find it under Server Settings &rarr; Roles &rarr; right-click &rarr; Copy ID. Leave empty to only answer her own mention and name.</div>
       <div class="chiprow" style="margin-top:10px">
         <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
         <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
@@ -376,7 +381,7 @@
         <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
         <label class="chip"><input type="checkbox" id="affectChk"> give her an inner weather (own mood)</label>
         <label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label>
-        <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction</label>
+        <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction (&#128483;&#65039; &#10071; &#129302; on their own message)</label>
         <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
       </div>
     </div>
@@ -548,6 +553,10 @@
         <button class="ghost" id="diagBtn">Dump trace ring</button>
         <span class="note">Link, transport, and poll events from the userscript &mdash; lands in the log below and your clipboard.</span>
       </div>
+      <div class="row" style="margin-top:6px">
+        <button class="ghost" id="errBtn">Show errors</button>
+        <span class="note">Failures only (Discord errors, failed sends, corrupt storage, bad rules) &mdash; newest last, lands in the log below and your clipboard. Empty means nothing has failed since the tab loaded.</span>
+      </div>
       <div class="row" style="margin-top:10px">
         <button class="ghost" id="exportBtn">Export backup&hellip;</button>
         <input type="file" id="importFile" accept=".json,.gz" hidden>
@@ -639,6 +648,12 @@
       <h2>Reactions she notices</h2>
       <div class="note">
         Chloe watches the emoji reactions on messages (Star, fire, heart, pin, whatever your room uses) and weighs them <em>relative to server size</em> &mdash; 1&ndash;2 reactions matter a lot in a 50-person server but are noise in one with thousands. When a message&rsquo;s reactions cross that size-scaled line she tallies the emoji and auto-saves the message as a Highlight. <code>!chloe reactions</code> shows the reactions this room values most. Member count is detected automatically (or set it manually if you&rsquo;d rather). Because reactions often land after a message scrolls by, she also re-scans a recent window periodically to catch late ones. All front-end &mdash; no AI call.
+      </div>
+    </div>
+    <div class="card">
+      <h2>Summon her with a reaction</h2>
+      <div class="note">
+        Turn on <strong>&ldquo;let people summon a reply by reaction&rdquo;</strong> (Behavior tab) and anyone can flag their <em>own</em> message for an answer: react to it with &#128483;&#65039; or &#10071; or &#129302; and Chloe treats it as if she&rsquo;d been addressed, replying at full speed. Moderators can summon her onto <em>anyone&rsquo;s</em> message the same way, even in lockdown. Only those three emoji summon &mdash; hearts, thumbs-up, and laughter never summon (they count toward highlights, trust, and style feedback instead). Messages older than about 15 minutes can&rsquo;t be summoned, so stale reactions from while she was offline stay silent.
       </div>
     </div>
     <div class="card">
@@ -823,7 +838,7 @@
       return;
     }
     if (d.kind === 'call') {
-      dlog('call <-', d.method, callBrief(d.args));
+      dlog('brain: running ' + d.method + ' (' + callBrief(d.args) + ')');
       var handler = null;
       if (d.method === 'respond') handler = respond;
       else if (d.method === 'judge') handler = judge;
@@ -843,7 +858,13 @@
       else if (d.method === 'episodes') handler = episodes;
       else if (d.method === 'editimage') handler = editimage;
       var send = function (res) {
-        dlog('call ->', d.method, res && res.ok ? ('ok (' + (typeof res.value === 'string' ? (res.value.length + ' chars') : 'obj') + ')') : ('declined: ' + (res && res.reason)));
+        var why;
+        if (res && res.ok) {
+          if (typeof res.value === 'string') why = 'wrote ' + res.value.length + ' chars';
+          else if (res.value && res.value.action) why = 'decided ' + res.value.action + ' (confidence ' + res.value.confidence + ')';
+          else why = 'done';
+        } else why = 'declined: ' + ((res && res.reason) || 'unknown');
+        dlog('brain: ' + d.method + ' ' + why);
         try { ev.source.postMessage({ __chloe: 1, kind: 'callres', nonce: d.nonce, ok: !!(res && res.ok), value: (res && res.value), reason: (res && res.reason), intent: (res && res.intent), toolCalls: (res && res.toolCalls) }, replyTarget(ev.origin)); } catch (e) { try { console.error('[wire: callres post]', e); } catch (e2) {} }   // reply to the (origin-validated) caller via replyTarget, not a bare reflected origin
       };
       if (!handler) { send({ ok: false, reason: 'unknown method: ' + d.method }); return; }
@@ -859,11 +880,11 @@
     try { if (typeof debugAppend === 'function') debugAppend('[chloe-page] ' + a.map(function (x) { return typeof x === 'string' ? x : (function () { try { return JSON.stringify(x); } catch (e2) { return String(x); } })(); }).join(' ')); } catch (e) {}
   }
   function callBrief(a) {
-    if (!a) return '';
-    if (a.person && a.person.name) return 'who=' + a.person.name + (a.kind ? (' kind=' + a.kind) : '');
-    if (a.addressedBy && a.addressedBy.name) return 'by=' + a.addressedBy.name;
-    if (a.channelRecent) return 'ctxLines=' + a.channelRecent.length;
-    return '';
+    if (!a) return 'no context';
+    if (a.person && a.person.name) return 'for ' + a.person.name + (a.kind ? (' (' + a.kind + ')') : '');
+    if (a.addressedBy && a.addressedBy.name) return 'for ' + a.addressedBy.name;
+    if (a.channelRecent) return 'over ' + a.channelRecent.length + ' context lines';
+    return 'no context';
   }
   // (Batch 11: renderFromStatus placeholder removed — status refresh handles rendering.)
 
@@ -1509,7 +1530,7 @@
   }
   function judge(ctx) {
     var ai = grabAiText();
-    if (typeof ai !== 'function') { dlog('judge: aiTextPlugin NOT available -> ignore'); return Promise.resolve({ ok: true, value: { action: 'ignore', confidence: 0 } }); }
+    if (typeof ai !== 'function') { dlog('judge: no AI backend, staying silent'); return Promise.resolve({ ok: true, value: { action: 'ignore', confidence: 0 } }); }
     var transcript = '';
     var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
     lines.forEach(function (l) { transcript = transcript + safeWho(l.who) + ': ' + safeText(l.text) + '\n'; });
@@ -1532,9 +1553,10 @@
       var rstr = String(result || '');
       var wrapped = (rstr.charAt(0) === LB ? '' : LB) + rstr + (rstr.slice(-1) === RB ? '' : RB);
       var v = parseJudge(wrapped);
-      dlog('judge:', v.action, 'conf=' + v.confidence, v.parsed ? ('(model decision over ' + lines.length + ' lines)') : '(parse failed -> safe ignore)');
+      var who = (ctx && ctx.addressedBy && ctx.addressedBy.name) ? ctx.addressedBy.name : 'them';
+      dlog('judge: ' + (v.action === 'ignore' ? ('staying silent on ' + who) : ('voting ' + v.action + ' on ' + who)) + ' (confidence ' + v.confidence + ', read ' + lines.length + ' lines)' + (v.parsed ? '' : ' — model output did not parse, safe default'));
       return { ok: true, value: v };
-    }).catch(function (e) { dlog('judge: ai call failed -> ignore:', String((e && e.message) || e)); return { ok: true, value: { action: 'ignore', confidence: 0 } }; });
+    }).catch(function (e) { dlog('judge: AI call failed, staying silent:', String((e && e.message) || e)); return { ok: true, value: { action: 'ignore', confidence: 0 } }; });
   }
 
   // ---- small DOM helpers (no innerHTML for data; textContent is parser- and XSS-safe)
@@ -1602,6 +1624,7 @@
   }
   function isDebugOnly(line) {
     var s = String(line);
+    if (/error|failed|fail|exception|denied|forbidden|unauthori|corrupt|dropp|queue full|abandon|not sent/i.test(s)) return false;   // v0.90.11: errors always reach the feed
     if (/^\s*\[chloe-page\]/.test(s) || /^\s*poll:/i.test(s)) return true;
     return /\[chloe\.ctx|\[chloe\.tok|\[chloe\.lock|\[chloe\.poll|\[chloe\.loop|\[chloe\.archive|\[chloe\.cmd|\[chloe\.persona|\[chloe\.character|\[chloe\.sleep/.test(s);
   }
@@ -1684,7 +1707,7 @@
   });
   // Seed the baseline at load (boxes start empty): a draft typed before the first status
   // then differs from the seed and is preserved, instead of being clobbered by first touch.
-  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['imageQueueInput', 'imageQueue']].forEach(function (pair) {
+  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['summonRolesInput', 'summonRoles'], ['imageQueueInput', 'imageQueue']].forEach(function (pair) {
     var el = byId(pair[0]); if (el) lastApplied[pair[1]] = el.value;
   });
   function setIfClean(id, key, incoming) {
@@ -1760,6 +1783,7 @@
     if ('imageQueueMax' in s) setIfClean('imageQueueInput', 'imageQueue', String(s.imageQueueMax || 8));
     setSelectIfClean('engageModeSel', s.engageMode || 'normal');
     if ('commandPrefixes' in s) setIfClean('prefixInput', 'prefixes', (s.commandPrefixes || []).join(', '));
+    if ('botRoleIds' in s) setIfClean('summonRolesInput', 'summonRoles', (s.botRoleIds || []).join(', '));
     var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
     var ni = byId('noticeInput');
     if (ni && s.noticeText) {
@@ -2366,6 +2390,14 @@
       });
     });
   });
+  byId('summonRolesInput').addEventListener('change', function () {
+    var parts = byId('summonRolesInput').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    call('config.setSummonRoles', { roleIds: parts }).then(function (res) {
+      logRes(res, function (r) { var ids = (r.value && r.value.botRoleIds) || []; return 'summon roles: ' + (ids.join(', ') || '(none)'); }, 'failed', function (r) {
+        var ids = (r.value && r.value.botRoleIds) || []; byId('summonRolesInput').value = ids.join(', '); lastApplied.summonRoles = byId('summonRolesInput').value;
+      });
+    });
+  });
   byId('engageModeSel').addEventListener('change', function () {
     call('config.setEngageMode', { mode: byId('engageModeSel').value, channelId: selChannel() }).then(function (res) {
       logRes(res, function (r) { return 'engagement mode: ' + r.value.engageMode; });
@@ -2905,6 +2937,16 @@
       log('--- diagnostics (' + ring.length + ' events) ---');
       lines.forEach(function (ln) { log('  ' + ln); });
       try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(lines.join('\n')).then(function () { log('(copied to clipboard)'); }, function () {}); } catch (e) {}
+    });
+  });
+  byId('errBtn').addEventListener('click', function () {
+    call('diag.errors').then(function (res) {
+      if (!res || !res.ok) { log('error ring read failed: ' + ((res && res.reason) || 'unknown')); return; }
+      var ring = res.value || [];
+      if (!ring.length) { log('no errors recorded — nothing has failed since the tab loaded'); return; }
+      log('--- recent errors (' + ring.length + ') ---');
+      ring.forEach(function (e) { log('  ' + new Date(e.t || 0).toLocaleTimeString() + '  [' + e.tag + '] ' + e.msg); });
+      try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ring.map(function (e) { return new Date(e.t || 0).toLocaleTimeString() + '  [' + e.tag + '] ' + e.msg; }).join('\n')).then(function () { log('(copied to clipboard)'); }, function () {}); } catch (e2) {}
     });
   });
   var DIAL_KEYS = ['kindness', 'sarcasm', 'curiosity', 'playfulness', 'formality', 'verbosity'];
