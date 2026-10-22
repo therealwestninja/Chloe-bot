@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.16
+// @version      0.90.17
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1200,10 +1200,24 @@
       });
     }
 
+    // v0.90.17: a ROLE mention (<@&id>) is summonable when the operator lists that
+    // role id in cfg.botRoleIds (Behavior -> summon roles). A bare role id in a
+    // message is opaque — Discord sends only the number, never the role's name —
+    // so unlisted roles can never match by name; they stay background chatter.
+    function rolePinged(content) {
+      var ids = (cfg.botRoleIds && cfg.botRoleIds.length) ? cfg.botRoleIds : [];
+      if (!ids.length) return false;
+      var c = String(content || '');
+      for (var i = 0; i < ids.length; i++) { if (c.indexOf('<@&' + ids[i] + '>') >= 0) return true; }
+      return false;
+    }
+
     function isAddressed(content) {
       if (cfg.addressMode === 'always') return true;   // DM channel: every message is to her
       var c = String(content || '');
-      var mentioned = cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0);
+      var userMentioned = !!(cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0));
+      var roleMentioned = rolePinged(c);
+      var mentioned = userMentioned || roleMentioned;
       var named = nameAliases().some(function (a) { return new RegExp(namePat(a), 'i').test(c); });
       if (cfg.addressMode === 'mention') return !!mentioned;
       if (cfg.addressMode === 'name') return !!named;
@@ -1215,6 +1229,7 @@
       if (cfg.addressMode === 'always') return 'ping';   // DM: treat as a direct address
       var c = String(content || '');
       if (cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0)) return 'ping';
+      if (rolePinged(c)) return 'ping';   // a listed summon-role ping carries full ping priority
       if (nameAliases().some(function (a) { return new RegExp(namePat(a), 'i').test(c); })) return 'name';
       return 'none';
     }
@@ -1224,10 +1239,14 @@
     function addressInfo(content) {
       var c = String(content || '');
       var mentioned = !!(cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0));
+      var roleHit = rolePinged(c);
       var named = nameAliases().some(function (a) { try { return new RegExp(namePat(a), 'i').test(c); } catch (e) { return false; } });
-      return { mentioned: mentioned, named: named, mode: cfg.addressMode || 'both',
+      var rm = c.match(/<@&(\d+)>/);
+      return { mentioned: mentioned, rolePinged: roleHit, named: named, mode: cfg.addressMode || 'both',
         len: c.length, hasMentionSyntax: /<@!?\d+>/.test(c), hasRoleMention: /<@&\d+>/.test(c),
-        botIdSet: !!cfg.botUserId, aliasCount: nameAliases().length };
+        firstRoleId: rm ? rm[1] : '',
+        botIdSet: !!cfg.botUserId, aliasCount: nameAliases().length,
+        summonRoles: (cfg.botRoleIds && cfg.botRoleIds.length) ? cfg.botRoleIds.length : 0 };
     }
     var addrLogged = {};
     function addrNoteOnce(key) { if (addrLogged[key]) return false; addrLogged[key] = true; return true; }
@@ -1245,7 +1264,16 @@
         return;
       }
       if (info.hasRoleMention && !info.mentioned) {
-        if (addrNoteOnce('role:' + aid)) log('[chloe.T1] ' + who + ' mentioned a ROLE, not her personal mention — @-mention the bot itself (pick the user from autocomplete, not a role of the same name) and she will answer');
+        // v0.90.17: a listed summon-role would have counted as addressed above (mention/both
+        // modes), so this is an UNLISTED role — or replies-when is name-only, where even listed
+        // roles stay silent. Say which role (ids are not personal data) and how to enlist it.
+        var hint = info.firstRoleId ? (' (<@&' + info.firstRoleId + '>)') : '';
+        var how = (info.mode === 'name')
+          ? ' — but she only answers her written name right now (Behavior -> replies-when is name only)'
+          : (info.summonRoles
+            ? ' — that role is not in her summon list (Behavior -> summon roles holds ' + info.summonRoles + ' id' + (info.summonRoles === 1 ? '' : 's') + ')'
+            : ' — she only answers listed summon roles (Behavior -> summon roles), or @-mention the bot itself (pick the user from autocomplete, not a role of the same name)');
+        if (addrNoteOnce('role:' + aid)) log('[chloe.T1] ' + who + ' mentioned a ROLE' + hint + ', not her personal mention' + how + ' and she will answer');
         return;
       }
       if (info.hasMentionSyntax && !info.mentioned) {
@@ -5760,7 +5788,8 @@
       if (!cfg.botUserId && !cfg.botName) {
         log('[chloe] WARNING: no bot identity yet — click Validate. Until then she can\u2019t tell she\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
       } else {
-        log('[chloe] identity (bridge v' + (cfg.bridgeVersion || '?') + '): ' + (cfg.botName || '?') + ' (' + (cfg.botUserId || 'no id') + '); answers to: ' + nameAliases().join(', ') + ' or @-mention; replies-when=' + cfg.addressMode);
+        var summonTxt = (cfg.botRoleIds && cfg.botRoleIds.length) ? (' or summon-role <@&' + cfg.botRoleIds.join('>/<@&') + '>') : '';
+        log('[chloe] identity (bridge v' + (cfg.bridgeVersion || '?') + '): ' + (cfg.botName || '?') + ' (' + (cfg.botUserId || 'no id') + '); answers to: ' + nameAliases().join(', ') + ' or @-mention' + summonTxt + '; replies-when=' + cfg.addressMode);
       }
       var curDelay = cfg.pollIntervalMs;
       var tick = function () {
@@ -5805,7 +5834,7 @@
       'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'trustHardening', 'bondLadder', 'replyReference', 'backfill',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
       'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
-      'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botLoopGrace',
+      'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botRoleIds', 'botLoopGrace',
       'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
     function updateConfig(patch) {
       if (!patch || typeof patch !== 'object') return;
@@ -6303,7 +6332,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.16';
+  var VERSION = '0.90.17';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6970,6 +6999,7 @@
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
         botAliases: cfgGet('botAliases', []),
+        botRoleIds: cfgGet('botRoleIds', []),   // v0.90.17: role ids whose <@&id> ping summons her (Behavior -> summon roles)
         addressMode: isDMChannel(channelId) ? 'always' : cfgGet('addressMode', 'both'),
         volunteer: !!cfgGet('volunteer', false),
         greet: !!cfgGet('greet', false),
@@ -7243,7 +7273,7 @@
     return {
       version: VERSION, hasToken: hasToken(),
       channelId: cfgGet('channelId', ''), botUserId: cfgGet('botUserId', ''), botName: cfgGet('botName', ''),
-      addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
+      botRoleIds: cfgGet('botRoleIds', []), addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
       greet: !!cfgGet('greet', false), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
       dmReplies: !!cfgGet('dmReplies', false),
       publicChannels: [primaryChannel()].concat(cfgGet('channels', []) || []).filter(Boolean),
@@ -7376,6 +7406,18 @@
         list.forEach(function (p) { p = String(p || '').trim().slice(0, 64); if (p && p !== '!chloe' && clean.indexOf(p) < 0 && clean.length < 64) clean.push(p); });   // re-validate: per-prefix + count caps
         cfgSet('commandPrefixes', clean); patchEngines({ commandPrefixes: clean });
         return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
+      }
+      case 'config.setSummonRoles': {   // v0.90.17: role ids whose <@&id> ping summons her (a role ping carries no name, so only listed ids match)
+        var rl = (args && args.roleIds);
+        if (!Array.isArray(rl)) return Promise.resolve({ ok: false, reason: 'roleIds must be an array' });
+        var cleanR = [];
+        for (var ri = 0; ri < rl.length && cleanR.length < 16; ri++) {
+          var rid = String(rl[ri] || '').trim();
+          if (!/^\d{8,32}$/.test(rid)) continue;   // re-validate: Discord snowflakes are digits only
+          if (cleanR.indexOf(rid) < 0) cleanR.push(rid);
+        }
+        cfgSet('botRoleIds', cleanR); patchEngines({ botRoleIds: cleanR });   // LIVE_PATCHABLE: applies without restart
+        return Promise.resolve({ ok: true, value: { botRoleIds: cleanR } });
       }
       case 'mod.pinNotice': {
         var force = !!(args && args.force);
@@ -7870,7 +7912,7 @@
       // Then wipe all cfg keys except the token (keeps the bot connected)
       var keep = ['token'];
       var allCfg = [
-        'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
+        'botUserId','botName','botAliases','botRoleIds','channelId','channels','dmChannels','addressMode','engageMode',
         'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
         'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
         'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
@@ -7905,7 +7947,7 @@
     var snap = { _version: VERSION, _exported: new Date().toISOString(), _note: 'Chloe-bot state backup. Token is NOT included. Import via the panel System tab.' };
     // cfg keys (everything except the token)
     var cfgKeys = [
-      'botUserId','botName','botAliases','channelId','channels','dmChannels','addressMode','engageMode',
+      'botUserId','botName','botAliases','botRoleIds','channelId','channels','dmChannels','addressMode','engageMode',
       'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
       'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
