@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.8
+// @version      0.90.9
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -1125,6 +1125,7 @@
     }
     function greetEnabled() { return cfg.greet && typeof cfg.greetFn === 'function' && typeof cfg.send === 'function'; }
     function escRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function namePat(a) { return '\\b' + escRe(a) + "(?:['\u2019]s|s['\u2019]?)?\\b"; } // trigger: chloe also fires on chloe's, chloes, chloes' — never inside longer words
     function replyEnabled() { return typeof cfg.respond === 'function' && typeof cfg.send === 'function'; }
     function hasPendingReply() { return Object.keys(reply.queue).length > 0; }
     function inGreetSettle(now) { return cfg.greetSettleMs > 0 && startedAt && (now - startedAt) < cfg.greetSettleMs; }
@@ -1203,7 +1204,7 @@
       if (cfg.addressMode === 'always') return true;   // DM channel: every message is to her
       var c = String(content || '');
       var mentioned = cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0);
-      var named = nameAliases().some(function (a) { return new RegExp('\\b' + escRe(a) + '\\b', 'i').test(c); });
+      var named = nameAliases().some(function (a) { return new RegExp(namePat(a), 'i').test(c); });
       if (cfg.addressMode === 'mention') return !!mentioned;
       if (cfg.addressMode === 'name') return !!named;
       return !!(mentioned || named);
@@ -1214,7 +1215,7 @@
       if (cfg.addressMode === 'always') return 'ping';   // DM: treat as a direct address
       var c = String(content || '');
       if (cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0)) return 'ping';
-      if (nameAliases().some(function (a) { return new RegExp('\\b' + escRe(a) + '\\b', 'i').test(c); })) return 'name';
+      if (nameAliases().some(function (a) { return new RegExp(namePat(a), 'i').test(c); })) return 'name';
       return 'none';
     }
     // Response priority. Higher wins. Weights are spaced by an order of magnitude so the ordering is
@@ -1254,7 +1255,7 @@
     }
     function stripAddressing(c) {
       c = scrubDiscordTokens(c);
-      nameAliases().forEach(function (a) { if (a) c = c.replace(new RegExp('\\b' + escRe(a) + '\\b', 'ig'), ' '); });
+      nameAliases().forEach(function (a) { if (a) c = c.replace(new RegExp(namePat(a), 'ig'), ' '); });
       return c.replace(/\s+/g, ' ').trim();
     }
     function sanitizePromptForCaption(prompt, maxLen) {
@@ -6257,7 +6258,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.8';
+  var VERSION = '0.90.9';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
