@@ -871,6 +871,9 @@
  var peerWin = null, peerOrigin = null;   // the userscript's window+origin, pinned from its first ORIGIN_OK message
   var consecStatusFail = 0;   // consecutive status timeouts; after 3 the peer is unpinned so a restarted userscript is rediscovered
   var engineEnsuredFor = null;   // peer object the engine bundle was verified for (shell/world split)
+  var engineCheckInFlight = false;   // OOM guard: one __hello/__installEngine round at a time (res-handler re-entry + polls used to fan out parallel 616KB pushes)
+  var engineRetryAt = 0;   // backoff after a failed check so a persistent failure cannot hot-loop fetches
+  var engineBundleText = null;   // cached bundle text: fetched once per panel load, never once per retry
   var lastStartAt = 0;   // Date.now() of the last Start click; used to notice when the bot stops right after starting (dead channel)
 
   window.addEventListener('message', function (ev) {
@@ -1018,27 +1021,66 @@
   // missing or stale. Runs once per pinned peer; old monolith bridges answer __hello
   // with "unknown command", which we treat as "no shell — carry on".
   function wantEngineVersion() { try { return (typeof root !== 'undefined' && root.ENGINE_BUNDLE_VERSION) ? String(root.ENGINE_BUNDLE_VERSION) : null; } catch (e) { return null; } }
+  function callPinned(cmd, args, timeoutMs) {
+    if (!peerWin) return Promise.resolve({ ok: false, reason: 'no peer' });
+    var peerAtSend = peerWin, originAtSend = peerOrigin;
+    return new Promise(function (resolve) {
+      seq = seq + 1;
+      var rand; try { rand = (self.crypto || window.crypto).randomUUID(); } catch (e) { rand = Date.now().toString(36) + Math.random().toString(36).slice(2); }
+      var nonce = 'p' + seq + '_' + rand;
+      var timer = setTimeout(function () {
+        pending.delete(nonce);
+        resolve({ ok: false, reason: 'timeout' });
+      }, timeoutMs || 8000);
+      pending.set(nonce, function (res) { clearTimeout(timer); resolve(res); });
+      try { peerAtSend.postMessage({ __chloe: 1, kind: 'req', nonce: nonce, cmd: cmd, args: args || null }, replyTarget(originAtSend)); }
+      catch (e) {
+        clearTimeout(timer); pending.delete(nonce);
+        if (peerWin === peerAtSend) { peerWin = null; peerOrigin = null; engineEnsuredFor = null; }
+        resolve({ ok: false, reason: 'post failed' });
+      }
+    });
+  }
   function ensureEngine() {
     if (!peerWin || engineEnsuredFor === peerWin) return;
+    if (engineCheckInFlight) return;
+    if (Date.now() < engineRetryAt) return;
     var want = wantEngineVersion();
     if (!want) return;
-    call('__hello', null, 8000).then(function (h) {
-      if (!peerWin) return;
-      if (!(h && h.ok && h.value && typeof h.value.shell !== 'undefined')) return;   // pre-shell bridge: nothing to do
+    var peerAtStart = peerWin;
+    engineCheckInFlight = true;
+    callPinned('__hello', null, 8000).then(function (h) {
+      if (!peerWin || peerWin !== peerAtStart) return 'stale';
+      if (!(h && h.ok && h.value && typeof h.value.shell !== 'undefined')) { engineEnsuredFor = peerWin; return 'preshell'; }   // pre-shell bridge: nothing to do, and do NOT retry on every res
       var have = h.value.engine;
-      if (have === want) { engineEnsuredFor = peerWin; dlog('engine bundle ' + have + ' already installed (shell ' + h.value.shell + ')'); return; }
+      if (have === want) { engineEnsuredFor = peerWin; dlog('engine bundle ' + have + ' already installed (shell ' + h.value.shell + ')'); return 'current'; }
       dlog('engine bundle installed=' + (have || 'none') + ' want=' + want + ' — pushing');
       log('Updating bot engine to v' + want + '…');
-      fetch('src/engine.bundle.js').then(function (r) {
-        if (!r.ok) throw new Error('bundle fetch HTTP ' + r.status + ' (save the generator first — src/ needs a save to serve)');
-        return r.text();
-      }).then(function (src) {
-        return call('__installEngine', { version: want, source: src }, 120000);
+      var needFetch = !(typeof engineBundleText === 'string' && engineBundleText.length > 1000);
+      var srcP = needFetch
+        ? fetch('src/engine.bundle.js').then(function (r) {
+            if (!r.ok) throw new Error('bundle fetch HTTP ' + r.status + ' (save the generator first — src/ needs a save to serve)');
+            return r.text();
+          }).then(function (t) { engineBundleText = t; return t; })
+        : Promise.resolve(engineBundleText);
+      return srcP.then(function (src) {
+        if (!peerWin || peerWin !== peerAtStart) return 'stale';
+        return callPinned('__installEngine', { version: want, source: src }, 120000);
       }).then(function (r) {
-        if (!peerWin) return;
-        if (r && r.ok) { engineEnsuredFor = peerWin; log('Bot engine updated (' + r.value.engine + ').'); dlog('engine install ok'); }
-        else log('Engine update FAILED: ' + ((r && r.reason) || 'unknown') + ' — bot commands will fail until it succeeds.');
-      }).catch(function (e) { log('Engine update FAILED: ' + (e && e.message || e)); });
+        if (!peerWin || peerWin !== peerAtStart) return 'stale';
+        if (r && r.ok) { engineEnsuredFor = peerWin; log('Bot engine updated (' + r.value.engine + ').'); dlog('engine install ok'); return 'installed'; }
+        log('Engine update FAILED: ' + ((r && r.reason) || 'unknown') + ' — bot commands will fail until it succeeds.');
+        return 'failed';
+      });
+    }).then(function (st) {
+      engineCheckInFlight = false;
+      if (st === 'failed' || st === undefined || st === 'stale') { try { engineBundleText = null; } catch (e) {} }
+      if (st !== 'current' && st !== 'installed' && st !== 'preshell') engineRetryAt = Date.now() + 30000;
+    }).catch(function (e) {
+      engineCheckInFlight = false;
+      try { engineBundleText = null; } catch (ee) {}
+      engineRetryAt = Date.now() + 30000;
+      log('Engine update FAILED: ' + (e && e.message || e));
     });
   }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe shell (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      1.0
+// @version      1.1
 // @description  Thin stable shell: GM transport/storage, control link, engine-bundle cache. Engine logic arrives from the control generator panel (__installEngine) — reinstall this file only for transport/grant changes.
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -47,7 +47,7 @@
   'use strict';
   if (window.top !== window) return;   // shell + engine live in the top frame only
 
-  var SHELL_VERSION = '1.0';
+  var SHELL_VERSION = '1.1';
   var NS = 'chloe:';
   var BUNDLE_KEY = NS + 'engine:bundle';   // { version, source }
   var ORIGIN_OK = /^(null|https:\/\/([a-z0-9]{32}\.)?perchance\.org)$/;
@@ -65,20 +65,32 @@
     catch (e) { try { source.postMessage(obj, '*'); } catch (e2) {} }
   }
 
+  // v1.1 scoping fix: the bundle references bare GM_* / unsafeWindow, which live
+  // in the userscript sandbox scope — NOT in the global scope an indirect eval
+  // sees. v1.0's `(0, eval)(source)` threw "GM_getValue is not defined" on every
+  // install, so no engine ever installed and the panel could never link (status
+  // kept answering "no engine installed"). Compile with those names as explicit
+  // parameters instead — the same shape as the generator's build-engine smoke
+  // test, which injects them as function-scope vars. No engine change: bundle v1
+  // installs as-is once the shell lets it.
+  var GM_PARAMS = 'GM_getValue,GM_setValue,GM_deleteValue,GM_xmlhttpRequest,GM_openInTab,GM_registerMenuCommand,GM_addValueChangeListener,unsafeWindow';
   function installEngine(version, source) {
     version = String(version || '');
     if (!version || typeof source !== 'string' || source.length < 1000) {
       return { ok: false, reason: 'bad bundle (empty/short)' };
     }
-    var compiled;
-    try { compiled = new Function(source); }   // syntax check only, never executes
-    catch (e) { return { ok: false, reason: 'bundle syntax: ' + (e && e.message) }; }
+    var wireFn;
+    try {
+      var uw = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : undefined;
+      wireFn = new Function(GM_PARAMS,
+        source + '\n;return (typeof __chloeWire !== "undefined" ? __chloeWire : null);')(
+        GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest, GM_openInTab, GM_registerMenuCommand, GM_addValueChangeListener, uw);
+    } catch (e) { return { ok: false, reason: 'bundle compile: ' + (e && e.message) }; }
+    if (typeof wireFn !== 'function') return { ok: false, reason: 'bundle has no __chloeWire' };
     try {
       if (Wiring && typeof Wiring.shutdown === 'function') { try { Wiring.shutdown(); } catch (e) {} }
       Wiring = null; engineVersion = null;
-      (0, eval)(source);   // defines ChloeT0, ChloeTabBridge, __chloeWire in this scope
-      if (typeof __chloeWire !== 'function') return { ok: false, reason: 'bundle has no __chloeWire' };
-      Wiring = __chloeWire({ LINKWIN: LINKWIN, tabRole: TAB_ROLE, engineVersion: version });
+      Wiring = wireFn({ LINKWIN: LINKWIN, tabRole: TAB_ROLE, engineVersion: version });
       if (!Wiring || typeof Wiring.onPanelEvent !== 'function') { Wiring = null; return { ok: false, reason: 'wiring boot failed' }; }
       engineVersion = version;
       try { GM_setValue(BUNDLE_KEY, { version: version, source: source }); }
