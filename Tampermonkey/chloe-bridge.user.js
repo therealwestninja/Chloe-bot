@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.20
+// @version      0.90.21
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -68,6 +68,16 @@
   function snowflakeTime(id) {
     try { return Number(BigInt(id) >> 22n) + DISCORD_EPOCH; } catch (e) { return null; }
   }
+
+  // ---- reply languages (shared) ---------------------------------------------------------------
+  // Small ISO-639-1 subset for `!chloe lang` + `lang default`. Factory scope (not engine
+  // scope) so the queen — control command, import firewall, status — shares ONE list with the
+  // engine via ChloeT0.LANG_NAMES. The bridge translates at the transport boundary; the engine
+  // just records the preference (English-only cognition).
+  var LANG_NAMES = { fr: 'French', es: 'Spanish', de: 'German', it: 'Italian', pt: 'Portuguese',
+    nl: 'Dutch', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', ar: 'Arabic',
+    hi: 'Hindi', tr: 'Turkish', pl: 'Polish', sv: 'Swedish', uk: 'Ukrainian', vi: 'Vietnamese',
+    id: 'Indonesian', th: 'Thai', el: 'Greek', he: 'Hebrew', cs: 'Czech', ro: 'Romanian', fi: 'Finnish' };
 
   // ---- engine -----------------------------------------------------------------------------
   // deps: { transport, store, clock, config, log }
@@ -1278,10 +1288,7 @@
     // ---- per-user reply language (DESIGN-translate.md) ------------------------------------------
     // A small ISO-639-1 subset we recognize for `!chloe lang`. The bridge does the actual translating
     // at the transport boundary; the engine just records the preference (English-only cognition).
-    var LANG_NAMES = { fr: 'French', es: 'Spanish', de: 'German', it: 'Italian', pt: 'Portuguese',
-      nl: 'Dutch', ru: 'Russian', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', ar: 'Arabic',
-      hi: 'Hindi', tr: 'Turkish', pl: 'Polish', sv: 'Swedish', uk: 'Ukrainian', vi: 'Vietnamese',
-      id: 'Indonesian', th: 'Thai', el: 'Greek', he: 'Hebrew', cs: 'Czech', ro: 'Romanian', fi: 'Finnish' };
+    // (LANG_NAMES lives at factory scope — shared with the queen via ChloeT0.LANG_NAMES.)
     function getUserLang(id) {
       return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && p.lang) ? p.lang : null; });
     }
@@ -2530,12 +2537,29 @@
         } },
       { verb: 'time',      modOnly: false, help: 'time \u2014 the current time (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('time') }); } },
       { verb: 'date',      modOnly: false, help: 'date \u2014 today\u2019s date (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('date') }); } },
-      { verb: 'lang',      modOnly: false, help: 'lang <code> (e.g. fr, es, de) / lang off / lang \u2014 your reply language', handler: function (uid, c) {
+      { verb: 'lang',      modOnly: false, help: 'lang <code> (e.g. fr, es, de) / lang off / lang \u2014 your reply language (mods: lang default <code>|off = this channel\u2019s default)', handler: function (uid, c) {
           var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var pfx = cfg.commandPrefix || '!chloe';
+          var chDef = cfg.channelLang || null;   // v0.90.21: queen-patched snapshot of channelLang:<this channel>
+          function bareAck(lg) {
+            if (lg && lg !== 'en') return 'I\u2019m talking to you in ' + (LANG_NAMES[lg] || lg) + ' (' + lg + '). Say \u201c' + pfx + ' lang off\u201d to switch back to English.';
+            if (chDef && chDef !== 'en') return 'I\u2019m talking to you in English, but this channel defaults to ' + (LANG_NAMES[chDef] || chDef) + ' \u2014 say \u201c' + pfx + ' lang ' + chDef + '\u201d to match it, or pick your own code.';
+            return 'I\u2019m talking to you in English. Say \u201c' + pfx + ' lang fr\u201d (or es, de, ja\u2026) to switch.';
+          }
+          var dm = arg.match(/^default(?:\s+(.*))?$/);   // v0.90.21: per-channel default, mods only
+          if (dm) {
+            if (!isMod(uid)) return Promise.resolve({ ack: 'only mods can set the channel language \u2014 but your own is yours: ' + pfx + ' lang fr (or es, de, ja\u2026).' });
+            var sub = (dm[1] || '').trim();
+            if (!sub || sub === 'off' || sub === 'en' || sub === 'english' || sub === 'default') {
+              return Promise.resolve({ ack: 'okay \u2014 back to English in here unless someone picks their own. (' + pfx + ' lang default fr to set one.)', channelLang: null, channelLangTouched: true });
+            }
+            if (!LANG_NAMES[sub]) {
+              return Promise.resolve({ ack: 'I don\u2019t know the code \u201c' + sub.slice(0, 12) + '\u201d. Try a 2-letter code like fr (French), es (Spanish), de (German), ja (Japanese), pt, ru, zh, ar\u2026 or \u201clang default off\u201d to clear.' });
+            }
+            return Promise.resolve({ ack: 'got it \u2014 I\u2019ll talk ' + LANG_NAMES[sub] + ' in here unless someone picks their own. (\u201c' + pfx + ' lang default off\u201d to clear.)', channelLang: sub, channelLangTouched: true });
+          }
           if (!arg) {
-            return getUserLang(uid).then(function (lg) {
-              return { ack: (lg && lg !== 'en') ? ('I\u2019m talking to you in ' + (LANG_NAMES[lg] || lg) + ' (' + lg + '). Say \u201c' + (cfg.commandPrefix || '!chloe') + ' lang off\u201d to switch back to English.') : 'I\u2019m talking to you in English. Say \u201c' + (cfg.commandPrefix || '!chloe') + ' lang fr\u201d (or es, de, ja\u2026) to switch.' };
-            });
+            return getUserLang(uid).then(function (lg) { return { ack: bareAck(lg) }; });
           }
           if (arg === 'off' || arg === 'en' || arg === 'english') {
             return setUserLang(uid, null).then(function () { return { ack: 'okay \u2014 back to English.' }; });
@@ -2759,6 +2783,7 @@
         var stateById = {}, commandAuthors = {};
         authorIds.forEach(function (id, i) { var p = parts[i]; if (p) { applyExpiry(p, now); stateById[id] = p.state || 'active'; } else stateById[id] = 'active'; });
         var acks = [], embeds = [], notices = [], commandCount = 0, addressedName = null, imageReqName = null;
+          var channelLangTouched = false, channelLangVal = null;   // v0.90.21: a lang default change rides the summary to the queen (cf. engageMode)
           var ackSrc = [];   // message id behind each ack (single-source batches reply-reference)
         var canEmbed = typeof cfg.sendEmbed === 'function';
         var chain = Promise.resolve();
@@ -2789,8 +2814,8 @@
               if (c.cmd === 'remember') {
                 return rememberMe(m.author.id, m.author.username);   // "remember me" lifts ethereal; memory may form again
               }
-              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
-              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
+              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
+              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
             }
@@ -2946,9 +2971,9 @@
             var outs = [];
             if (acks.length && typeof cfg.send === 'function') outs.push(Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'), (cfg.replyReference !== false && acks.length === 1 && ackSrc[0]) ? { replyTo: ackSrc[0] } : undefined)));   // a lone ack attaches to its command
             embeds.forEach(function (em) { outs.push(Promise.resolve(cfg.sendEmbed(cfg.channelId, em))); });
-            return Promise.all(outs.map(function (p) { return p.then(function () {}, function () {}); })).then(function () { return { commands: commandCount }; });
+            return Promise.all(outs.map(function (p) { return p.then(function () {}, function () {}); })).then(function () { return { commands: commandCount, channelLangTouched: channelLangTouched, channelLang: channelLangVal }; });
           }
-          return { commands: commandCount };
+          return { commands: commandCount, channelLangTouched: channelLangTouched, channelLang: channelLangVal };
         });
       });
     }
@@ -4009,6 +4034,7 @@
                   ' ingested, ' + summary.newUsers.length + ' new, cursor=' + summary.cursor);
                 return processCommandsAndSelect(incoming, touched, imageEligible, isStartupBatch).then(function (t3) {
                   if (t3 && t3.commands) summary.commands = t3.commands;
+                  if (t3 && t3.channelLangTouched) { summary.channelLangTouched = true; summary.channelLang = t3.channelLang || null; }   // v0.90.21: queen persists (onPoll)
                   var imageJob = kickImage();   // fire-and-forget: image broker threads with text; never blocks the loop
                   if (imageJob) summary.imageJob = imageJob;
                   summary.engageMode = engageMode;
@@ -6048,7 +6074,7 @@
       'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'trustHardening', 'bondLadder', 'replyReference', 'backfill',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
       'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
-      'timezoneOffsetMins', 'timeAware', 'engageMode', 'botAliases', 'botRoleIds', 'botLoopGrace',
+      'timezoneOffsetMins', 'timeAware', 'engageMode', 'channelLang', 'botAliases', 'botRoleIds', 'botLoopGrace',
       'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
     function updateConfig(patch) {
       if (!patch || typeof patch !== 'object') return;
@@ -6177,7 +6203,7 @@
     };
   }
 
-  return { createEngine: createEngine, createBrainMeter: createBrainMeter, _snowflakeCmp: snowflakeCmp };
+  return { createEngine: createEngine, createBrainMeter: createBrainMeter, _snowflakeCmp: snowflakeCmp, LANG_NAMES: LANG_NAMES };
 });
 /* chloe-bridge — tab bridge (D1, pure logic).
  *
@@ -6546,7 +6572,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.20';
+  var VERSION = '0.90.21';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -7066,8 +7092,9 @@
     if (!cfgGet('translate', false) || !Array.isArray(msgs) || !msgs.length) return Promise.resolve(msgs);
     var eng = engineFor(channelId);
     if (!eng || typeof eng.getUserLang !== 'function') return Promise.resolve(msgs);
+    var chDef = cfgGet('channelLang:' + channelId, null);   // v0.90.21: read once per batch, not per message
     var langCache = {};
-    function langOf(uid) { if (uid in langCache) return Promise.resolve(langCache[uid]); return Promise.resolve(eng.getUserLang(uid)).then(function (l) { langCache[uid] = l || null; return langCache[uid]; }); }
+    function langOf(uid) { if (uid in langCache) return Promise.resolve(langCache[uid]); return Promise.resolve(eng.getUserLang(uid)).then(function (l) { langCache[uid] = l || chDef || null; return langCache[uid]; }); }
     var chain = Promise.resolve();
     msgs.forEach(function (m) {
       if (!m || !m.author || !m.content) return;
@@ -7432,6 +7459,7 @@
         ]),
         strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
         engageMode: cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal')),
+        channelLang: cfgGet('channelLang:' + channelId, null),   // v0.90.21: per-channel reply default (null = English)
         beats: cfgGet('beats', []),
         beatFn: function (b) { return brainCall('beat', b); },
         lullFn: function (ctx) { return brainCall('lull', ctx); },
@@ -7541,8 +7569,9 @@
           var eng = engineFor(cid);
           var langP = (eng && typeof eng.getUserLang === 'function') ? eng.getUserLang(toUser) : Promise.resolve(null);
           return Promise.resolve(langP).then(function (lang) {
-            if (!lang || lang === 'en') return transport.sendMessage(cid, text, opts);
-            return translate(text, lang, 'en').then(function (res) { return transport.sendMessage(cid, res.text, opts); });
+            var eff = lang || cfgGet('channelLang:' + cid, null);   // v0.90.21: user override wins, else the channel default
+            if (!eff || eff === 'en') return transport.sendMessage(cid, text, opts);
+            return translate(text, eff, 'en').then(function (res) { return transport.sendMessage(cid, res.text, opts); });
           });
         },
         canSend: canSend, noteSend: noteSend, releaseSend: releaseSend,
@@ -7557,6 +7586,12 @@
             trace('poll', 'in ' + (summary.ingested || 0) + (summary.replied ? ' reply' : '') + (summary.imageJob ? ' image' : '') + (summary.greeted ? ' greet' : '') + (summary.volunteered ? ' vol' : '') + (summary.commands ? ' cmd' : '') + ' [' + (summary.engageMode || 'normal') + ']');
           }
           if (summary && summary.engageMode && summary.engageMode !== cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal'))) cfgSet('engageMode:' + channelId, summary.engageMode);  // a !chloe lockdown/unlock/open command changed it
+          if (summary && summary.channelLangTouched) {   // v0.90.21: a !chloe lang default command changed it
+            if (summary.channelLang) cfgSet('channelLang:' + channelId, summary.channelLang);
+            else GM_deleteValue(NS + 'cfg:channelLang:' + channelId);
+            var __ce = engines[channelId];   // targeted, never broadcast (see setChannelLang)
+            if (__ce && typeof __ce.updateConfig === 'function') { try { __ce.updateConfig({ channelLang: summary.channelLang || null }); } catch (eCL) {} }
+          }
           // A lock-skip poll means another engine instance owns this channel right now (queen handover
           // / split-brain). Maintenance writes the DB (backfill checkpoint + partitions, departure
           // sweeps, anchor notes), so the skipping instance must NOT run it — only the lock-holder.
@@ -7736,7 +7771,9 @@
       imageEnhanceOffer: !!cfgGet('imageEnhanceOffer', false),
       autoMod: !!cfgGet('autoMod', false), autoModRules: cfgGet('autoModRules', []),
       engageMode: cfgGet('engageMode:' + primaryChannel(), cfgGet('engageMode', 'normal')),
+      channelLang: cfgGet('channelLang:' + primaryChannel(), null),
       channels: channelList(),
+      channelLangs: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('channelLang:' + c, null); }); return m; })(),
       engageModes: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('engageMode:' + c, cfgGet('engageMode', 'normal')); }); return m; })(),
       runningByChannel: (function () { var m = {}; channelList().forEach(function (c) { m[c] = !!(engines[c] && engines[c].isRunning && engines[c].isRunning()); }); return m; })(),
       beats: cfgGet('beats', []),
@@ -7942,6 +7979,23 @@
         if (!emCh) return Promise.resolve({ ok: false, reason: 'no channel set' });
         cfgSet('engageMode:' + emCh, mode); patchEngines({ engageMode: mode });
         return Promise.resolve({ ok: true, value: { engageMode: mode, channelId: emCh } });
+      }
+      case 'config.setChannelLang': {   // v0.90.21: per-channel reply default (null clears to English)
+        var chL = chKeyOf(args);
+        if (!chL) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var rawL = (args && args.lang != null) ? String(args.lang).trim().toLowerCase() : '';
+        if (!rawL || rawL === 'off' || rawL === 'en' || rawL === 'english' || rawL === 'default') {
+          GM_deleteValue(NS + 'cfg:channelLang:' + chL);
+          var __e0 = engines[chL]; if (__e0 && typeof __e0.updateConfig === 'function') { try { __e0.updateConfig({ channelLang: null }); } catch (e0) {} }
+          return Promise.resolve({ ok: true, value: { lang: null, channelId: chL } });
+        }
+        var __ln = (typeof ChloeT0 !== 'undefined' && ChloeT0.LANG_NAMES) || {};
+        if (!__ln[rawL]) return Promise.resolve({ ok: false, reason: 'unknown language code' });
+        cfgSet('channelLang:' + chL, rawL);
+        // Targeted single-engine patch, NOT patchEngines: a broadcast would leak one channel's
+        // language into every channel (the setEngageMode broadcast flaw, deliberately not repeated).
+        var __e1 = engines[chL]; if (__e1 && typeof __e1.updateConfig === 'function') { try { __e1.updateConfig({ channelLang: rawL }); } catch (e1) {} }
+        return Promise.resolve({ ok: true, value: { lang: rawL, channelId: chL } });
       }
       case 'config.setImageQueue': {
         var n = Math.max(1, Math.min(20, parseInt((args && args.max), 10) || 8));
@@ -8347,6 +8401,9 @@
       GM_deleteValue(NS + 'blocklist');   // primary channel blocklist (prefix '')
       // guildId: keys are per-channel — wipe them all via known channels
       channelList().forEach(function (ch) { GM_deleteValue(NS + 'guildId:' + ch); });
+      // Per-channel keys (v0.90.21 — same hole as export: exact-name lists can't enumerate
+      // per-channel suffixes, so a reset left stale engageMode:<id> behind).
+      channelList().forEach(function (ch) { GM_deleteValue(NS + 'cfg:engageMode:' + ch); GM_deleteValue(NS + 'cfg:channelLang:' + ch); });
       eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null;
       bLog('[chloe] factory reset complete — all state and config cleared (token kept).');
       return { ok: true };
@@ -8378,6 +8435,15 @@
     var cfgKeys = BACKUP_CFG_KEYS;
     var cfg = {};
     cfgKeys.forEach(function (k) { var v = GM_getValue(NS + 'cfg:' + k, null); if (v != null) cfg[k] = v; });
+    // Per-channel keys (v0.90.21 — fixes the pre-existing hole where engageMode:<id> never
+    // survived backup: exact-name allowlists can't enumerate per-channel suffixes, so snapshot
+    // them dynamically for the known channels).
+    channelList().forEach(function (ch) {
+      ['engageMode:', 'channelLang:'].forEach(function (p) {
+        var v = GM_getValue(NS + 'cfg:' + p + ch, null);
+        if (v != null) cfg[p + ch] = v;
+      });
+    });
     snap.cfg = cfg;
     // top-level keys
     var tl = {};
@@ -8438,6 +8504,12 @@
     BACKUP_CFG_KEYS.forEach(function (k) { allowed[k] = true; });
     var cfg = {}, src = (data && data.cfg && typeof data.cfg === 'object') ? data.cfg : {};
     Object.keys(src).forEach(function (k) {
+      var mPC = k.match(/^(engageMode|channelLang):(\d{15,25})$/);   // per-channel keys (v0.90.21 —
+      if (mPC) {                                                      // exact-name allowlists can't enumerate these)
+        if (mPC[1] === 'engageMode') { if (IMPORT_ENGAGE.indexOf(src[k]) >= 0) cfg[k] = src[k]; else dropped.push('cfg:' + k); return; }
+        var __ln = (typeof ChloeT0 !== 'undefined' && ChloeT0.LANG_NAMES) || {};
+        if (__ln[src[k]]) cfg[k] = src[k]; else dropped.push('cfg:' + k); return;
+      }
       if (k === 'token' || !allowed[k]) { dropped.push('cfg:' + k); return; }   // never the token, never unknown keys
       var v = src[k];
       if (k === 'addressMode') { if (IMPORT_ADDR.indexOf(v) >= 0) cfg[k] = v; else dropped.push('cfg:' + k); return; }

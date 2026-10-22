@@ -145,6 +145,22 @@
   /* giant version strings (ADV5: 5000 chars) must not blow out the status bar — ellipsis, full text kept in DOM */
   #verTxt{display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .urow .ubadge{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--sel);color:#fff}
+  /* Setup channel rows (Phase 1 CRUD): id + label + badge + row actions */
+  .chanlist{display:flex;flex-direction:column;margin-top:8px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .chanrow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--surface);flex-wrap:wrap;row-gap:8px}
+  .chanrow:last-child{border-bottom:0}
+  .chanrow:hover{background:var(--surface2)}
+  .changrow{flex:1;min-width:200px;display:flex;flex-direction:column;gap:2px}
+  .chanid{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .chantype{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--surface2);border:1px solid var(--line);color:var(--muted);text-transform:uppercase}
+  .chantype.primary{background:var(--sel);border-color:var(--sel);color:#fff}
+  .chantype.dm{color:var(--warn);border-color:var(--warn)}
+  .chanlab{background:transparent;border:1px solid transparent;border-radius:6px;color:var(--ink);padding:3px 6px;font:inherit;font-weight:600;width:100%}
+  .chanlab:hover{border-color:var(--line)}
+  .chanlab:focus{background:var(--surface2);border-color:var(--sel);outline:none}
+  .chanlang{max-width:172px;font-size:12px}
+  .chanactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
+  .chanempty{color:var(--muted);padding:14px;text-align:center}
   .urow .uactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
   .udetail{padding:8px 12px 12px 40px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12px}
   .batchbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:10px;padding:8px 11px;
@@ -251,12 +267,17 @@
   <section class="pane active" id="pane_setup">
     <div class="card" id="setupCard">
       <h2>Channels</h2>
-      <div class="note" style="margin-bottom:6px">One channel ID per line (Developer Mode &rarr; right-click a channel &rarr; Copy ID). The <strong>first</strong> public line is her primary channel; any others are extra public channels she also runs. You can add <code>// comments</code> after any ID &mdash; they&rsquo;re stripped on save and never stored.</div>
-      <div class="codehead">Public channels</div>
-      <textarea id="channelsBox" rows="3" spellcheck="false" placeholder="123456789012345678  // #general&#10;987654321098765432  // #bot-testing"></textarea>
-      <div class="codehead">Private DMs</div>
-      <div class="note" style="margin-bottom:6px">DM channel IDs to treat as direct messages. Discord can&rsquo;t tell us a channel is a DM, so listing them here is what lets her carry a person&rsquo;s public memory into their DM.</div>
-      <textarea id="dmChannelsBox" rows="2" spellcheck="false" placeholder="111111111111111111  // DM with @alice"></textarea>
+      <div class="note" style="margin-bottom:6px">Paste a channel ID below and Add it — the <strong>first</strong> public channel is her primary channel; the rest are extras she also runs. A label is just your own note, kept in this browser. Find IDs under Developer Mode &rarr; right-click a channel &rarr; Copy ID.</div>
+      <div class="chanlist" id="chanList"></div>
+      <div class="note" id="chanLangNote" hidden style="margin-top:6px">Per-channel reply language needs bridge &#8805; 0.90.21 &mdash; update the userscript, then Stop + Start.</div>
+      <div class="row" style="margin-top:10px">
+        <input class="grow" id="chanAddInput" placeholder="Channel ID to add (15 to 25 digits)" inputmode="numeric">
+        <select id="chanAddType">
+          <option value="pub">public channel</option>
+          <option value="dm">private DM</option>
+        </select>
+        <button class="ghost" id="chanAddBtn">Add</button>
+      </div>
       <div class="row" style="margin-top:8px">
         <button class="ghost" id="setChannelsBtn">Save channels</button>
         <span class="note">With more than one channel, a selector appears in the command bar &mdash; it scopes the roster, mod log, and mode. DMs are flagged automatically.</span>
@@ -618,7 +639,7 @@
       </div>
       <div class="codehead">5 &middot; Point her at a channel</div>
       <div class="note">
-        In Discord, enable <strong>Developer Mode</strong> (Settings &rarr; Advanced). Right-click the channel you want her in &rarr; <strong>Copy Channel ID</strong>, paste it into the Setup tab, and click <strong>Save channels</strong>. On a first run in an existing channel, tick <strong>backfill history (one-time)</strong> in the Behavior tab so she starts with context instead of amnesia. Set any options in the Behavior (including Personality) and Moderation tabs, then click <strong>Start</strong>. To run her in several channels at once, add more channel IDs in Setup, one per line (commas work too) &mdash; each channel gets its own independent memory, moderation, and mode.
+        In Discord, enable <strong>Developer Mode</strong> (Settings &rarr; Advanced). Right-click the channel you want her in &rarr; <strong>Copy Channel ID</strong>, paste it into the Setup tab, click <strong>Add</strong> (public channel), then <strong>Save channels</strong>. On a first run in an existing channel, tick <strong>backfill history (one-time)</strong> in the Behavior tab so she starts with context instead of amnesia. Set any options in the Behavior (including Personality) and Moderation tabs, then click <strong>Start</strong>. To run her in several channels at once, Add more in Setup &mdash; the first public channel is primary (use make primary to change it); DMs go through the private DM picker. Each channel gets its own independent memory, moderation, and mode.
       </div>
       <div class="codehead">6 &middot; A DM is a channel too</div>
       <div class="note">
@@ -1730,7 +1751,7 @@
   // boxes (focused boxes were already skipped). setChannels success clears the channel
   // dirties; a merge that runs clears its own box's flag; notice/tz converge on match.
   var boxDirty = {};
-  ['channelsBox', 'dmChannelsBox', 'noticeInput', 'tzOffset'].forEach(function (id) {
+  ['noticeInput', 'tzOffset'].forEach(function (id) {
     var el = byId(id); if (el) el.addEventListener('input', function () { boxDirty[id] = true; });
   });
   // Seed the baseline at load (boxes start empty): a draft typed before the first status
@@ -1747,20 +1768,100 @@
     el.value = incoming;
     lastApplied[key] = incoming;
   }
-  // Batch 16: channelsBox + dmChannelsBox used near-identical comment-preserving merges
-  // (keep the user's // comment on a line that already carries a stored ID, drop removed
-  // channels, append new IDs bare). One helper, same guards, same merge.
-  function mergeIdBox(boxId, ids) {
-    var box = byId(boxId);
-    if (!box || document.activeElement === box || boxDirty[boxId]) return;
-    var existing = box.value.split('\n');
-    var merged = [];
-    ids.forEach(function (id) {
-      var found = existing.filter(function (l) { return l.replace(/\/\/.*/, '').trim() === id; });
-      merged.push(found.length ? found[0] : id);
+  /* Setup channel CRUD (Phase 1, panel-only): rows for the engine's flat ID lists
+     (pub[0] is the primary). Labels are panel-side cosmetics in chanLabels
+     (localStorage id->label, capped at 80 chars); the engine never sees them and
+     server IDs always win the merge. chanDirty = unsaved local edits
+     (add/remove/reorder/label) — while set, applyStatus skips the re-render
+     (boxDirty doctrine); a focused label also skips, so typing is never clobbered. */
+  var CHANSTATE = { pub: [], dms: [] };
+  var chanDirty = false;
+  var CHAN_LABEL_KEY = 'chloe.channelLabels';
+  var chanLabels = {};
+  try { var _cl = JSON.parse(localStorage.getItem(CHAN_LABEL_KEY) || '{}'); if (_cl && typeof _cl === 'object' && !Array.isArray(_cl)) chanLabels = _cl; } catch (e) { chanLabels = {}; }
+  function saveChanLabels() { try { localStorage.setItem(CHAN_LABEL_KEY, JSON.stringify(chanLabels)); } catch (e) {} }
+  function chanLabel(id) { return chanLabels[id] || ''; }
+  function chanPubIds(s) { return (s && s.publicChannels && s.publicChannels.length) ? s.publicChannels.slice() : ((s && s.channelId) ? [s.channelId] : []); }
+  // v0.90.21: per-row reply-language options. Values are bridge LANG_NAMES codes ('' =
+  // channel default = English); keep in sync with the userscript's LANG_NAMES list.
+  var CHAN_LANGS = [['', 'Channel default — English'], ['fr', 'French (fr)'], ['es', 'Spanish (es)'], ['de', 'German (de)'], ['it', 'Italian (it)'], ['pt', 'Portuguese (pt)'], ['nl', 'Dutch (nl)'], ['ru', 'Russian (ru)'], ['ja', 'Japanese (ja)'], ['ko', 'Korean (ko)'], ['zh', 'Chinese (zh)'], ['ar', 'Arabic (ar)'], ['hi', 'Hindi (hi)'], ['tr', 'Turkish (tr)'], ['pl', 'Polish (pl)'], ['sv', 'Swedish (sv)'], ['uk', 'Ukrainian (uk)'], ['vi', 'Vietnamese (vi)'], ['id', 'Indonesian (id)'], ['th', 'Thai (th)'], ['el', 'Greek (el)'], ['he', 'Hebrew (he)'], ['cs', 'Czech (cs)'], ['ro', 'Romanian (ro)'], ['fi', 'Finnish (fi)']];
+  var lastChanLangs = null;   // last channelLangs map from status; null = old engine (no per-channel language)
+  function chanRow(id, kind) {
+    var r = document.createElement('div'); r.className = 'chanrow'; r.setAttribute('data-id', id);
+    var grow = document.createElement('div'); grow.className = 'changrow';
+    var lab = document.createElement('input'); lab.className = 'chanlab'; lab.value = chanLabel(id);
+    lab.placeholder = 'label (optional, kept in this browser)'; lab.setAttribute('aria-label', 'label for channel ' + id);
+    lab.addEventListener('input', function () { var v = lab.value.trim(); if (v) chanLabels[id] = v.slice(0, 80); else delete chanLabels[id]; saveChanLabels(); chanDirty = true; });
+    var idEl = document.createElement('div'); idEl.className = 'chanid'; idEl.textContent = id;
+    grow.appendChild(lab); grow.appendChild(idEl);
+    var badge = document.createElement('span');
+    badge.className = 'chantype' + (kind === 'primary' ? ' primary' : (kind === 'dm' ? ' dm' : ''));
+    badge.textContent = kind === 'primary' ? 'primary' : (kind === 'dm' ? 'DM' : 'extra');
+    var langSel = document.createElement('select');
+    langSel.className = 'chanlang'; langSel.setAttribute('data-chanlang', id);
+    langSel.setAttribute('aria-label', 'reply language for channel ' + id);
+    CHAN_LANGS.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; langSel.appendChild(op); });
+    langSel.value = (lastChanLangs && lastChanLangs[id]) || '';
+    langSel.hidden = !lastChanLangs;   // old engine: no channelLangs in status (note below explains)
+    langSel.addEventListener('change', function () { chanSetLang(id, langSel); });
+    var act = document.createElement('div'); act.className = 'chanactions';
+    if (kind !== 'dm' && kind !== 'primary') act.appendChild(mkBtn('make primary', 'ghost sm', function () { chanMakePrimary(id); }));
+    act.appendChild(mkBtn('remove', 'ghost sm', function () { chanRemove(id); }));
+    r.appendChild(grow); r.appendChild(badge); r.appendChild(langSel); r.appendChild(act);
+    return r;
+  }
+  function renderChanList() {
+    var box = byId('chanList'); if (!box) return;
+    clearBox(box);
+    var rows = 0;
+    CHANSTATE.pub.forEach(function (id, i) { box.appendChild(chanRow(String(id), i === 0 ? 'primary' : 'extra')); rows++; });
+    CHANSTATE.dms.forEach(function (id) { box.appendChild(chanRow(String(id), 'dm')); rows++; });
+    if (!rows) { var em = document.createElement('div'); em.className = 'chanempty'; em.textContent = 'No channels yet — paste an ID below and Add it.'; box.appendChild(em); }
+  }
+  function mergeChanList(s) {
+    var box = byId('chanList'); if (!box) return;
+    if (chanDirty) return;   // unsaved local edits win (boxDirty doctrine)
+    if (box.contains(document.activeElement)) return;   // never rebuild under a focused label
+    var hasPub = !!(s && (s.publicChannels || s.channelId));
+    var hasDm = !!(s && s.dmChannels);
+    if (!hasPub && !hasDm) return;   // a chan-less status proves nothing — leave the list alone
+    if (hasPub) CHANSTATE.pub = chanPubIds(s).map(function (c) { return String(c); });
+    if (hasDm) CHANSTATE.dms = (s.dmChannels || []).map(function (c) { return String(c); });
+    lastChanLangs = (s && s.channelLangs) || null;   // absent = old engine (selects hide, note shows)
+    renderChanList();
+    var note = byId('chanLangNote'); if (note) note.hidden = !!lastChanLangs;
+    chanDirty = false;
+  }
+  // v0.90.21: immediate per-row language send (engageModeSel precedent). Not part of
+  // chanDirty/Save — the value lives engine-side the moment the bridge acks it.
+  function chanSetLang(id, sel) {
+    var want = sel.value || null;
+    call('config.setChannelLang', { channelId: id, lang: want }).then(function (res) {
+      if (res && res.ok) {
+        if (lastChanLangs) lastChanLangs[id] = (res.value && res.value.lang) || null;
+        log('channel ' + id + ' language \u2014 ' + ((res.value && res.value.lang) ? res.value.lang : 'channel default (English)'));
+        refresh();
+      } else {
+        log('language change failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
+        sel.value = (lastChanLangs && lastChanLangs[id]) || '';   // revert to the last acked value
+      }
     });
-    box.value = merged.join('\n');
-    boxDirty[boxId] = false;
+  }
+  function chanRemove(id) {
+    var pi = CHANSTATE.pub.indexOf(id), di = CHANSTATE.dms.indexOf(id);
+    if (pi < 0 && di < 0) return;
+    if (pi >= 0) CHANSTATE.pub.splice(pi, 1); else CHANSTATE.dms.splice(di, 1);
+    chanDirty = true;
+    renderChanList();
+    log('channel ' + id + ' removed — Save channels to apply');
+  }
+  function chanMakePrimary(id) {
+    var pi = CHANSTATE.pub.indexOf(id);
+    if (pi <= 0) return;
+    CHANSTATE.pub.splice(pi, 1); CHANSTATE.pub.unshift(id);
+    chanDirty = true;
+    renderChanList();
+    log('channel ' + id + ' is now primary — Save channels to apply');
   }
   // Batch 21: the two status-driven selects share one guarded write (unfocused and
   // changed only — assigning the current value would be a no-op, so the equality
@@ -1783,8 +1884,7 @@
     setText('verTxt', s.version || '\u2013');
     setText('tokTxt', s.hasToken ? 'set' : 'not set');
     setText('botTxt', s.botUserId ? s.botUserId : 'unverified');
-    mergeIdBox('channelsBox', (s.publicChannels && s.publicChannels.length) ? s.publicChannels : (s.channelId ? [s.channelId] : []));
-    mergeIdBox('dmChannelsBox', s.dmChannels || []);
+    mergeChanList(s);
     var runDot = byId('runDot');
     runDot.className = 'dot ' + (s.running ? 'on' : 'off');
     setText('runTxt', s.running ? 'running' : 'stopped');
@@ -2219,20 +2319,29 @@
   // ---- buttons ----------------------------------------------------------------------
   wireToggles();
   byId('viewChannelSel').addEventListener('change', function () { refresh(); });
-  // S-002: shared channel-box parsing + Snowflake validation. parseChannelBox strips // comments
-  // (and comma/space-separated IDs); badSnowflakes returns the tokens that are NOT a 15-25 digit ID.
-  function parseChannelBox(raw) {
-    var stripped = String(raw == null ? '' : raw).split('\n').map(function (l) { var ci = l.indexOf('//'); return ci >= 0 ? l.slice(0, ci) : l; }).join('\n');
-    return stripped.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(Boolean);
-  }
+  // S-002: Snowflake validation for channel IDs (15-25 digits). badSnowflakes
+  // returns the tokens that are NOT a valid ID (used by add-row + save).
   function badSnowflakes(ids) {
     return (ids || []).filter(function (x) { return !/^\d{15,25}$/.test(x); });
   }
+  byId('chanAddBtn').addEventListener('click', function () {
+    var input = byId('chanAddInput');
+    var id = String(input.value || '').trim();
+    if (!id) return;
+    if (badSnowflakes([id]).length) { log('not a valid channel ID (need 15–25 digits): ' + id); return; }
+    if (CHANSTATE.pub.indexOf(id) >= 0 || CHANSTATE.dms.indexOf(id) >= 0) { log('channel ' + id + ' is already listed'); return; }
+    var isDm = byId('chanAddType').value === 'dm';
+    if (isDm) CHANSTATE.dms.push(id); else CHANSTATE.pub.push(id);
+    input.value = '';
+    chanDirty = true;
+    renderChanList();
+    log('channel ' + id + ' added (' + (isDm ? 'private DM' : (CHANSTATE.pub.length === 1 ? 'primary' : 'extra')) + ') — Save channels to apply');
+  });
   byId('setChannelsBtn').addEventListener('click', function () {
-    var pub = parseChannelBox(byId('channelsBox').value);
-    var dms = parseChannelBox(byId('dmChannelsBox').value);
-    if (!pub.length) { log('enter at least one public channel ID (one per line)'); return; }
-    // S-002: refuse to send if any token is not a Discord Snowflake (15-25 digits). List the offenders.
+    var pub = CHANSTATE.pub.slice();
+    var dms = CHANSTATE.dms.slice();
+    if (!pub.length) { log('add at least one public channel first'); return; }
+    // S-002: refuse to send if any ID is not a Discord Snowflake (15-25 digits). List the offenders.
     var bad = badSnowflakes(pub.concat(dms));
     if (bad.length) { log('not valid channel ID(s) (need 15–25 digits) — fix: ' + bad.join(', ')); return; }
     // Save DMs FIRST so the public save's mutual-exclusion sees the current DM set, then save public.
@@ -2241,7 +2350,11 @@
       return call('config.setAllChannels', { channels: pub });
     }).then(function (res) {
       if (!res) return;
-      if (res && res.ok) { boxDirty.channelsBox = false; boxDirty.dmChannelsBox = false; var chs = (res.value && res.value.channels) || []; log('channels saved \u2014 primary ' + ((res.value && res.value.primary) || '?') + (chs.length > 1 ? ' (+' + (chs.length - 1) + ' more)' : '') + (dms.length ? (' \u00b7 ' + dms.length + ' DM' + (dms.length === 1 ? '' : 's')) : '')); refresh(); }
+      // prune labels to the saved IDs (a removed channel's label goes with it)
+      var keep = {};
+      pub.concat(dms).forEach(function (id) { if (chanLabels[id]) keep[id] = chanLabels[id]; });
+      chanLabels = keep; saveChanLabels();
+      if (res && res.ok) { chanDirty = false; renderChanList(); var chs = (res.value && res.value.channels) || []; log('channels saved \u2014 primary ' + ((res.value && res.value.primary) || '?') + (chs.length > 1 ? ' (+' + (chs.length - 1) + ' more)' : '') + (dms.length ? (' \u00b7 ' + dms.length + ' DM' + (dms.length === 1 ? '' : 's')) : '')); refresh(); }
       else log('save channels failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
