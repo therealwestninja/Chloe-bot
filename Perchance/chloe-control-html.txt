@@ -84,6 +84,9 @@
   h1{font-size:16px;margin:0;font-weight:600}
   h2{font-size:11px;margin:0 0 8px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .diagrow{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+  .diagrow>button{flex:none;width:148px}
+  .diagrow>.note{padding-top:7px}
   .grow{flex:1;min-width:120px}
   .note,.muted{font-size:12px;color:var(--muted)}
 
@@ -126,7 +129,7 @@
 
   /* router-style user list (People drawer) */
   .userlist{display:flex;flex-direction:column;margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-  .urow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--surface)}
+  .urow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--surface);flex-wrap:wrap;row-gap:8px}
   .urow:last-child{border-bottom:0}
   .urow:hover{background:var(--surface2)}
   .urow.checked{background:var(--surface2)}
@@ -142,7 +145,7 @@
   /* giant version strings (ADV5: 5000 chars) must not blow out the status bar — ellipsis, full text kept in DOM */
   #verTxt{display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .urow .ubadge{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--sel);color:#fff}
-  .urow .uactions{display:flex;gap:3px;flex-shrink:0}
+  .urow .uactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
   .udetail{padding:8px 12px 12px 40px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12px}
   .batchbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:10px;padding:8px 11px;
     background:var(--surface2);border:1px solid var(--sel);border-radius:8px}
@@ -249,9 +252,10 @@
     <div class="card" id="setupCard">
       <h2>Channels</h2>
       <div class="note" style="margin-bottom:6px">One channel ID per line (Developer Mode &rarr; right-click a channel &rarr; Copy ID). The <strong>first</strong> public line is her primary channel; any others are extra public channels she also runs. You can add <code>// comments</code> after any ID &mdash; they&rsquo;re stripped on save and never stored.</div>
-      <label class="note" for="channelsBox" style="display:block;margin-bottom:2px"><strong>Public channels</strong></label>
+      <div class="codehead">Public channels</div>
       <textarea id="channelsBox" rows="3" spellcheck="false" placeholder="123456789012345678  // #general&#10;987654321098765432  // #bot-testing"></textarea>
-      <label class="note" for="dmChannelsBox" style="display:block;margin:8px 0 2px"><strong>Private DMs</strong> &mdash; DM channel IDs to treat as direct messages. Discord can&rsquo;t tell us a channel is a DM, so listing them here is what lets her carry a person&rsquo;s public memory into their DM.</label>
+      <div class="codehead">Private DMs</div>
+      <div class="note" style="margin-bottom:6px">DM channel IDs to treat as direct messages. Discord can&rsquo;t tell us a channel is a DM, so listing them here is what lets her carry a person&rsquo;s public memory into their DM.</div>
       <textarea id="dmChannelsBox" rows="2" spellcheck="false" placeholder="111111111111111111  // DM with @alice"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="ghost" id="setChannelsBtn">Save channels</button>
@@ -348,42 +352,53 @@
         <input class="grow" id="summonRolesInput" placeholder="role IDs that summon her, comma-separated">
       </div>
       <div class="note">A role ping arrives as a bare ID with no name attached, so she cannot match it by name the way she matches a written chloe. Paste a role ID here and pinging that role summons her like a direct mention. Find it under Server Settings &rarr; Roles &rarr; right-click &rarr; Copy ID. Leave empty to only answer her own mention and name.</div>
-      <div class="chiprow" style="margin-top:10px">
+      <div class="codehead">Joining in</div>
+      <div class="chiprow">
         <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
         <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
         <label class="chip"><input type="checkbox" id="memChk"> detect departures (404 poll)</label>
         <label class="chip"><input type="checkbox" id="dmChk"> reply in DMs she's opened</label>
         <label class="chip"><input type="checkbox" id="ackChk"> instant status reactions (while she generates)</label>
         <label class="chip"><input type="checkbox" id="spChk"> limit her to one paragraph per message</label>
+        <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction (&#128483;&#65039; &#10071; &#129302; on their own message)</label>
         <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
         <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
+      </div>
+      <div class="codehead">Memory &amp; learning</div>
+      <div class="chiprow">
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="convMemChk"> remember the full back-and-forth (her own messages + resolve who/what others @-mention)</label>
-        <label class="chip"><input type="checkbox" id="feedbackChk"> learn what lands &mdash; adapt reply style from reactions, follow-ups &amp; <code>!chloe good/bad</code></label>
         <label class="chip"><input type="checkbox" id="semanticChk"> recall memories by meaning, not keywords (loads a small local model once; revisited memories stay sharper)</label>
         <label class="chip"><input type="checkbox" id="userModelChk"> match each person&rsquo;s register (mirror how long &amp; how playfully they write)</label>
+        <label class="chip"><input type="checkbox" id="feedbackChk"> learn what lands &mdash; adapt reply style from reactions, follow-ups &amp; <code>!chloe good/bad</code></label>
         <label class="chip"><input type="checkbox" id="contradictionChk"> notice when someone contradicts an earlier fact (may gently check)</label>
-        <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
-        <label class="chip"><input type="checkbox" id="deviceTimeChk"> know the current date &amp; time (your device clock, no location)</label>
-        <label class="chip"><input type="checkbox" id="selfKnowChk"> know her own basics (her name, how people reach her, that she’s a bot)</label>
-        <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
+        <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
+        <label class="chip"><input type="checkbox" id="epiGraphChk"> connect related memories (event graph)</label>
         <label class="chip"><input type="checkbox" id="chansumChk"> keep a running summary of the channel</label>
         <label class="chip"><input type="checkbox" id="reflectChk"> reflect on what she learns about people</label>
         <label class="chip"><input type="checkbox" id="goalChk"> remember what people are working on (goals)</label>
         <label class="chip"><input type="checkbox" id="sleepChk"> tidy memory when idle (consolidation)</label>
+        <label class="chip"><input type="checkbox" id="deferredIntentsChk"> follow her own train of thought (revisit topics later)</label>
+        <label class="chip"><input type="checkbox" id="attentionChk"> prioritize her background thinking by relevance (attention manager)</label>
+      </div>
+      <div class="codehead">Moment &amp; room</div>
+      <div class="chiprow">
+        <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
+        <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
+        <label class="chip"><input type="checkbox" id="deviceTimeChk"> know the current date &amp; time (your device clock, no location)</label>
+        <label class="chip"><input type="checkbox" id="selfKnowChk"> know her own basics (her name, how people reach her, that she’s a bot)</label>
+        <label class="chip"><input type="checkbox" id="moodChk"> read &amp; match the room's energy</label>
         <label class="chip"><input type="checkbox" id="paceChk"> match the room&rsquo;s pace (adaptive timing)</label>
         <label class="chip"><input type="checkbox" id="workChk"> hold a sense of the moment (working memory)</label>
         <label class="chip"><input type="checkbox" id="delibChk"> think things over when idle (deliberation)</label>
-        <label class="chip"><input type="checkbox" id="deferredIntentsChk"> follow her own train of thought (revisit topics later)</label>
-        <label class="chip"><input type="checkbox" id="attentionChk"> prioritize her background thinking by relevance (attention manager)</label>
-        <label class="chip"><input type="checkbox" id="epiChk"> remember notable moments (episodic memory)</label>
-        <label class="chip"><input type="checkbox" id="epiGraphChk"> connect related memories (event graph)</label>
-        <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
         <label class="chip"><input type="checkbox" id="affectChk"> give her an inner weather (own mood)</label>
-        <label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label>
-        <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction (&#128483;&#65039; &#10071; &#129302; on their own message)</label>
-        <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
+        <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
       </div>
+      <div class="codehead">Agentic tools</div>
+      <div class="chiprow">
+        <label class="chip"><input type="checkbox" id="toolsChk"> let her use tools on her own (search, lookup, dice, time, todos)</label>
+      </div>
+      <div class="note">Off by default. Anything you ask for directly always works through <code>!chloe do</code>; this lets her reach for a safe tool herself mid-reply when it would genuinely help. Same switch as <code>!chloe tools on|off</code> &mdash; grounding rules and research discipline always apply.</div>
     </div>
     <div class="card">
       <h2>Tell Chloe a fact about right now</h2>
@@ -403,17 +418,22 @@
     </div>
     <div class="card">
       <h2>Reaction modes (procedural)</h2>
-      <div class="note">When a <strong>moderator</strong> reacts with one of these emoji (on any message), Chloe switches into that mode for the given minutes &mdash; e.g. &#128295; &rarr; &ldquo;switch to technical mode: precise, terse, code-first&rdquo;. Tone/behavior guidance only; a mode can never change her rules or moderation. <code>!chloe mode</code> shows the active mode, <code>!chloe mode clear</code> (mods) ends it. Enable with the toggle above (&ldquo;follow moderator reaction modes&rdquo;).</div>
+      <div class="row"><label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label></div>
+      <div class="note">When a <strong>moderator</strong> reacts with one of these emoji (on any message), Chloe switches into that mode for the given minutes &mdash; e.g. &#128295; &rarr; &ldquo;switch to technical mode: precise, terse, code-first&rdquo;. Tone/behavior guidance only; a mode can never change her rules or moderation. <code>!chloe mode</code> shows the active mode, <code>!chloe mode clear</code> (mods) ends it.</div>
       <textarea id="procRules" rows="4" spellcheck="false" placeholder="Paste a JSON array of rules (fields: emoji, mode, minutes), then click Save reaction modes. Example appears here once saved."></textarea>
       <div class="row"><button id="saveProcRulesBtn">Save reaction modes</button></div>
     </div>
     <div class="card">
       <h2>Abilities</h2>
+      <div class="codehead">Images</div>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="imageChk"> draw images on request</label>
         <label class="chip">queue <input type="number" id="imageQueueInput" min="1" max="20" style="width:52px"> imgs</label>
         <label class="chip"><input type="checkbox" id="imageMemoryChk"> remember images &amp; allow natural-language edits</label>
         <label class="chip"><input type="checkbox" id="imageEnhanceChk"> offer to refine after each image</label>
+      </div>
+      <div class="codehead">History &amp; addressing</div>
+      <div class="chiprow">
         <label class="chip"><input type="checkbox" id="backfillChk"> backfill history (one-time)</label>
         <label class="chip">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
       </div>
@@ -532,38 +552,45 @@
         <button class="ghost" id="spawnWorkerBtn">Spawn worker tab</button>
         <button class="ghost" id="workersBtn">Workers</button>
       </div>
+      <div class="codehead">Standby pool</div>
+      <div class="row">
+        <label class="chip">keep <input type="number" id="poolSizeInput" min="0" max="10" value="0" style="width:52px"> worker tabs alive (0 = manual only)</label>
+        <button class="ghost sm" id="savePoolBtn">Set</button>
+      </div>
       <div id="workersBox" style="margin-top:8px"></div>
     </div>
     <div class="card">
       <h2>Token budgets</h2>
+      <div class="codehead">Counting</div>
       <label class="chip"><input type="checkbox" id="exactTokChk" checked> count tokens exactly (loads the real tokenizer)</label>
       <div class="note" id="tokState" style="margin-top:6px">tokenizer: —</div>
-      <label class="chip" style="margin-top:8px"><input type="checkbox" id="cleanChk" checked> tidy her replies (strip stray name prefixes, finish dangling lines, close code blocks)</label>
-      <label class="chip" style="margin-top:8px"><input type="checkbox" id="translateChk"> translate per-user (people set their own language with <code>!chloe lang &lt;code&gt;</code>)</label>
-      <div class="note" id="translateNote" style="margin-top:4px;display:none">Uses a free public translation endpoint (no key). On first enable, your userscript manager may ask to allow <code>translate.googleapis.com</code>. Translation is best-effort — if it ever fails, she sends the original text rather than going silent.</div>
       <div class="note" style="margin-top:4px">When on, she measures context with the same tokenizer Perchance uses, so budgets are exact. While it loads (a second or two) and if it ever fails, she falls back to a safe estimate — she never stalls on it.</div>
-      <div class="row" style="margin-top:8px">
-        <label class="chip">keep <input type="number" id="poolSizeInput" min="0" max="10" value="0" style="width:52px"> worker tabs alive (0 = manual only)</label>
-        <button class="ghost sm" id="savePoolBtn">Set</button>
-      </div>
+      <div class="codehead">Replies</div>
+      <label class="chip"><input type="checkbox" id="cleanChk" checked> tidy her replies (strip stray name prefixes, finish dangling lines, close code blocks)</label>
+      <div class="codehead">Language</div>
+      <label class="chip"><input type="checkbox" id="translateChk"> translate per-user (people set their own language with <code>!chloe lang &lt;code&gt;</code>)</label>
+      <div class="note" id="translateNote" style="margin-top:4px;display:none">Uses a free public translation endpoint (no key). On first enable, your userscript manager may ask to allow <code>translate.googleapis.com</code>. Translation is best-effort — if it ever fails, she sends the original text rather than going silent.</div>
     </div>
     <div class="card">
       <h2>Diagnostics</h2>
-      <div class="row">
+      <div class="diagrow">
         <button class="ghost" id="diagBtn">Dump trace ring</button>
         <span class="note">Link, transport, and poll events from the userscript &mdash; lands in the log below and your clipboard.</span>
       </div>
-      <div class="row" style="margin-top:6px">
+      <div class="diagrow" style="margin-top:6px">
         <button class="ghost" id="errBtn">Show errors</button>
         <span class="note">Failures only (Discord errors, failed sends, corrupt storage, bad rules) &mdash; newest last, lands in the log below and your clipboard. Empty means nothing has failed since the tab loaded.</span>
       </div>
-      <div class="row" style="margin-top:10px">
+      <div class="diagrow" style="margin-top:10px">
         <button class="ghost" id="exportBtn">Export backup&hellip;</button>
         <input type="file" id="importFile" accept=".json,.gz" hidden>
         <button class="ghost" id="importBtn">Import backup&hellip;</button>
         <span class="note">Backup saves all state &amp; settings as a <code>.json.gz</code> file (token excluded). Import restores a backup &mdash; then restart.</span>
       </div>
-      <div class="row" style="margin-top:6px">
+    </div>
+    <div class="card">
+      <h2>Danger zone</h2>
+      <div class="diagrow">
         <button class="danger" id="factoryResetBtn">Factory reset&hellip;</button>
         <span class="note">Wipes all state <em>and</em> all settings (token kept). Export a backup first.</span>
       </div>
@@ -1596,7 +1623,8 @@
     ['spChk', 'config.setSingleParagraph', 'singleParagraph'],
     ['summonChk', 'config.setReactionSummon', 'reactionSummon'],
     ['trustChk', 'config.setRelationshipTrust', 'relationshipTrust'],
-    ['volChk', 'config.setVolunteer', 'volunteer']
+    ['volChk', 'config.setVolunteer', 'volunteer'],
+    ['toolsChk', 'config.setToolsEnabled', 'toolsEnabled']
   ];
   function applyToggleStates(s) { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = !!s[t[2]]; }); }
   function wireToggles() { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (!el) return; el.addEventListener('change', function () { var on = el.checked; call(t[1], { on: on }).then(function (res) { logRes(res, t[2] + ': ' + on); }); }); }); }
