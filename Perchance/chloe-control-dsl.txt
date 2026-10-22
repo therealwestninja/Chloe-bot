@@ -22,6 +22,10 @@ $meta
 aiTextPlugin = {import:ai-text-plugin}
 textToImagePlugin = {import:text-to-image-plugin}
 
+// Engine bundle version: bump on every src/engine/* change, then rebuild
+// src/engine.bundle.js (see src/tools/build-engine.js) so the panel pushes it.
+ENGINE_BUNDLE_VERSION = "1"
+
 // paintImage({reqId, prompt, resolution}) -> stashes { ok, dataUrl } | { ok:false, reason }
 // on window.__chloePaint keyed by reqId. Flat body (no nested blocks) to stay DSL-safe; an
 // empty prompt is never sent to the plugin (it would hang forever).
