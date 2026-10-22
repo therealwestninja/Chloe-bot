@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.17
+// @version      0.90.20
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -16,6 +16,15 @@
 // @connect      discord.com
 // @connect      translate.googleapis.com
 // @connect      api.duckduckgo.com
+// @connect      en.wikipedia.org
+// @connect      wikipedia.org
+// @connect      api.open-meteo.com
+// @connect      geocoding-api.open-meteo.com
+// @connect      api.quotable.io
+// @connect      byabbe.se
+// @connect      restcountries.com
+// @connect      api.datamuse.com
+// @connect      api.dictionaryapi.dev
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -116,7 +125,7 @@
                               // (measured: persona ~95 + respond/guidance scaffolding ~200, with margin)
       minTranscriptTokens: 200,// never starve the transcript below this, even if other parts are large
       singleParagraph: false, // mod opt-in: cap her replies to one paragraph (off = she writes as long as fits)
-      toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from her reply via a `tool:` line (summarize/recap/remindme/roster only); off == tools run only from `!chloe do`
+      toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from her reply via a `tool:` line (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todo_add/todo_list/todo_done/todo_clear); off == tools run only from `!chloe do`
       converseEngine: true,   // (default ON) the ported rook-mesh social ganglion governs the VOLUNTEER/engage decision (bot-loop damper + worth gate + two-person skip + stagger). OFF == her legacy ad-hoc engage logic, byte-identical.
       trustHardening: true,   // (default ON) multi-participant trust: DEFANG a forged "Name:" prefix from transcript lines + a BOT author can NEVER trigger a command/directive. OFF == current behavior, byte-identical.
       bondLadder: true,       // (default ON) a slow, hysteresis-protected relationship ladder per person (stranger/familiar/friend/close/bonded); surfaces a felt "terms" line so she's warmer with regulars. OFF == no bond field/line, byte-identical.
@@ -174,12 +183,22 @@
         summarize: { args: { lines: 'int' }, required: [] },
         recap:     { args: {}, required: [] },
         roster:    { args: {}, required: [] },
-        remindme:  { args: { minutes: 'int', text: 'str' }, required: ['minutes', 'text'] }
+        remindme:  { args: { minutes: 'int', text: 'str' }, required: ['minutes', 'text'] },
+        fetch:     { args: { url: 'str' }, required: ['url'] },
+        time:      { args: {}, required: [] },
+        todo_add:  { args: { text: 'str' }, required: ['text'] },
+        todo_list: { args: {}, required: [] },
+        todo_done: { args: { index: 'int' }, required: ['index'] },
+        todo_clear:{ args: {}, required: [] },
+        almanac:   { args: { kind: 'str', query: 'str', extra: 'str' }, required: ['kind', 'query'] },
+        roll:      { args: { dice: 'str' }, required: ['dice'] }
       },
       jobMaxReminderMin: 1440,   // 24h cap on remindme
       reminderMaxPerUser: 5,     // how many pending reminders one person may hold
       reminderMaxTotal: 50,      // global pending-reminder cap per channel
       reminderTextMax: 280,      // reminder text length cap
+      todoMaxPerUser: 20,        // how many todos one person may hold
+      todoTextMax: 140,          // todo text length cap
       afkNoticeCooldownMs: 300000,// don't repeat an "X is away" heads-up for the same person within 5m
       highlightMax: 50,          // how many highlights a channel keeps (oldest dropped past this)
       highlightContextCount: 3,  // how many recent highlights ride in the response context
@@ -518,6 +537,8 @@
     var REMIND_KEY = 'reminders:' + cfg.channelId;   // poll-driven scheduled reminders (front-end only,
     // no AI call). Checked each poll rather than via setTimeout, because background tabs throttle
     // timers to ~1/min — a poll-driven check fires reliably on the first poll after the due time.
+    var TODO_KEY = 'todos:' + cfg.channelId;   // personal checklists (same store-list shape as reminders, per-author)
+    var SKILL_KEY = 'skills:' + cfg.channelId;   // server knowledge packs (mod-managed, auto-injected on trigger match)
     var AFK_KEY = 'afk:' + cfg.channelId;   // user-set away state (front-end only, no AI call): set on
     // "!chloe afk", auto-cleared when the person speaks again, surfaced when others ping them.
     var HILITE_KEY = 'highlights:' + cfg.channelId;   // pinned notable messages (front-end only): saved
@@ -839,6 +860,69 @@
         return Promise.resolve(store.set(REMIND_KEY, kept)).then(function () { return removed; });
       });
     }
+    // ---- todos (channel-local personal checklists, same store-list shape as reminders) ----
+    // Entry: { id, authorId, authorName, text, at }. No due dates — a todo waits until the
+    // person asks. Bounded per author + text cap, same manners as reminders.
+    function getTodos() { return Promise.resolve(store.get(TODO_KEY)).then(function (t) { return Array.isArray(t) ? t : []; }); }
+    function addTodo(authorId, authorName, text) {
+      var clean = String(text || '').trim().slice(0, (cfg.todoTextMax || 140));
+      if (!clean) return Promise.resolve({ ok: false, reason: 'a todo needs some text' });
+      return getTodos().then(function (list) {
+        var mine = list.filter(function (t) { return t.authorId === authorId; });
+        if (mine.length >= (cfg.todoMaxPerUser || 20)) return { ok: false, reason: 'you have ' + mine.length + ' todos with me already — that is my limit per person' };
+        var it = { id: 't' + clock.now() + '_' + Math.floor(Math.random() * 1e6), authorId: authorId, authorName: authorName || '', text: clean, at: clock.now() };
+        list.push(it);
+        return Promise.resolve(store.set(TODO_KEY, list)).then(function () { return { ok: true, value: it }; });
+      });
+    }
+    function listTodos(authorId) {
+      return getTodos().then(function (list) { return authorId ? list.filter(function (t) { return t.authorId === authorId; }) : list; });
+    }
+    function doneTodo(authorId, index) {
+      return getTodos().then(function (list) {
+        var mine = list.filter(function (t) { return t.authorId === authorId; });
+        var n = Number(index);
+        if (!isFinite(n) || n < 1 || n > mine.length) return { ok: false, removed: 0, reason: mine.length ? ('pick a number 1-' + mine.length) : 'you have no todos' };
+        var target = mine[n - 1], removed = null;
+        var kept = list.filter(function (t) { if (!removed && t.id === target.id) { removed = t; return false; } return true; });
+        return Promise.resolve(store.set(TODO_KEY, kept)).then(function () { return { ok: true, removed: removed }; });
+      });
+    }
+    function clearTodos(authorId) {
+      return getTodos().then(function (list) {
+        var kept = authorId ? list.filter(function (t) { return t.authorId !== authorId; }) : [];
+        var removed = list.length - kept.length;
+        return Promise.resolve(store.set(TODO_KEY, kept)).then(function () { return removed; });
+      });
+    }
+    // ---- skills (server knowledge packs, mod-managed, auto-injected on trigger match) ----
+    // Entry: { id, name, triggers[], text, by, at }. Matched by the RECALL provider below;
+    // managed by the `skill`/`skills` chat commands (mods only for writes).
+    function getSkills() { return Promise.resolve(store.get(SKILL_KEY)).then(function (s) { return Array.isArray(s) ? s : []; }); }
+    function addSkill(name, triggers, text, by) {
+      var nm = String(name || '').trim().slice(0, 40);
+      var tx = String(text || '').trim().slice(0, 800);
+      var tr = String(triggers || '').toLowerCase().split(',').map(function (t) { return t.trim(); }).filter(Boolean).slice(0, 10);
+      if (!nm) return Promise.resolve({ ok: false, reason: 'a skill needs a name' });
+      if (!tr.length) return Promise.resolve({ ok: false, reason: 'give it trigger words (comma-separated)' });
+      if (!tx) return Promise.resolve({ ok: false, reason: 'a skill needs some text' });
+      return getSkills().then(function (list) {
+        var at = -1;
+        list.forEach(function (s, k) { if (String(s.name || '').toLowerCase() === nm.toLowerCase()) at = k; });
+        if (list.length >= 20 && at < 0) return { ok: false, reason: 'twenty skills is my limit' };
+        var rec = { id: 'k' + clock.now(), name: nm, triggers: tr, text: tx, by: by || '', at: clock.now() };
+        if (at >= 0) list[at] = rec; else list.push(rec);
+        return Promise.resolve(store.set(SKILL_KEY, list)).then(function () { return { ok: true, value: rec, updated: at >= 0 }; });
+      });
+    }
+    function dropSkill(name) {
+      var nm = String(name || '').trim().toLowerCase();
+      return getSkills().then(function (list) {
+        var kept = list.filter(function (s) { return String(s.name || '').toLowerCase() !== nm; });
+        var n = list.length - kept.length;
+        return Promise.resolve(store.set(SKILL_KEY, kept)).then(function () { return n; });
+      });
+    }
     // Called each poll. Fires any reminder whose time has come, delivers it (channel or DM), and
     // removes it. Delivery is a plain send — it doesn't consume the reply budget or judge path,
     // because the person explicitly asked for it at this time; it's a utility, not her "voice".
@@ -858,7 +942,16 @@
               var target = Promise.resolve(cfg.channelId);
               if (r.dm && typeof cfg.openDM === 'function') target = Promise.resolve(cfg.openDM(r.authorId)).then(function (id) { return id || cfg.channelId; }, function () { return cfg.channelId; });
               return target.then(function (chId) {
-                return Promise.resolve(cfg.send(chId, body)).then(function () { fired.push(r.id); log('[chloe.remind] fired for ' + who + (r.dm ? ' (dm)' : '') + ': ' + r.text.slice(0, 40)); }, function () {});
+                return Promise.resolve(cfg.send(chId, body)).then(function () { fired.push(r.id); log('[chloe.remind] fired for ' + who + (r.dm ? ' (dm)' : '') + ': ' + r.text.slice(0, 40)); }, function (e) {
+                  // v0.90.18: this used to swallow the failure after the reminder was
+                  // already removed from the store — a 403/429 at fire time meant the
+                  // reminder vanished with no trace. Retry with backoff, give up loudly.
+                  var tries = (r.tries || 0) + 1;
+                  log('[chloe.remind] delivery failed for ' + who + ' (attempt ' + tries + '): ' + ((e && e.message) || e));
+                  if (tries >= 3) { log('[chloe.remind] dropping reminder after 3 failed deliveries: ' + String(r.text || '').slice(0, 80)); return; }
+                  r.tries = tries; r.fireAt = clock.now() + 60000;
+                  return getReminders().then(function (list) { list.push(r); return store.set(REMIND_KEY, list); }).then(function () { log('[chloe.remind] re-queued for retry in ~1m'); }, function (e2) { log('[chloe.remind] re-queue failed, reminder lost: ' + ((e2 && e2.message) || e2)); });
+                });
               });
             });
           });
@@ -1878,6 +1971,54 @@
           return { ack: "ok — i'll remind you in " + a.minutes + 'm: “' + String(a.text).slice(0, 60) + '”' };
         });
       }
+      if (task === 'fetch') {
+        if (typeof cfg.fetch !== 'function') return Promise.resolve({ ack: 'page reading is not available right now' });
+        return Promise.resolve(cfg.fetch(a.url)).then(function (res) {
+          if (!res || !res.ok) return { ack: 'could not read that page (' + ((res && res.reason) || 'n/a') + ')' };
+          return { ack: 'I read the page. It says:\n' + String(res.value).slice(0, 1500) };
+        });
+      }
+      if (task === 'time') {
+        var tzn = Number(cfg.timezoneOffsetMins) || 0;
+        var hh = new Date(clock.now() + tzn * 60000).toISOString().slice(11, 16);
+        var tsign = tzn < 0 ? '-' : '+';
+        var th = Math.floor(Math.abs(tzn) / 60), tm = Math.abs(tzn) % 60;
+        return Promise.resolve({ ack: 'it is ' + hh + ' here (UTC' + tsign + th + (tm ? ':' + (tm < 10 ? '0' : '') + tm : '') + ')' });
+      }
+      if (task === 'todo_add') {
+        return addTodo(authorId, authorName, a.text).then(function (res) {
+          if (!res.ok) return { ack: res.reason };
+          return listTodos(authorId).then(function (mine) { return { ack: 'noted (' + mine.length + ' on your list): ' + String(res.value.text).slice(0, 80) }; });
+        });
+      }
+      if (task === 'todo_list') {
+        return listTodos(authorId).then(function (mine) {
+          if (!mine.length) return { ack: 'your list is empty — say the word and I will add to it' };
+          var lines = mine.slice(0, 20).map(function (t, k) { return (k + 1) + '. ' + t.text.slice(0, 80); });
+          return { ack: 'your list:\n' + lines.join('\n') };
+        });
+      }
+      if (task === 'todo_done') {
+        return doneTodo(authorId, a.index).then(function (res) {
+          if (!res.ok) return { ack: res.reason || 'could not check that off' };
+          return { ack: 'done — ' + String(res.removed.text).slice(0, 80) };
+        });
+      }
+      if (task === 'todo_clear') {
+        return clearTodos(authorId).then(function (n) { return { ack: n ? ('cleared ' + n + ' todo' + (n === 1 ? '' : 's')) : 'your list was already empty' }; });
+      }
+      if (task === 'almanac') {
+        if (typeof cfg.almanac !== 'function') return Promise.resolve({ ack: 'lookups are not available right now' });
+        return Promise.resolve(cfg.almanac({ kind: a.kind, query: a.query, extra: a.extra })).then(function (res) {
+          if (!res || !res.ok) return { ack: 'could not look that up (' + ((res && res.reason) || 'n/a') + ')' };
+          return { ack: String(res.value).slice(0, 1500) };
+        });
+      }
+      if (task === 'roll') {
+        var rd = rollDice(a.dice);
+        if (!rd.ok) return Promise.resolve({ ack: rd.reason + ' (100 dice, d1000 max)' });
+        return Promise.resolve({ ack: 'rolled ' + String(a.dice).trim() + rd.detail + ' = ' + rd.total });
+      }
       return Promise.resolve({ ack: 'task "' + task + '" is valid but not wired yet' });
     }
 
@@ -1890,12 +2031,12 @@
     //      model-emitted toolCalls (never on a `!chloe do`), so there is no double-dispatch. Item-1 scope = dispatch
     //      + log the ack; the re-prompt-with-results ReAct loop is item 2. FAIL-OPEN: any throw leaves the posted
     //      reply untouched. ----
-    var SAFE_TOOL_VERBS = { summarize: 1, recap: 1, remindme: 1, roster: 1, search: 1 };
+    var SAFE_TOOL_VERBS = { summarize: 1, recap: 1, remindme: 1, roster: 1, search: 1, fetch: 1, almanac: 1, time: 1, roll: 1, todo_add: 1, todo_list: 1, todo_done: 1, todo_clear: 1 };
     // QUERY tools return DATA to feed back into a second reply (handled by reactRespond, bounded to one
     // round) — they are NOT fire-and-forget, so dispatchModelTools SKIPS them (prevents a redundant 2nd
     // search when the terminal dispatch runs on the already-fed-back final reply). ACTION tools (the rest)
     // keep item-1 dispatch-only behavior.
-    var QUERY_TOOL_VERBS = { search: 1 };
+    var QUERY_TOOL_VERBS = { search: 1, fetch: 1, almanac: 1 };
     function dispatchModelTools(r, p) {
       try {
         if (!cfg.toolsEnabled) return;                       // OFF -> no dispatch (byte-identical reply path)
@@ -1936,19 +2077,25 @@
           if (!cfg.toolsEnabled) return r1;                                   // OFF: one respond, nothing else
           var calls = (r1 && Array.isArray(r1.toolCalls)) ? r1.toolCalls : null;
           if (!calls || !calls.length) return r1;
-          if (typeof cfg.search !== 'function') return r1;                    // no search transport -> fail-open
+          if (typeof cfg.search !== 'function' && typeof cfg.fetch !== 'function' && typeof cfg.almanac !== 'function') return r1;   // no query transport -> fail-open
           var queries = calls.filter(function (c) { var v = String((c && c.verb) || '').toLowerCase().trim(); return QUERY_TOOL_VERBS[v] && SAFE_TOOL_VERBS[v]; });
           if (!queries.length) return r1;                                     // ACTION-only -> no re-respond (item-1)
           var cap = cfg.queryMaxPerReply || 2;
           var chain = Promise.resolve([]);
           queries.slice(0, cap).forEach(function (c) {
             chain = chain.then(function (acc) {
-              var q = (c.args && typeof c.args === 'object' && c.args.query != null) ? String(c.args.query) : '';
-              return Promise.resolve(cfg.search(q)).then(function (res) {
-                if (res && res.ok && res.value) acc.push({ verb: 'search', query: q.slice(0, 200), result: String(res.value) });
-                else log('[wire:react] search returned nothing (' + ((res && res.reason) || 'n/a') + ')');
+              var v = String((c && c.verb) || '').toLowerCase().trim();
+              var qa = (c.args && typeof c.args === 'object') ? c.args : {};
+              var label = '', run = null;
+              if (v === 'fetch') { var fu = String(qa.url != null ? qa.url : '').trim(); label = fu.slice(0, 200); if (fu && typeof cfg.fetch === 'function') run = function () { return Promise.resolve(cfg.fetch(fu)); }; }
+              else if (v === 'almanac') { var ak2 = String(qa.kind != null ? qa.kind : '').toLowerCase().trim(), aq2 = String(qa.query != null ? qa.query : '').trim(); label = ak2.slice(0, 40) + ': ' + aq2.slice(0, 160); if (ak2 && (aq2 || ak2 === 'onthisday' || ak2 === 'quote') && typeof cfg.almanac === 'function') run = function () { return Promise.resolve(cfg.almanac({ kind: ak2, query: aq2, extra: qa.extra })); }; }
+              else { var sq = String(qa.query != null ? qa.query : '').trim(); label = sq.slice(0, 200); if (sq && typeof cfg.search === 'function') run = function () { return Promise.resolve(cfg.search(sq)); }; }
+              if (!run) { log('[wire:react] ' + v + ' skipped (no query text or no transport)'); return acc; }
+              return run().then(function (res) {
+                if (res && res.ok && res.value) acc.push({ verb: v, query: label, result: String(res.value) });
+                else log('[wire:react] ' + v + ' returned nothing (' + ((res && res.reason) || 'n/a') + ')');
                 return acc;
-              }, function () { return acc; });               // a single search throw never breaks the round
+              }, function () { return acc; });               // a single query throw never breaks the round
             });
           });
           return chain.then(function (results) {
@@ -1957,7 +2104,7 @@
             for (var k in ctx) { if (Object.prototype.hasOwnProperty.call(ctx, k)) ctx2[k] = ctx[k]; }
             ctx2.toolResults = results;                      // the FEED-BACK seam — the page reads this and grounds the 2nd reply
             ctx2.reactRound = 1;                             // marker: we are IN the one allowed extra round
-            log('[wire:react] re-respond with ' + results.length + ' search result(s)');
+            log('[wire:react] re-respond with ' + results.length + ' query result(s)');
             return Promise.resolve(cfg.respond(ctx2)).then(function (r2) {
               // BOUNDED: return the 2nd reply whatever it emits — we NEVER re-enter, so no 3rd round.
               return (r2 && r2.ok) ? r2 : r1;                // if the 2nd round somehow produced nothing, keep the first
@@ -2182,6 +2329,33 @@
             });
           });
         } },
+      { verb: 'skill',     modOnly: true, help: 'skill add <name> | <triggers> | <text>  /  skill show <name>  /  skill drop <name>', handler: function (modId, c) {
+          var sargs = String((c && c.rawArgs) || '').trim();
+          var sm = sargs.match(/^(add|show|drop|remove|delete)\s+([\s\S]+)$/i);
+          if (!sm) return Promise.resolve({ ack: 'usage: ' + (cfg.commandPrefix || '!chloe') + ' skill add <name> | <trigger words> | <text>' });
+          var sop = sm[1].toLowerCase(), srest = sm[2].trim();
+          if (sop === 'show') {
+            return getSkills().then(function (slist) {
+              var shit = slist.filter(function (s) { return String(s.name || '').toLowerCase() === srest.toLowerCase(); })[0];
+              return { ack: shit ? ('[' + shit.name + '] triggers: ' + (shit.triggers || []).join(', ') + '\n' + String(shit.text).slice(0, 600)) : 'no skill named "' + srest.slice(0, 40) + '"' };
+            });
+          }
+          if (sop === 'drop' || sop === 'remove' || sop === 'delete') {
+            return dropSkill(srest).then(function (n) { return { ack: n ? ('dropped "' + srest.slice(0, 40) + '"') : 'no skill named "' + srest.slice(0, 40) + '"' }; });
+          }
+          var sparts = srest.split('|').map(function (s) { return s.trim(); });
+          if (sparts.length < 3 || !sparts[0] || !sparts[1] || !sparts[2]) return Promise.resolve({ ack: 'usage: skill add <name> | <trigger words, comma-separated> | <the knowledge itself>' });
+          return addSkill(sparts[0], sparts[1], sparts.slice(2).join(' | '), (c && c.authorName) || '').then(function (r) {
+            return { ack: r.ok ? ((r.updated ? 'updated' : 'saved') + ' "' + r.value.name + '" - I will use it when people talk about ' + (r.value.triggers || []).slice(0, 5).join(', ')) : r.reason };
+          });
+        } },
+      { verb: 'skills',    modOnly: false, help: 'skills  (list the server knowledge packs)', handler: function (uid, c) {
+          return getSkills().then(function (list) {
+            if (!list.length) return { ack: 'no server knowledge saved yet - mods can add some with ' + (cfg.commandPrefix || '!chloe') + ' skill add <name> | <trigger words> | <text>' };
+            var linesOut = list.slice(0, 20).map(function (s) { return '- ' + s.name + ' (' + (s.triggers || []).slice(0, 5).join(', ') + ')'; }).join('\n');
+            return { ack: 'server knowledge:\n' + linesOut };
+          });
+        } },
       { verb: 'poll',      modOnly: true, help: 'poll <question> | <a> | <b> [...]  /  poll close', handler: function (modId, c) {
           var args = String((c && c.rawArgs) || '').trim();
           if (!args) {
@@ -2231,7 +2405,7 @@
         } },
       { verb: 'tools',     modOnly: true, help: 'tools on|off  (let the AI call safe tools from her reply)', handler: function (modId, c) {
           var a = String((c && c.rawArgs) || '').trim().toLowerCase();
-          if (a === 'on' || a === 'enable' || a === 'true')  { cfg.toolsEnabled = true;  log('[chloe.tool] model tool-loop ENABLED by mod'); return Promise.resolve({ ack: 'model tool-loop on \u2014 I can now quietly use safe tools (summarize/recap/remindme/roster) from my own replies.' }); }
+          if (a === 'on' || a === 'enable' || a === 'true')  { cfg.toolsEnabled = true;  log('[chloe.tool] model tool-loop ENABLED by mod'); return Promise.resolve({ ack: 'model tool-loop on \u2014 I can now quietly use safe tools (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todos) from my own replies.' }); }
           if (a === 'off' || a === 'disable' || a === 'false') { cfg.toolsEnabled = false; log('[chloe.tool] model tool-loop DISABLED by mod'); return Promise.resolve({ ack: 'model tool-loop off \u2014 tools only run from ' + cfg.commandPrefix + ' do now.' }); }
           return Promise.resolve({ ack: 'model tool-loop is ' + (cfg.toolsEnabled ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' tools on|off (the panel toggle persists it).' });
         } },
@@ -2679,7 +2853,7 @@
               if (editText) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping edit from ' + (m.author.username || m.author.id));
-                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
+                  if (typeof cfg.send === 'function') { try { Promise.resolve(cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment')).catch(function (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); }); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
                   return;
                 }
                 // rebuild the prompt: prefer the AI hook (handles arbitrary natural language), fall
@@ -2710,7 +2884,7 @@
               if (imgReq) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping request from ' + (m.author.username || m.author.id));
-                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
+                  if (typeof cfg.send === 'function') { try { Promise.resolve(cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment')).catch(function (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); }); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
                 } else {
                   var qItem = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: imgReq.prompt, resolution: imgReq.resolution, dm: imgReq.dm, at: now };
                   if (imgReq.guidanceScale != null) qItem.guidanceScale = imgReq.guidanceScale;
@@ -3434,7 +3608,15 @@
         return (f && f[sid]) ? f[sid] : 0;
       });
     }
-    function getBlocklist() { return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (b) { return b || { ids: {}, names: {} }; }); }
+    function getBlocklist() { return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (b) {
+      if (!b) return { ids: {}, names: {} };
+      // v0.90.18: a present-but-malformed blocklist used to fail OPEN silently (everyone
+      // unblocked, no trace). Fail-open is kept (locking everyone out is worse) but LOUD —
+      // the engine log wrapper escalates 'corrupt' lines to diag.errors + the panel.
+      if (b.ids && b.names && typeof b.ids === 'object' && typeof b.names === 'object') return b;
+      log('[chloe.store] blocklist is corrupt (expected {ids,names}), treating as empty until repaired — re-block anyone still restricted');
+      return { ids: {}, names: {} };
+    }); }
     function isBlockedSync(bl, id, name) {
       if (!bl) return false;
       if (id && bl.ids && bl.ids[String(id)]) return true;
@@ -3723,8 +3905,11 @@
         var imageEligible = null;
         var bigBacklog = incoming.length > (cfg.startupBacklogThreshold || 8);
         var isStartupBatch = startupPending && !ctx.cursor && bigBacklog;
+        // v0.90.18: hoisted out of the startup branch — creditContinuation (feedback
+        // learning) needs this batch's humans on EVERY poll; previously it only saw a
+        // list on the rare startup batch and silently no-opped the rest of the time.
+        var humans = incoming.filter(function (m) { return m.author && !m.author.bot && String(m.content || '').trim(); });
         if (isStartupBatch) {
-          var humans = incoming.filter(function (m) { return m.author && !m.author.bot && String(m.content || '').trim(); });
           var keep = humans.slice(-(cfg.startupImageMax || 5));
           imageEligible = {};
           keep.forEach(function (m) { imageEligible[m.id] = true; });
@@ -4513,6 +4698,35 @@
         });
       } });
 
+    registerProvider({ id: 'skills', priority: BANDS.RECALL,
+      enabled: function () { return true; },   // zero cost when empty (no skills -> null)
+      gather: function (g) {
+        return getSkills().then(function (skills) {
+          if (!skills.length) return null;
+          function toks(s) {
+            return String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(function (w) { return w.length >= 3; });
+          }
+          var qset = {};
+          toks(g.p && g.p.content).forEach(function (w) { qset[w] = true; });
+          (g.lines || []).slice(-3).forEach(function (l) { toks(l.text).forEach(function (w) { qset[w] = true; }); });
+          var best = null, bestScore = 0;
+          skills.forEach(function (sk) {
+            var score = 0;
+            (sk.triggers || []).forEach(function (t) {
+              var tw = toks(t);
+              if (!tw.length) return;
+              var hit = 0;
+              tw.forEach(function (w) { if (qset[w]) hit++; });
+              if (hit === tw.length) score += tw.length;
+            });
+            if (score > bestScore) { bestScore = score; best = sk; }
+          });
+          if (!best) return null;
+          var text = 'Server knowledge (' + best.name + ', saved by the mods - trusted reference): ' + best.text;
+          return { text: text, tokens: estimateTokens(text) };
+        });
+      } });
+    
     registerProvider({ id: 'episodes', priority: BANDS.RECALL,
       enabled: function (c) { return !!c.episodicMemory; },
       gather: function (g) {
@@ -6332,7 +6546,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.17';
+  var VERSION = '0.90.20';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6622,7 +6836,156 @@
       return out.slice(0, 900);
     } catch (e) { return ''; }
   }
+  // Wikipedia fallback (rook-ai pattern, no key): opensearch for titles, then the
+  // REST summary for the top hit. Used when DDG instant answers come back empty —
+  // DDG covers entities, Wikipedia covers everything else. Returns labeled text
+  // WITH the article URL so the model can follow up with a fetch for detail.
+  function wikiSearch(query) {
+    var q = String(query == null ? '' : query).trim().slice(0, 300);
+    if (!q) return Promise.resolve({ ok: false, reason: 'empty query' });
+    function wget(url, ms) {
+      return new Promise(function (resolve) {
+        var settled = false;
+        function wdone(v) { if (settled) return; settled = true; resolve(v); }
+        var wto = setTimeout(function () { wdone({ ok: false }); }, ms || 8000);
+        try {
+          GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
+            onload: function (r) { clearTimeout(wto); try { if (r.status < 200 || r.status >= 300) return wdone({ ok: false }); wdone({ ok: true, text: r.responseText }); } catch (e) { wdone({ ok: false }); } },
+            onerror: function () { clearTimeout(wto); wdone({ ok: false }); },
+            ontimeout: function () { clearTimeout(wto); wdone({ ok: false }); } });
+        } catch (e) { clearTimeout(wto); wdone({ ok: false }); }
+      });
+    }
+    var op = 'https://en.wikipedia.org/w/api.php?action=opensearch&search=' + encodeURIComponent(q) + '&limit=3&format=json&origin=*';
+    return wget(op).then(function (r) {
+      var titles = null;
+      try { var j = JSON.parse(r && r.ok ? r.text : 'null'); if (j && Array.isArray(j[1])) titles = j[1]; } catch (e) {}
+      if (!titles || !titles.length) return { ok: false, reason: 'no results' };
+      var title = String(titles[0]);
+      var sum = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title.replace(/ /g, '_'));
+      return wget(sum).then(function (s) {
+        try {
+          var d = JSON.parse(s && s.ok ? s.text : 'null');
+          var ext = d && d.extract ? String(d.extract).replace(/\s+/g, ' ').trim().slice(0, 700) : '';
+          var url = (d && d.content_urls && d.content_urls.desktop && d.content_urls.desktop.page) || ('https://en.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_')));
+          if (!ext) return { ok: false, reason: 'no results' };
+          return { ok: true, value: '- ' + title + ': ' + ext + '\n(source: ' + url + ')' };
+        } catch (e) { return { ok: false, reason: 'parse failed' }; }
+      });
+    });
+  }
+  // rollDice(spec) -> { ok, total, rolls, detail } | { ok:false, reason }. PURE (headless-testable).
+  function rollDice(spec) {
+    var m = String(spec == null ? '' : spec).trim().match(/^(\d{1,3})?d(\d{1,4})([+-]\d{1,5})?$/i);
+    if (!m) return { ok: false, reason: 'roll dice like 2d6+3, d20, or 4d8' };
+    var n = Math.min(100, Math.max(1, parseInt(m[1] || '1', 10)));
+    var sides = Math.min(1000, Math.max(2, parseInt(m[2], 10)));
+    var mod = m[3] ? parseInt(m[3], 10) : 0;
+    var rolls = [], total = 0;
+    for (var k = 0; k < n; k++) { var r = 1 + Math.floor(Math.random() * sides); rolls.push(r); total += r; }
+    total += mod;
+    var mtxt = mod ? (mod > 0 ? '+' + mod : '' + mod) : '';
+    var detail = n <= 12 ? (' [' + rolls.join('+') + ']' + mtxt) : ' (' + n + 'd' + sides + mtxt + ')';
+    return { ok: true, total: total, rolls: rolls, detail: detail };
+  }
+  // ---- almanac (rook-ai/book-maker pattern, all free no-key GET APIs) ----
+  // One QUERY transport behind the `almanac` tool verb: { kind, query, extra }.
+  // kinds: define | synonym | rhyme | soundslike | country | onthisday | quote | weather | translate.
+  function almanacGet(url, ms) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var ato = setTimeout(function () { adone({ ok: false }); }, ms || 8000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
+          onload: function (r) { clearTimeout(ato); try { if (r.status < 200 || r.status >= 300) return adone({ ok: false }); adone({ ok: true, text: r.responseText }); } catch (e) { adone({ ok: false }); } },
+          onerror: function () { clearTimeout(ato); adone({ ok: false }); },
+          ontimeout: function () { clearTimeout(ato); adone({ ok: false }); } });
+      } catch (e) { clearTimeout(ato); adone({ ok: false }); }
+    });
+  }
+  function almanacJson(url, ms) {
+    return almanacGet(url, ms).then(function (r) { if (!r.ok) return null; try { return JSON.parse(r.text); } catch (e) { return null; } });
+  }
+  var WMO = { 0: 'clear', 1: 'mainly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'fog', 48: 'rime fog', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 80: 'rain showers', 95: 'thunderstorm', 96: 'thunderstorm with hail' };
+  function almanacLookup(job) {
+    var kind = String(job && job.kind || '').toLowerCase().trim();
+    var q = String(job && job.query || '').trim().slice(0, 200);
+    var extra = String(job && job.extra || '').trim().slice(0, 80);
+    function aNo(r) { return { ok: false, reason: 'no ' + kind + ' result' + (r ? ' (' + r + ')' : '') }; }
+    function aOk(v) { return { ok: true, value: v }; }
+    if (!q && kind !== 'onthisday' && kind !== 'quote') return Promise.resolve(aNo('empty query'));
+    if (kind === 'define') {
+      var w = q.toLowerCase().replace(/[^a-z'-]/g, '');
+      if (!w) return Promise.resolve(aNo('empty word'));
+      return almanacJson('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(w)).then(function (j) {
+        var e = Array.isArray(j) && j[0];
+        if (!e) return aNo();
+        var defs = [];
+        (e.meanings || []).slice(0, 2).forEach(function (m) { var d = m.definitions && m.definitions[0]; if (d && d.definition) defs.push((m.partOfSpeech ? '(' + m.partOfSpeech + ') ' : '') + d.definition); });
+        if (!defs.length) return aNo();
+        return aOk('Define - ' + (e.word || w) + (e.phonetic ? ' ' + e.phonetic : '') + ': ' + defs.join(' | ').slice(0, 600));
+      });
+    }
+    if (kind === 'synonym' || kind === 'rhyme' || kind === 'soundslike') {
+      var p = kind === 'rhyme' ? 'rel_rhy' : kind === 'soundslike' ? 'sl' : 'ml';
+      return almanacJson('https://api.datamuse.com/words?max=14&' + p + '=' + encodeURIComponent(q)).then(function (j) {
+        if (!Array.isArray(j) || !j.length) return aNo();
+        var lbl = kind === 'rhyme' ? 'rhyme with' : kind === 'soundslike' ? 'sound like' : 'mean like';
+        return aOk('Words that ' + lbl + ' "' + q.slice(0, 60) + '": ' + j.map(function (x) { return x.word; }).filter(Boolean).slice(0, 12).join(', '));
+      });
+    }
+    if (kind === 'country') {
+      return almanacJson('https://restcountries.com/v3.1/name/' + encodeURIComponent(q) + '?fields=name,capital,currencies,languages,region,subregion').then(function (j) {
+        var c = Array.isArray(j) && j[0];
+        if (!c) return aNo();
+        var langs = c.languages ? Object.keys(c.languages).map(function (k) { return c.languages[k]; }).join(', ') : '';
+        var curr = c.currencies ? Object.keys(c.currencies).map(function (k) { return c.currencies[k].name; }).join(', ') : '';
+        return aOk('Country - ' + ((c.name && c.name.common) || q) + ': ' + (c.subregion || c.region || '') + (c.capital ? ', capital ' + c.capital[0] : '') + (langs ? ', language ' + langs : '') + (curr ? ', currency ' + curr : '') + '.');
+      });
+    }
+    if (kind === 'onthisday') {
+      var mm = '', dd = '';
+      var dm = q.match(/(\d{1,2})\D(\d{1,2})/);
+      if (dm) { mm = dm[1]; dd = dm[2]; }
+      else { var nowD = new Date(); mm = String(nowD.getMonth() + 1); dd = String(nowD.getDate()); }
+      return almanacJson('https://byabbe.se/on-this-day/' + mm + '/' + dd + '/events.json').then(function (j) {
+        var ev = j && j.events;
+        if (!ev || !ev.length) return aNo();
+        return aOk('On this day (' + mm + '/' + dd + '): ' + ev.slice(0, 3).map(function (e) { return e.year + ': ' + e.description; }).join(' | ').slice(0, 600));
+      });
+    }
+    if (kind === 'quote') {
+      var qu = (!q || /random/i.test(q)) ? 'https://api.quotable.io/quotes/random?limit=1' : 'https://api.quotable.io/search/quotes?limit=3&query=' + encodeURIComponent(q);
+      return almanacJson(qu).then(function (j) {
+        var arr = (j && j.results) || j;
+        if (!Array.isArray(arr) || !arr.length || !arr[0] || !arr[0].content) return aNo();
+        return aOk('Quote - "' + String(arr[0].content).slice(0, 400) + '" - ' + (arr[0].author || 'Unknown'));
+      });
+    }
+    if (kind === 'weather') {
+      return almanacJson('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(q)).then(function (g) {
+        var r = g && g.results && g.results[0];
+        if (!r) return aNo('place not found');
+        return almanacJson('https://api.open-meteo.com/v1/forecast?current=temperature_2m,weather_code,wind_speed_10m&latitude=' + encodeURIComponent(r.latitude) + '&longitude=' + encodeURIComponent(r.longitude)).then(function (f) {
+          var c = f && f.current;
+          if (!c) return aNo();
+          return aOk('Weather - ' + r.name + (r.country ? ', ' + r.country : '') + ': ' + Math.round(c.temperature_2m) + ' C, ' + (WMO[c.weather_code] || '') + ', wind ' + Math.round(c.wind_speed_10m) + ' km/h.');
+        });
+      });
+    }
+    if (kind === 'translate') {
+      var target = (extra || 'en').replace(/[^a-z-]/gi, '').slice(0, 10) || 'en';
+      return translate(q, target).then(function (res) {
+        if (!res || !res.text) return aNo();
+        return aOk('Translation - "' + q.slice(0, 120) + '" = "' + String(res.text).slice(0, 300) + '"');
+      });
+    }
+    return Promise.resolve({ ok: false, reason: 'unknown lookup kind "' + kind + '" (define/synonym/rhyme/soundslike/country/onthisday/quote/weather/translate)' });
+  }
   // webSearch(query) -> Promise<{ ok:true, value } | { ok:false, reason }>. ALWAYS resolves; never rejects.
+  // DDG instant answers first (fast, entity-shaped), Wikipedia fallback (broad coverage, with source
+  // URL for fetch follow-ups). Failure is a NON-EVENT for the reply path (fail-open, logged).
   function webSearch(query) {
     var q = String(query == null ? '' : query).trim().slice(0, 300);
     if (!q) return Promise.resolve({ ok: false, reason: 'empty query' });
@@ -6630,26 +6993,72 @@
     return new Promise(function (resolve) {
       var settled = false;
       function done(v) { if (settled) return; settled = true; resolve(v); }
-      var to = setTimeout(function () { log('[wire:search] timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); }, 8000);
+      function ddgFallback(reason) {
+        wikiSearch(q).then(function (w) {
+          if (w && w.ok) { log('[wire:search] wiki fallback ok "' + q.slice(0, 60) + '"'); done({ ok: true, value: w.value }); }
+          else { log('[wire:search] no results for "' + q.slice(0, 60) + '" (' + reason + ')'); done({ ok: false, reason: 'no results' }); }
+        }, function () { log('[wire:search] no results for "' + q.slice(0, 60) + '" (' + reason + ')'); done({ ok: false, reason: 'no results' }); });
+      }
+      var to = setTimeout(function () { log('[wire:search] DDG timeout, trying wiki'); ddgFallback('timeout'); }, 8000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
           onload: function (r) {
             clearTimeout(to);
             try {
-              if (r.status < 200 || r.status >= 300) { log('[wire:search] HTTP ' + r.status + ' -> fail-open'); return done({ ok: false, reason: 'HTTP ' + r.status }); }
+              if (r.status < 200 || r.status >= 300) { log('[wire:search] HTTP ' + r.status + ', trying wiki'); return ddgFallback('HTTP ' + r.status); }
               var data = JSON.parse(r.responseText);
               var val = summariseDDG(data);
-              if (!val) { log('[wire:search] no results for "' + q.slice(0, 60) + '"'); return done({ ok: false, reason: 'no results' }); }
+              if (!val) { log('[wire:search] DDG empty, trying wiki'); return ddgFallback('empty'); }
               log('[wire:search] ok "' + q.slice(0, 60) + '" -> ' + val.length + ' chars');
               done({ ok: true, value: val });
-            } catch (e) { console.error('[wire:search] parse error', e); log('[wire:search] parse failed -> fail-open'); done({ ok: false, reason: 'parse failed' }); }
+            } catch (e) { console.error('[wire:search] parse error', e); log('[wire:search] parse failed, trying wiki'); ddgFallback('parse failed'); }
           },
-          onerror: function () { clearTimeout(to); console.error('[wire:search] network error'); log('[wire:search] network error -> fail-open'); done({ ok: false, reason: 'network error' }); },
-          ontimeout: function () { clearTimeout(to); log('[wire:search] timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); } });
-      } catch (e) { clearTimeout(to); console.error('[wire:search] threw', e); done({ ok: false, reason: String((e && e.message) || e) }); }
+          onerror: function () { clearTimeout(to); console.error('[wire:search] network error'); log('[wire:search] network error, trying wiki'); ddgFallback('network error'); },
+          ontimeout: function () { clearTimeout(to); log('[wire:search] timeout, trying wiki'); ddgFallback('timeout'); } });
+      } catch (e) { clearTimeout(to); console.error('[wire:search] threw', e); ddgFallback(String((e && e.message) || e)); }
     });
   }
-
+  // htmlToText(html) -> plain text. PURE (headless-testable): strips scripts/styles/tags,
+  // decodes the common entities, collapses whitespace. No DOM needed (the engine has none).
+  function htmlToText(html) {
+    var s = String(html == null ? '' : html);
+    s = s.replace(/<script[\s\S]*?<\/script\s*>/gi, ' ').replace(/<style[\s\S]*?<\/style\s*>/gi, ' ');
+    s = s.replace(/<(br|p|div|h[1-6]|li|tr)\b[^>]*>/gi, '\n');
+    s = s.replace(/<[^>]+>/g, ' ');
+    s = s.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'");
+    s = s.replace(/[ \t\xa0]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim();
+    return s.slice(0, 6000);
+  }
+  // Fetch-allowlist (v0.90.19): the model may read Wikipedia articles only. A tight
+  // host list keeps prompt-injected URLs from becoming an open proxy / exfil channel.
+  var FETCH_HOSTS = { 'en.wikipedia.org': 1, 'wikipedia.org': 1, 'www.wikipedia.org': 1 };
+  // webFetch(url) -> Promise<{ ok:true, value:text } | { ok:false, reason }>. ALWAYS resolves.
+  function webFetch(url) {
+    var u = String(url == null ? '' : url).trim().slice(0, 500);
+    var host = '';
+    try { host = String(u.match(/^https?:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
+    if (!/^https?:\/\//i.test(u) || !FETCH_HOSTS[host]) return Promise.resolve({ ok: false, reason: 'fetch allowlist is Wikipedia only' });
+    return new Promise(function (resolve) {
+      var settled = false;
+      function fdone(v) { if (settled) return; settled = true; resolve(v); }
+      var fto = setTimeout(function () { log('[wire:fetch] timeout -> fail-open'); fdone({ ok: false, reason: 'timeout' }); }, 10000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: u, headers: { 'User-Agent': UA }, anonymous: true,
+          onload: function (r) {
+            clearTimeout(fto);
+            try {
+              if (r.status < 200 || r.status >= 300) { log('[wire:fetch] HTTP ' + r.status + ' -> fail-open'); return fdone({ ok: false, reason: 'HTTP ' + r.status }); }
+              var ftext = htmlToText(r.responseText);
+              if (!ftext) { log('[wire:fetch] empty after strip -> fail-open'); return fdone({ ok: false, reason: 'empty page' }); }
+              log('[wire:fetch] ok "' + u.slice(0, 60) + '" -> ' + ftext.length + ' chars');
+              fdone({ ok: true, value: ftext });
+            } catch (e) { console.error('[wire:fetch] parse error', e); log('[wire:fetch] strip failed -> fail-open'); fdone({ ok: false, reason: 'parse failed' }); }
+          },
+          onerror: function () { clearTimeout(fto); console.error('[wire:fetch] network error'); log('[wire:fetch] network error -> fail-open'); fdone({ ok: false, reason: 'network error' }); },
+          ontimeout: function () { clearTimeout(fto); log('[wire:fetch] timeout -> fail-open'); fdone({ ok: false, reason: 'timeout' }); } });
+      } catch (e) { clearTimeout(fto); console.error('[wire:fetch] threw', e); fdone({ ok: false, reason: String((e && e.message) || e) }); }
+    });
+  }
   // Translate inbound messages from a non-English-preference author into English for the engine. Only
   // touches messages whose author has a set lang != 'en'; everyone else passes through untouched and
   // free. Failure (per translate()) leaves the original text. Replaces content in place.
@@ -7085,6 +7494,8 @@
         judge: function (ctx) { return brainCall('judge', ctx); },
         recapFn: function (ctx) { return brainCall('recap', ctx); },
         search: function (q) { return webSearch(q); },   // model tool-loop item 2: the QUERY tool (outer scope owns the network; the engine stays pure)
+        fetch: function (url) { return webFetch(url); },   // v0.90.19 second QUERY tool (same fail-open contract)
+        almanac: function (job) { return almanacLookup(job); },   // v0.90.20 third QUERY tool
         typing: function (cid) { return transport.startTyping(cid); },
         react: function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); },
         unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
@@ -7897,7 +8308,7 @@
           // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
            'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
-           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'feedback:' + ch, 'arch:index:' + ch,
+           'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'feedback:' + ch, 'todos:' + ch, 'skills:' + ch, 'arch:index:' + ch,
            'modlog', 'backfill:' + ch, 'blocklist'].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
@@ -7925,7 +8336,7 @@
         'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
         'reactionTracking','reactionAutoHighlight','gateEmoji','gatePings','gateEveryone',
         'gateLinks','gateChannelLinks','autoResume','gate:emoji','gate:pings','gate:everyone',
-        'gate:links','gate:channelLinks'
+        'gate:links','gate:channelLinks','todoMaxPerUser','todoTextMax'
       ];
       allCfg.forEach(function (k) {
         if (keep.indexOf(k) < 0) GM_deleteValue(NS + 'cfg:' + k);
@@ -7943,10 +8354,10 @@
   }
 
   // ---- export: collect all known GM keys into a snapshot object ----------------------
-  function exportState() {
-    var snap = { _version: VERSION, _exported: new Date().toISOString(), _note: 'Chloe-bot state backup. Token is NOT included. Import via the panel System tab.' };
-    // cfg keys (everything except the token)
-    var cfgKeys = [
+  // v0.90.18: single source of truth for which cfg keys may cross the backup boundary.
+  // exportState writes exactly these; sanitizeImport (below) accepts exactly these —
+  // nothing else, notably never the token. One list so the two can never drift apart.
+  var BACKUP_CFG_KEYS = [
       'botUserId','botName','botAliases','botRoleIds','channelId','channels','dmChannels','addressMode','engageMode',
       'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
       'lullFiller','checkins','factMemory','moodAware','channelSummary','adaptivePace',
@@ -7959,8 +8370,12 @@
       'sendBudgetMs','sendMinGapMs','requestTokenBudget','typingRefreshMs','pollBusyCeilMs',
       'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
       'reactionTracking','reactionAutoHighlight','gate:emoji','gate:pings','gate:everyone',
-      'gate:links','gate:channelLinks','autoResume'
+      'gate:links','gate:channelLinks','autoResume','todoMaxPerUser','todoTextMax'
     ];
+  function exportState() {
+    var snap = { _version: VERSION, _exported: new Date().toISOString(), _note: 'Chloe-bot state backup. Token is NOT included. Import via the panel System tab.' };
+    // cfg keys (BACKUP_CFG_KEYS — everything except the token, which is never listed there)
+    var cfgKeys = BACKUP_CFG_KEYS;
     var cfg = {};
     cfgKeys.forEach(function (k) { var v = GM_getValue(NS + 'cfg:' + k, null); if (v != null) cfg[k] = v; });
     snap.cfg = cfg;
@@ -7989,7 +8404,7 @@
       ['cursor:'+ch,'speaker:ring:'+ch,'rhythm:'+ch,'mood:'+ch,'intent:'+ch,'reminders:'+ch,
        'afk:'+ch,'highlights:'+ch,'reacttally:'+ch,'lull:'+ch,'checkins:'+ch,
        'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,
-       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch,'feedback:'+ch
+       'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch,'feedback:'+ch,'todos:'+ch,'skills:'+ch
       ].forEach(function (k) { var v = GM_getValue(NS + pfx + k, null); if (v != null) chData[k] = v; });
       channels[ch] = chData;
     });
@@ -7997,26 +8412,80 @@
     return snap;
   }
 
+  // ---- import firewall (v0.90.18) -------------------------------------------------------
+  // Backups are operator-handled files (downloaded, shared, re-imported months later),
+  // so the import boundary is untrusted input. importState used to write every key raw:
+  // a crafted or stale file could overwrite the token (via cfg.token, topLevel
+  // 'cfg:token', or the channels primary-prefix alias), plant a modList string (isMod
+  // does substring matching on non-arrays — privilege escalation), or time-travel
+  // enums. This pure function (headless-tested) returns only safe data + a drop list.
+  var IMPORT_ENGAGE = ['normal', 'open', 'locked'];
+  var IMPORT_ADDR = ['mention', 'name', 'both'];
+  var IMPORT_CH_EXACT = ['roster:index', 'modlog', 'charmem', 'goals'];
+  var IMPORT_CH_PREFIX = ['cursor:', 'speaker:ring:', 'rhythm:', 'mood:', 'intent:', 'reminders:',
+    'afk:', 'highlights:', 'reacttally:', 'lull:', 'checkins:', 'beats:lastrun:', 'chansum:',
+    'epi:', 'affect:', 'work:', 'delib:', 'procmode:', 'consolidate:', 'backfill:',
+    'selfintents:', 'ownlines:', 'feedback:', 'todos:', 'skills:'];
+  function importKeyOk(k) {
+    if (IMPORT_CH_EXACT.indexOf(k) >= 0) return true;
+    for (var i = 0; i < IMPORT_CH_PREFIX.length; i++) { if (k.indexOf(IMPORT_CH_PREFIX[i]) === 0) return true; }
+    if (/^u:\d+$/.test(k) || /^arch:index:\d+$/.test(k) || /^arch:\d+:u:\d+$/.test(k)) return true;
+    return false;
+  }
+  function sanitizeImport(data) {
+    var dropped = [];
+    var allowed = {};
+    BACKUP_CFG_KEYS.forEach(function (k) { allowed[k] = true; });
+    var cfg = {}, src = (data && data.cfg && typeof data.cfg === 'object') ? data.cfg : {};
+    Object.keys(src).forEach(function (k) {
+      if (k === 'token' || !allowed[k]) { dropped.push('cfg:' + k); return; }   // never the token, never unknown keys
+      var v = src[k];
+      if (k === 'addressMode') { if (IMPORT_ADDR.indexOf(v) >= 0) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      if (k === 'engageMode' || k.indexOf('engageMode:') === 0) { if (IMPORT_ENGAGE.indexOf(v) >= 0) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      if (k === 'modList') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return typeof x === 'string' && x; }); else dropped.push('cfg:' + k); return; }
+      if (k === 'botRoleIds') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return /^\d{8,32}$/.test(String(x)); }).map(String); else dropped.push('cfg:' + k); return; }
+      if (k === 'commandPrefixes') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return typeof x === 'string' && x; }); else dropped.push('cfg:' + k); return; }
+      if (k === 'autoModRules' || k === 'beats' || k === 'procRules') { if (Array.isArray(v)) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      cfg[k] = v;
+    });
+    var topLevel = {}, tls = (data && data.topLevel && typeof data.topLevel === 'object') ? data.topLevel : {};
+    Object.keys(tls).forEach(function (k) {
+      if (k === 'seminject:map') { if (tls[k] && typeof tls[k] === 'object') topLevel[k] = tls[k]; else dropped.push('top:' + k); return; }
+      if (k === 'deviceClock' || /^guildId:\d+$/.test(k)) { topLevel[k] = tls[k]; return; }
+      dropped.push('top:' + k);
+    });
+    var channels = {}, chs = (data && data.channels && typeof data.channels === 'object') ? data.channels : {};
+    Object.keys(chs).forEach(function (ch) {
+      if (!/^\d+$/.test(ch) || !chs[ch] || typeof chs[ch] !== 'object') { dropped.push('ch:' + ch); return; }
+      var clean = {};
+      Object.keys(chs[ch]).forEach(function (k) { if (importKeyOk(k)) clean[k] = chs[ch][k]; else dropped.push(ch + ':' + k); });
+      channels[ch] = clean;
+    });
+    return { cfg: cfg, topLevel: topLevel, channels: channels, dropped: dropped };
+  }
+
   // ---- import: restore a snapshot (merges cfg, restores channel data) -----------------
   function importState(data) {
     if (!data || typeof data !== 'object') return Promise.resolve({ ok: false, reason: 'invalid backup data' });
     try {
-      // cfg keys
-      var cfg = data.cfg || {};
+      var clean = sanitizeImport(data);   // firewall: allowlisted keys, typed enums, no token
+      var cfg = clean.cfg;
       Object.keys(cfg).forEach(function (k) { GM_setValue(NS + 'cfg:' + k, cfg[k]); });
       // top-level keys
-      var tl = data.topLevel || {};
+      var tl = clean.topLevel;
       Object.keys(tl).forEach(function (k) { GM_setValue(NS + k, tl[k]); });
       // per-channel data
-      var channels = data.channels || {};
+      var channels = clean.channels;
       Object.keys(channels).forEach(function (ch) {
         var pfx = prefixFor(ch);
         var chData = channels[ch];
         Object.keys(chData).forEach(function (k) { GM_setValue(NS + pfx + k, chData[k]); });
       });
       eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null;
+      if (clean.dropped.length) bLog('[chloe] import: dropped ' + clean.dropped.length + ' unrecognized/unsafe key(s): ' + clean.dropped.slice(0, 10).join(', '));
+      if (data._version && data._version !== VERSION) bLog('[chloe] import: backup is v' + data._version + ', bridge is v' + VERSION + ' — proceeding with sanitized data; re-check settings if anything looks off');
       bLog('[chloe] state imported from backup (v' + (data._version || '?') + ', exported ' + (data._exported || '?') + '). Restart to apply.');
-      return Promise.resolve({ ok: true, value: { version: data._version, exported: data._exported } });
+      return Promise.resolve({ ok: true, value: { version: data._version, exported: data._exported, dropped: clean.dropped.length } });
     } catch (err) {
       return Promise.resolve({ ok: false, reason: 'import failed: ' + (err && err.message) });
     }
