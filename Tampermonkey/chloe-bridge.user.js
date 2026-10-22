@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe bridge (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      0.90.9
+// @version      0.90.16
 // @description  Adapter-A bridge: polls a Discord channel via GM_xmlhttpRequest and builds a durable per-user roster in GM storage. T0 = read-only presence (no replies, no moderation yet).
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -551,7 +551,7 @@
     var recentReplies = [];              // G1 anti-repetition: her own last few replies (PERSISTED per channel — see rememberReply)
     // Rehydrate the anti-repeat list from the channel-scoped store so a tab reload / engine restart doesn't make her
     // repeat her last phrasings. Best-effort + async: a reply before this resolves just sees an empty list that once.
-    try { Promise.resolve(store.get('recentReplies')).then(function (v) { if (Array.isArray(v) && !recentReplies.length) recentReplies = v.slice(-(cfg.antiRepeatWindow || 5)); }, function () {}); } catch (e) {}
+    try { Promise.resolve(store.get('recentReplies')).then(function (v) { if (Array.isArray(v) && !recentReplies.length) recentReplies = v.slice(-(cfg.antiRepeatWindow || 5)); }, function (err) { log('[chloe.store] recentReplies rehydrate failed, starting empty (' + ((err && err.message) || err) + ')'); }); } catch (e) { log('[chloe.store] recentReplies rehydrate threw (' + ((e && e.message) || e) + ')'); }
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
     var afkNoticedKeys = [];             // insertion order, to bound afkNoticed (prevent a slow leak over a long session)
@@ -604,7 +604,7 @@
         log2.push({ id: e.id, name: e.name || '', text: text, ts: e.ts || 0, self: self, bot: bot });
         while (log2.length > recentMax) log2.shift();
         if (self || bot) consecutiveBotTurns++; else consecutiveBotTurns = 0;   // any HUMAN line breaks the loop
-        if (turnGate) { try { turnGate.note({ ts: e.ts || 0, bot: !!(self || bot) }); } catch (x) {} }
+        if (turnGate) { try { turnGate.note({ ts: e.ts || 0, bot: !!(self || bot) }); } catch (x) { log('[chloe.turn] turnGate.note failed (' + ((x && x.message) || x) + ')'); } }
         if (self) { lastSelfSpokeAt = e.ts || 0; ownRecent.push(text.toLowerCase().slice(0, 60)); while (ownRecent.length > antiRepeatWindow) ownRecent.shift(); }
       }
       function forMe(text) {
@@ -633,7 +633,7 @@
         var t = String(entry.text || '').trim();
         if (t.length < 2 || CONVERSE_FILLER.test(t)) return { skip: true, why: 'filler' };
         if (consecutiveBotTurns >= botLoopHardStop) return { skip: true, why: 'bot-loop hard stop' };
-        var selfGap = turnGate ? (function () { try { return turnGate.gapMs(now); } catch (x) { return cooldownMs; } })() : cooldownMs;
+        var selfGap = turnGate ? (function () { try { return turnGate.gapMs(now); } catch (x) { log('[chloe.turn] turnGate.gapMs failed, using cooldown fallback (' + ((x && x.message) || x) + ')'); return cooldownMs; } })() : cooldownMs;
         if (now - lastSelfSpokeAt < selfGap) return { skip: true, why: 'cooldown' };
         if (ownRecent.indexOf(t.toLowerCase().slice(0, 60)) >= 0) return { skip: true, why: 'anti-repeat' };
         if (isTwoPersonExchangeBetweenOthers()) return { skip: true, why: 'two others private exchange' };
@@ -683,7 +683,7 @@
       recentReplies.push(t);
       var keep = cfg.antiRepeatWindow || 5;
       if (recentReplies.length > keep) recentReplies = recentReplies.slice(-keep);
-      try { store.set('recentReplies', recentReplies.slice()); } catch (e) {}   // persist so a reload doesn't lose the anti-repeat list
+      try { store.set('recentReplies', recentReplies.slice()); } catch (e) { log('[chloe.store] recentReplies persist failed (' + ((e && e.message) || e) + ')'); }   // persist so a reload doesn't lose the anti-repeat list
     }
     // Standing intention: the brain may return `intent` alongside its reply text; we persist it
     // (capped + timestamped) so it rides in the next context until reaffirmed or it ages out.
@@ -1036,7 +1036,7 @@
               c2 = c2.then(function () { return addTrust(u.id, cfg.trustReactionGain || 2).then(function (did) { if (did) credited++; }); });
             });
             return c2;
-          }, function () { return null; });                      // a failed fetch is a no-op, never an error
+          }, function (e) { log('[chloe.react] trust reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); return null; });   // a failed fetch credits nothing (now traced)
         });
       });
       return chain.then(function () { if (credited) log('[chloe.trust] credited ' + credited + ' positive reaction(s)'); return credited; });
@@ -1217,6 +1217,49 @@
       if (cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0)) return 'ping';
       if (nameAliases().some(function (a) { return new RegExp(namePat(a), 'i').test(c); })) return 'name';
       return 'none';
+    }
+    // Recognition diagnostics (v0.90.14): WHY a message was / wasn't treated as addressed.
+    // PII-free by construction: booleans, lengths and counts only — never content or names.
+    // (Author names are already routine in the feed, so the call-site lines may name the author.)
+    function addressInfo(content) {
+      var c = String(content || '');
+      var mentioned = !!(cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0));
+      var named = nameAliases().some(function (a) { try { return new RegExp(namePat(a), 'i').test(c); } catch (e) { return false; } });
+      return { mentioned: mentioned, named: named, mode: cfg.addressMode || 'both',
+        len: c.length, hasMentionSyntax: /<@!?\d+>/.test(c), hasRoleMention: /<@&\d+>/.test(c),
+        botIdSet: !!cfg.botUserId, aliasCount: nameAliases().length };
+    }
+    var addrLogged = {};
+    function addrNoteOnce(key) { if (addrLogged[key]) return false; addrLogged[key] = true; return true; }
+    // Called for every message that reaches the volunteer gate (i.e. NOT treated as addressed).
+    // Silent for plain chatter (the judge logs its own decision); loud for the specific ways an
+    // addressing attempt can miss, so the next "she ignored me" debugs itself in one line.
+    function addrNote(m) {
+      var info = addressInfo(m.content);
+      var who = (m.author && (m.author.username || m.author.id)) || 'someone';
+      var aid = (m.author && m.author.id) || '?';
+      if (!info.botIdSet && addrNoteOnce('nobotid')) log('[chloe.identity] bot user ID is not set — @-mentions can never match her (Setup tab -> Validate token, then Stop + Start)');
+      if (!info.aliasCount && addrNoteOnce('noalias')) log('[chloe.identity] she has no names configured — written-name addressing can never match (bot name / aliases missing)');
+      if (info.len === 0) {
+        if (addrNoteOnce('empty:' + aid)) log('[chloe.T1] ' + who + ' messaged, but it arrived with NO readable text (empty content) — if they were addressing her, turn on Message Content Intent (Discord Dev Portal -> Bot -> Privileged Gateway Intents), then Stop + Start');
+        return;
+      }
+      if (info.hasRoleMention && !info.mentioned) {
+        if (addrNoteOnce('role:' + aid)) log('[chloe.T1] ' + who + ' mentioned a ROLE, not her personal mention — @-mention the bot itself (pick the user from autocomplete, not a role of the same name) and she will answer');
+        return;
+      }
+      if (info.hasMentionSyntax && !info.mentioned) {
+        if (addrNoteOnce('mismatch:' + aid)) log('[chloe.T1] ' + who + ' mentioned someone, but the mention is not hers (she listens for <@' + (cfg.botUserId || '?') + '>) — treating it as normal chatter');
+        return;
+      }
+      if (info.named && info.mode === 'mention') {
+        if (addrNoteOnce('modemention:' + aid)) log('[chloe.T1] ' + who + ' said her name, but she only answers direct @-mentions right now (Behavior -> replies-when is @-mention only)');
+        return;
+      }
+      if (info.mentioned && info.mode === 'name') {
+        if (addrNoteOnce('modename:' + aid)) log('[chloe.T1] ' + who + ' @-mentioned her, but she only answers her written name right now (Behavior -> replies-when is name only)');
+        return;
+      }
     }
     // Response priority. Higher wins. Weights are spaced by an order of magnitude so the ordering is
     // strict and composable: DM lane > mod > @-ping > (new-user tiebreak) > name-in-casual. So a mod's
@@ -1492,7 +1535,7 @@
       for (var i = 0; i < rules.length; i++) {
         var r = rules[i]; if (!r || !r.pattern) continue;
         var type = r.type || 'text', hit = false;
-        if (type === 'regex') { try { hit = new RegExp(r.pattern, r.flags || 'i').test(raw); } catch (e) { hit = false; } }
+        if (type === 'regex') { try { hit = new RegExp(r.pattern, r.flags || 'i').test(raw); } catch (e) { hit = false; log('[chloe.automod] rule #' + i + ' has a bad regex "' + String(r.pattern).slice(0, 120) + '", skipping rule (' + ((e && e.message) || e) + ')'); } }
         else if (type === 'confusables') { hit = confusablesNormalize(raw).indexOf(confusablesNormalize(r.pattern)) >= 0; }
         else if (type === 'link') { var needle = confusablesNormalize(r.pattern); hit = extractUrls(raw).some(function (u) { return confusablesNormalize(u).indexOf(needle) >= 0; }); }
         else { hit = raw.toLowerCase().indexOf(String(r.pattern).toLowerCase()) >= 0; }
@@ -1712,7 +1755,7 @@
             if (found) return found;
             return Promise.resolve(getReactors(m.id, emoji)).then(function (users) {
               return (users || []).some(function (u) { return u && isMod(u.id); }) ? m : null;
-            }, function () { return null; });
+            }, function (e) { log('[chloe.react] anchor reaction-users failed for ' + m.id + ': ' + ((e && e.message) || e)); return null; });
           });
         });
         return chain;
@@ -2608,7 +2651,7 @@
               if (editText) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping edit from ' + (m.author.username || m.author.id));
-                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) {} }
+                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
                   return;
                 }
                 // rebuild the prompt: prefer the AI hook (handles arbitrary natural language), fall
@@ -2639,7 +2682,7 @@
               if (imgReq) {
                 if (paint.queue.length >= cfg.imageQueueMax) {
                   log('[chloe.img] queue full (' + paint.queue.length + '/' + cfg.imageQueueMax + '); dropping request from ' + (m.author.username || m.author.id));
-                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) {} }
+                  if (typeof cfg.send === 'function') { try { cfg.send(cfg.channelId, 'i\u2019ve got a few images going already, ' + m.author.username + ' \u2014 ask me again in a moment'); } catch (e) { log('[chloe.img] queue-full notice send failed (' + ((e && e.message) || e) + ')'); } }
                 } else {
                   var qItem = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, prompt: imgReq.prompt, resolution: imgReq.resolution, dm: imgReq.dm, at: now };
                   if (imgReq.guidanceScale != null) qItem.guidanceScale = imgReq.guidanceScale;
@@ -2663,6 +2706,7 @@
               addressedName = m.author.username;
             } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
               gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
+              addrNote(m);   // v0.90.14: say WHY it was not treated as addressed (silent for plain chatter)
             }
             });   // end afkChain.then wrapper
           });
@@ -2693,7 +2737,7 @@
           // AFK heads-ups + welcome-backs flush regardless of the ackCommands toggle — they're a
           // user-facing utility, not a command confirmation.
           if (notices.length && typeof cfg.send === 'function') {
-            try { cfg.send(cfg.channelId, notices.join('\n')); } catch (e) {}
+            try { Promise.resolve(cfg.send(cfg.channelId, notices.join('\n'))).catch(function (e) { log('[chloe.T3] notices send failed (' + ((e && e.message) || e) + ')'); }); } catch (e) { log('[chloe.T3] notices send threw (' + ((e && e.message) || e) + ')'); }
           }
           if ((acks.length || embeds.length) && cfg.ackCommands) {
             log('[chloe.T3] ran ' + commandCount + ' command(s)' + (embeds.length ? (' (' + embeds.length + ' embed)') : ''));
@@ -2840,9 +2884,9 @@
               lastActAt = clock.now(); reply.replying = false; rememberReply(text);
               log('[chloe.lull] filled a ' + Math.round(silentFor / 1000) + 's silence');
               return store.set(LULL_KEY, clock.now()).then(function () { return { lull: text }; });
-            }, function () { reply.replying = false; return null; });
+            }, function (e) { reply.replying = false; log('[chloe.lull] reply send failed, silence not filled (' + ((e && e.message) || e) + ')'); return null; });
             });
-          }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+          }).catch(function (e) { reply.replying = false; log('[chloe.lull] filler failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
         });
       });
     }
@@ -2912,9 +2956,9 @@
                 ci.byUser[best.id] = { at: clock.now(), count: best.count + 1, seenAt: best.seenAt };
                 log('[chloe.checkin] checked in on ' + best.name + ' (absent ' + Math.round(best.absent / 86400000) + 'd, attempt ' + (best.count + 1) + '/' + cfg.checkinMaxAttempts + ')');
                 return store.set(CHECKIN_KEY, ci).then(function () { return { checkin: best.name }; });
-              }, function () { reply.replying = false; return null; });
+              }, function (e) { reply.replying = false; log('[chloe.checkin] send failed, mention not sent (' + ((e && e.message) || e) + ')'); return null; });
               });
-            }).catch(function () { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+            }).catch(function (e) { reply.replying = false; log('[chloe.checkin] check-in failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
           });
         });
       });
@@ -3609,7 +3653,7 @@
     function releaseRunLock() {
       return Promise.resolve(store.get(RUNLOCK_KEY)).then(function (lk) {
         if (lk && lk.id === runId) return Promise.resolve(store.del(RUNLOCK_KEY));
-      }).catch(function () {});
+      }).catch(function (e) { log('[chloe.lock] run-lock release failed (' + ((e && e.message) || e) + ')'); });
     }
     function pollOnce() {
       return acquireRunLock().then(function (held) {
@@ -3897,6 +3941,7 @@
       // nothing comes back.
       if (typeof cfg.canSend === 'function' && !cfg.canSend('text', p.priority || 0)) {
         if (!p.throttleAcked) { p.throttleAcked = true; ackWorking(p.messageId, cfg.ackThrottleEmoji); scheduleAckClear(p.messageId, cfg.ackThrottleEmoji); }   // ⏳ the shared voice is busy elsewhere
+          log('[chloe.T1] reply to ' + p.authorName + ' throttled (send slot busy), staying queued');
         return Promise.resolve(null);
       }
       if (typeof cfg.noteSend === 'function') cfg.noteSend('text', p.priority || 0);
@@ -4005,7 +4050,7 @@
             clearAck(p.messageId, cfg.ackImageEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
-            return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I couldn't make that image just now.")).then(function () { return null; }, function () { return null; });
+            return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I couldn't make that image just now.")).then(function () { return null; }, function (e) { log('[chloe.img] apology send failed (' + ((e && e.message) || e) + ')'); return null; });
           }
           // revalidate before delivery: were they moderated, the engine stopped, or did another
           // engine take over the channel (freeze/thaw failover) mid-paint? Any of these -> abandon.
@@ -4032,7 +4077,7 @@
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
               return recordImage(p.authorId, p).then(function () {
                 if (cfg.imageEnhanceOffer && !p.isEdit && !/\b(detailed|hd|4k|high quality)\b/i.test(p.prompt || '')) {
-                  try { cfg.send(cfg.channelId, 'want me to refine that, ' + p.authorName + '? just say how \u2014 e.g. \u201cmore detailed\u201d, \u201cmake it landscape\u201d, or \u201canother one\u201d.'); } catch (e) {}
+                  try { Promise.resolve(cfg.send(cfg.channelId, 'want me to refine that, ' + p.authorName + '? just say how \u2014 e.g. \u201cmore detailed\u201d, \u201cmake it landscape\u201d, or \u201canother one\u201d.')).catch(function (e) { log('[chloe.img] refine offer skipped (' + ((e && e.message) || e) + ')'); }); } catch (e) { log('[chloe.img] refine offer skipped (' + ((e && e.message) || e) + ')'); }
                 }
                 return bumpInteraction(p.authorId);
               }).then(function () { return { image: true, to: p.authorId }; });
@@ -4073,7 +4118,7 @@
             var action = (v && (v.action === 'reply' || v.action === 'react')) ? v.action : 'ignore';
             var conf = (v && typeof v.confidence === 'number') ? v.confidence : 0;
             var emoji = (v && v.emoji) ? String(v.emoji) : '\uD83D\uDC4D';
-            if (action === 'ignore') { reply.replying = false; log('[chloe.T2] judge: ignore'); return null; }
+            if (action === 'ignore') { reply.replying = false; log('[chloe.T2] judge: ignoring ' + g.authorName + ' — not addressed to her, volunteer declined'); return null; }
             if (conf < cfg.judgeMinConfidence) { reply.replying = false; log('[chloe.T2] judge: ' + action + ' @ ' + conf + ' < ' + cfg.judgeMinConfidence + ' -> ignore'); return null; }
             if (action === 'react') {
               if (typeof cfg.react !== 'function') { reply.replying = false; return null; }
@@ -4254,7 +4299,7 @@
     function gatherInjections(gctx) {
       gctx = gctx || {};
       var enabled = ctxProviders.filter(function (p) {
-        try { return typeof p.enabled !== 'function' || !!p.enabled(cfg); } catch (e) { return false; }
+        try { return typeof p.enabled !== 'function' || !!p.enabled(cfg); } catch (e) { log('[chloe.ctx] provider ' + (p.id || '?') + ' enabled check threw, disabling provider (' + ((e && e.message) || e) + ')'); return false; }
       });
       return Promise.all(enabled.map(function (p, i) {
         return Promise.resolve().then(function () { return p.gather(gctx); })
@@ -4499,7 +4544,7 @@
             if (semantic) {
               var bumped = false;
               top.forEach(function (x) { if (x.e.stab != null) { x.e.stab = fsrsStrengthen(x.e.stab); x.e.lastRecallAt = now; bumped = true; } });
-              if (bumped) strengthen = Promise.resolve(store.set(EPI_KEY, ring)).catch(function () { return null; });
+              if (bumped) strengthen = Promise.resolve(store.set(EPI_KEY, ring)).catch(function (e) { log('[chloe.memory] episodic strengthen persist failed (' + ((e && e.message) || e) + ')'); return null; });
             }
             return strengthen.then(function () {
               var text;
@@ -4792,7 +4837,7 @@
             var modUser = (users || []).filter(function (u) { return u && u.id && isMod(u.id); })[0];
             if (!modUser) return null;                           // modOnly is FIXED in v1: non-mod reactions never trigger
             return activateProcMode(rule, modUser.username || modUser.id).then(function (rec) { if (rec) activated = rec; });
-          }, function () { return null; });
+          }, function (e) { log('[chloe.react] proc reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); return null; });
         });
       });
       return chain.then(function () { return activated; });
@@ -4830,7 +4875,7 @@
           scheduleTextChain();   // answer at generation speed, not poll speed
           return msg.author.id;
         });
-      }, function () { return null; });
+      }, function (e) { log('[chloe.react] summon reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); return null; });
     }
 
     // ---- reaction polls ----------------------------------------------------------------------
@@ -5715,7 +5760,7 @@
       if (!cfg.botUserId && !cfg.botName) {
         log('[chloe] WARNING: no bot identity yet — click Validate. Until then she can\u2019t tell she\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
       } else {
-        log('[chloe] identity: ' + (cfg.botName || '?') + ' (' + (cfg.botUserId || 'no id') + '); answers to: ' + nameAliases().join(', ') + ' or @-mention; replies-when=' + cfg.addressMode);
+        log('[chloe] identity (bridge v' + (cfg.bridgeVersion || '?') + '): ' + (cfg.botName || '?') + ' (' + (cfg.botUserId || 'no id') + '); answers to: ' + nameAliases().join(', ') + ' or @-mention; replies-when=' + cfg.addressMode);
       }
       var curDelay = cfg.pollIntervalMs;
       var tick = function () {
@@ -5728,7 +5773,7 @@
           var unknownChannel = (e && e.status === 404) || (e && e.body && e.body.code === 10003);
           log('[chloe.T0] poll error:', (e && e.message) || e);
           if (unknownChannel && typeof cfg.onChannelGone === 'function') {
-            try { cfg.onChannelGone(cfg.channelId); } catch (e2) {}
+            try { cfg.onChannelGone(cfg.channelId); } catch (e2) { log('[chloe.poll] onChannelGone handler failed (' + ((e2 && e2.message) || e2) + ')'); }
             running = false;   // stop this engine's loop; the bootstrap decides whether to drop the channel
             return;
           }
@@ -6258,7 +6303,7 @@
   var API = 'https://discord.com/api/v10';
   var UA = 'DiscordBot (https://github.com/therealwestninja, 1.0)';
   var NS = 'chloe:';
-  var VERSION = '0.90.9';
+  var VERSION = '0.90.16';
   // D1: queen/worker role. Worker tabs are spawned with '#chloe-worker' in the URL; everything
   // else (including today's single-tab setup) is the queen. Workers never poll Discord, never
   // start the engine, and never write GM state — they contribute their tab's AI brain via jobs.
@@ -6279,6 +6324,21 @@
     var e = { t: Date.now(), tag: tag, msg: String(msg) };
     traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
     return e;
+  }
+  // Error ring (v0.90.11): failures ALSO land here (50 slots) so diag.errors can show them
+  // without the noise of the 60-slot trace ring. Engine error-tier logs arrive via the log
+  // wrapper in buildEngine; userscript failures call traceErr directly; hot paths use warnOnce.
+  var errRing = [], ERR_MAX = 50;
+  function traceErr(tag, msg) {
+    var e = { t: Date.now(), tag: tag, msg: String(msg).slice(0, 500) };
+    traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
+    errRing.push(e); if (errRing.length > ERR_MAX) errRing = errRing.slice(-ERR_MAX);
+    return e;
+  }
+  var warnedKeys7065 = {};
+  function warnOnce(key, tag, msg) {
+    if (warnedKeys7065[key]) return null;
+    warnedKeys7065[key] = true; return traceErr(tag, msg);
   }
   // Diagnostics hygiene: a diag dump may be pasted into a public GitHub issue, so strip PII that is NOT needed to
   // debug the bot — IP addresses, emails, and the user/locale/country/region fields Discord error bodies can carry.
@@ -6315,9 +6375,9 @@
   // existing install keeps its memory; every additional channel lives under 'ch:{id}:'.
   function makeStore(pfx) {
     var INDEX_GM_KEY = NS + pfx + 'roster:index';
-    function readIndex() { var v = GM_getValue(INDEX_GM_KEY, null); if (!v) return []; try { var pa = JSON.parse(v) || []; return Array.isArray(pa) ? pa : []; } catch (e) { return []; } }
+    function readIndex() { var v = GM_getValue(INDEX_GM_KEY, null); if (!v) return []; try { var pa = JSON.parse(v) || []; return Array.isArray(pa) ? pa : []; } catch (e) { warnOnce('store:roster-index:' + pfx, 'store', 'roster index is corrupt, starting empty (' + ((e && e.message) || e) + ')'); return []; } }
     var s = {
-      get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + pfx + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { return null; } }); },
+      get: function (k) { return Promise.resolve().then(function () { var v = GM_getValue(NS + pfx + k, null); if (v == null) return null; try { return JSON.parse(v); } catch (e) { warnOnce('store:get:' + pfx + ':' + k, 'store', 'stored key is corrupt, treating as missing (' + ((e && e.message) || e) + ')'); return null; } }); },
       set: function (k, v) { GM_setValue(NS + pfx + k, JSON.stringify(v)); return Promise.resolve(true); },
       del: function (k) { GM_deleteValue(NS + pfx + k); return Promise.resolve(true); },
       listIndex: function () { return Promise.resolve(readIndex()); },
@@ -6506,7 +6566,7 @@
             } catch (e) { trace('translate', 'parse failed -> original'); done({ text: input, src: src }); }
           },
           onerror: function () { clearTimeout(to); trace('translate', 'error -> original'); done({ text: input, src: src }); },
-          ontimeout: function () { clearTimeout(to); done({ text: input, src: src }); } });
+          ontimeout: function () { clearTimeout(to); trace('translate', 'timeout -> original'); done({ text: input, src: src }); } });
       } catch (e) { clearTimeout(to); done({ text: input, src: src }); }
     });
   }
@@ -6773,7 +6833,7 @@
     var payload = obj;
     try { payload = JSON.parse(JSON.stringify(obj)); } catch (e) { payload = { __chloe: 1, kind: 'res', nonce: (obj && obj.nonce), ok: false, reason: 'unserializable response' }; }
     try { source.postMessage(payload, replyTarget(origin)); }
-    catch (e) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: (obj && obj.nonce), ok: false, reason: 'reply post failed' }, '*'); } catch (e2) {} }
+    catch (e) { try { source.postMessage({ __chloe: 1, kind: 'res', nonce: (obj && obj.nonce), ok: false, reason: 'reply post failed' }, '*'); } catch (e2) { try { console.log('[chloe.link] reply post failed twice, dropping response'); } catch (e3) {} } }
   }
   var pollInflight = {};
   function callPage(method, args, timeoutMs) {
@@ -6811,7 +6871,7 @@
       if (!next) return;
       running = true;
       try { Promise.resolve().then(next.run).then(settle, settle); }
-      catch (e) { settle(); }
+      catch (e) { traceErr('brain', 'local line threw synchronously, dropping one queued brain call (' + ((e && e.message) || e) + ')'); settle(); }
     }
     return {
       push: function (run) { line.push({ run: run }); pump(); }
@@ -6905,6 +6965,7 @@
       transport: transport, store: makeStore(prefixFor(channelId)), globalStore: makeStore(''),
       config: {
         channelId: channelId,
+        bridgeVersion: VERSION,
         isDM: isDMChannel(channelId),
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
@@ -7062,7 +7123,7 @@
           return presenceMaintenance(channelId);
         }
       },
-      log: function () { console.log.apply(console, arguments); }
+      log: function () { console.log.apply(console, arguments); try { var m7065 = Array.prototype.join.call(arguments, ' '); if (/error|fail|exception|denied|forbidden|unauthori|rate[ .]?limit|timed[ ]?out|too many|invalid|missing|corrupt|mismatch|expired|dropp|queue full|abandon|not sent|code=10003|unknown channel| 404| 403| 429| 500|reply failed/i.test(m7065)) { var mm7065 = String(m7065).slice(0, 500); traceErr('engine', mm7065); pushEvent('log', mm7065); } else if (/throttl|tool-only|dropped injection|no reply to|empty generation|skipped/i.test(m7065)) { try { traceErr('engine', String(m7065).slice(0, 500)); } catch (e77) {} } } catch (e7065) {} }
     });
     engines[channelId] = eng;
     return eng;
@@ -7098,7 +7159,7 @@
             });
             return c;
           });
-        }).catch(function () {});
+        }).catch(function (e) { traceErr('maint', 'member-check sweep failed (' + ((e && e.message) || e) + ')'); });
       });
     }
     if (cfgGet('personaAnchor', false) && (maintTick % 10 === 3)) {
@@ -7106,14 +7167,14 @@
         return eng.anchorSweep(
           function () { return transport.getMessagesAfter(chId, null, 20); },
           function (mid, emoji) { return transport.getReactions(chId, mid, emoji); }
-        ).then(function (r) { if (r && r.changed) { trace('persona', 'new anchored note (' + chId + ')'); pushEvent('persona', r); } }, function () {});
+        ).then(function (r) { if (r && r.changed) { trace('persona', 'new anchored note (' + chId + ')'); pushEvent('persona', r); } }, function (e) { traceErr('persona', 'anchor sweep failed (' + chId + '): ' + ((e && e.message) || e)); });
       });
     }
     return jobs;
   }
   function ensureEngines() { return channelList().map(function (c) { return engines[c] || buildEngine(c); }).filter(Boolean); }
   function engineFor(chId) { var c = chKeyOf({ channelId: chId }); if (!c) return null; return engines[c] || buildEngine(c); }
-  function eachEngine(fn) { Object.keys(engines).forEach(function (c) { try { fn(engines[c], c); } catch (e) {} }); }
+  function eachEngine(fn) { Object.keys(engines).forEach(function (c) { try { fn(engines[c], c); } catch (e) { traceErr('engine', 'eachEngine op failed (' + ((e && e.message) || e) + ')'); } }); }
 
   var guildIdCache = {};
   function resolveGuildId(chId) {
@@ -7163,7 +7224,7 @@
         if (n > 0) { cfgSet('serverMemberCount', n); patchEngines({ serverMemberCount: n }); bLog('[chloe] detected ~' + n + ' members; reaction significance scaled accordingly'); }
         return n;
       });
-    }).catch(function () { return 0; });
+    }).catch(function (e) { trace('server', 'membercount detect failed (' + ((e && e.message) || e) + ')'); return 0; });
   }
 
   function validate() {
@@ -7534,6 +7595,10 @@
           // bodies code-only, but a future trace could carry an IP/email/locale — this is the last gate before clipboard).
           var scrubbed = tr.map(function (e) { return { t: e.t, tag: e.tag, msg: scrubPII(e.msg) }; });
           return Promise.resolve({ ok: true, value: scrubbed }); }
+      case 'diag.errors':
+        { var errs7065 = errRing.slice().concat([{ t: Date.now(), tag: 'link', msg: 'control-link: last=' + (linkStats.lastCmd || 'none') + ' ' + (linkStats.lastOutcome || '') + (linkStats.lastMs != null ? ' ' + linkStats.lastMs + 'ms' : '') + (linkStats.inflight ? (' | inflight=' + linkStats.inflight.cmd) : '') + ' | counts=' + JSON.stringify(linkStats.counts) }]);
+          var scrubbedErrs = errs7065.map(function (e) { return { t: e.t, tag: e.tag, msg: scrubPII(e.msg) }; });
+          return Promise.resolve({ ok: true, value: scrubbedErrs }); }
       case 'token.prompt':    promptToken(); return Promise.resolve({ ok: true, value: { hasToken: hasToken() } });
       case 'token.validate':  return validate();
       case 'start':           { if (TAB_ROLE === 'worker') return Promise.resolve({ ok: false, reason: 'this tab is a worker \u2014 the engine (and the Discord transport) runs only in the queen tab' }); var es1 = ensureEngines(); if (!es1.length) return Promise.resolve({ ok: false, reason: 'no channel set' }); es1.forEach(function (e) { e.start(); }); cfgSet('autoResume', true); return Promise.resolve({ ok: true, value: statusSnapshot() }); }
@@ -7592,7 +7657,7 @@
         })).then(function (results) {
           var any = results.some(function (r) { return r && r.ok; });
           var e9 = engineFor(args && args.channelId) || ubEngs[0];
-          if (any) e9.appendModLog({ action: 'unban', targetId: ubId, name: ubName, byModId: 'panel', reason: 'panel unban', at: Date.now() }).catch(function () {});
+          if (any) e9.appendModLog({ action: 'unban', targetId: ubId, name: ubName, byModId: 'panel', reason: 'panel unban', at: Date.now() }).catch(function (e) { traceErr('mod', 'unban modlog append failed (' + ((e && e.message) || e) + ')'); });
           return { ok: true, value: { id: ubId, name: ubName, removedFrom: results.filter(function(r){return r&&r.ok;}).length } };
         });
       }
@@ -7679,7 +7744,7 @@
     linkStats.counts[d.cmd] = (linkStats.counts[d.cmd] || 0) + 1;
     Promise.resolve().then(function () { return dispatch(d.cmd, d.args); })
       .then(function (res) { res = res || { ok: false, reason: 'no result' }; res.__chloe = 1; res.kind = 'res'; res.nonce = nonce; var ms = Date.now() - linkAt; var out = (res && res.ok) ? 'replied-ok' : 'replied-fail'; linkStats.lastCmd = d.cmd; linkStats.lastAt = linkAt; linkStats.lastMs = ms; linkStats.lastOutcome = out; linkStats.inflight = null; linkTraceSlow(d.cmd, ms, out); sendRes(source, origin, res); })
-      .catch(function (err) { var ms2 = Date.now() - linkAt; linkStats.lastCmd = d.cmd; linkStats.lastAt = linkAt; linkStats.lastMs = ms2; linkStats.lastOutcome = 'replied-error'; linkStats.inflight = null; linkTraceSlow(d.cmd, ms2, 'replied-error'); trace('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); sendRes(source, origin, { __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }); });
+      .catch(function (err) { var ms2 = Date.now() - linkAt; linkStats.lastCmd = d.cmd; linkStats.lastAt = linkAt; linkStats.lastMs = ms2; linkStats.lastOutcome = 'replied-error'; linkStats.inflight = null; linkTraceSlow(d.cmd, ms2, 'replied-error'); traceErr('dispatch', '"' + d.cmd + '" failed: ' + String(err && err.message || err)); sendRes(source, origin, { __chloe: 1, kind: 'res', nonce: nonce, ok: false, reason: String(err && err.message || err) }); });
   });
 
   // ---- D1: tab bridge (queen/worker) ---------------------------------------------------
