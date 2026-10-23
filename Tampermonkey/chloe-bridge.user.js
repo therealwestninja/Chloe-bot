@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe shell (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      1.1
+// @version      1.2
 // @description  Thin stable shell: GM transport/storage, control link, engine-bundle cache. Engine logic arrives from the control generator panel (__installEngine) — reinstall this file only for transport/grant changes.
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -47,7 +47,7 @@
   'use strict';
   if (window.top !== window) return;   // shell + engine live in the top frame only
 
-  var SHELL_VERSION = '1.1';
+  var SHELL_VERSION = '1.2';
   var NS = 'chloe:';
   var BUNDLE_KEY = NS + 'engine:bundle';   // { version, source }
   var ORIGIN_OK = /^(null|https:\/\/([a-z0-9]{32}\.)?perchance\.org)$/;
@@ -116,7 +116,13 @@
     var d = ev.data;
     if (!d || d.__chloe !== 1) return;
     if (!ORIGIN_OK.test(ev.origin)) return;
-    if (d.kind !== 'req') return;
+    if (d.kind !== 'req') {
+      // Brain-call answers (kind:'callres') belong to the engine, not the shell — forward
+      // them so pending calls resolve. (Bundles ≥ v3 also listen for these directly, so
+      // old shells keep working; nonce-matching makes the double delivery harmless.)
+      if (d.kind === 'callres' && Wiring && Wiring.onPanelEvent) { try { Wiring.onPanelEvent(ev); } catch (e) {} }
+      return;
+    }
     var nonce = d.nonce, source = ev.source, origin = ev.origin;
     function res(obj) { obj = obj || {}; obj.__chloe = 1; obj.kind = 'res'; obj.nonce = nonce; sendRes(source, origin, obj); }
     if (d.cmd === '__hello') {
