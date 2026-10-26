@@ -357,11 +357,12 @@
 
     <div class="tile span2">
       <h2>Or write your own</h2>
-      <div class="note" style="margin-bottom:8px">No file needed &mdash; name them and describe who they are, how they talk, and what they care about. Replaces the current personality.</div>
+      <div class="note" style="margin-bottom:8px">No file needed &mdash; name them and describe who they are, how they talk, and what they care about. The box starts with the default Chloe personality as an editable example &mdash; tweak it, or reset to default. Replaces the current personality.</div>
       <div class="row"><input class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, RudBo, Aria&hellip;)"></div>
       <textarea id="charAuthorInstr" rows="6" spellcheck="false" placeholder="You are &hellip; &mdash; describe their personality, voice, background, and how they should behave." style="margin-top:8px"></textarea>
       <div class="row" style="margin-top:8px">
         <button id="charAuthorBtn">Become this character</button>
+        <button class="ghost sm" id="charAuthorResetBtn" title="Restore the default Chloe personality text in the box above">Reset to default</button>
         <span class="note" id="charAuthorNote"></span>
       </div>
     </div>
@@ -590,7 +591,7 @@
     <div class="tile">
       <h2>Transparency</h2>
       <div class="row">
-        <input type="text" id="noticeInput" placeholder="Chloe is a roleplay bot character who remembers people here." class="grow">
+        <input type="text" id="noticeInput" placeholder="Heads up: Chloe is a roleplay bot character, not a real person. She reads this channel and remembers regulars so she can chat in character. Mods can adjust or pause her at any time." class="grow">
         <button class="ghost sm" id="pinNoticeBtn">Post &amp; pin notice</button>
         <span class="note" id="noticeState"></span>
       </div>
@@ -782,7 +783,7 @@
       </div>
       <div class="codehead">2 &middot; Turn on Message Content Intent (required)</div>
       <div class="note">
-        Under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty text &mdash; she&rsquo;ll see people talking but never hear <em>what</em> they say.
+        Under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty text &mdash; she&rsquo;ll see people talking but never hear <em>what</em> they say. She also reads text files posted alongside a message (<code>.txt</code> <code>.md</code> <code>.csv</code> <code>.json</code> <code>.log</code>, up to 2 files &times; ~3000 chars) &mdash; a caption-less file alone won&rsquo;t summon her, but &ldquo;chloe summarize this&rdquo; with a file attached will.
       </div>
       <div class="codehead">3 &middot; Give Chloe the token</div>
       <div class="note">
@@ -3616,6 +3617,10 @@ console.log('ham band reflector ready');
   }
 
   (function charWire() {
+    // The author box opens with the default Chloe personality as a visible,
+    // editable example (CHLOE_PERSONA is the Tier A source of truth above).
+    var instrEl = byId('charAuthorInstr');
+    if (instrEl && !instrEl.value) instrEl.value = CHLOE_PERSONA;
     var pick = byId('charPickBtn'), fileEl = byId('charFile'), drop = byId('charDrop');
     if (pick && fileEl) { pick.addEventListener('click', function () { fileEl.click(); }); fileEl.addEventListener('change', function () { if (fileEl.files && fileEl.files[0]) charLoadFile(fileEl.files[0]); }); }
     if (drop) {
@@ -3631,8 +3636,7 @@ console.log('ham band reflector ready');
       } else { charSetStatus('This browser won\u2019t allow clipboard reads here \u2014 paste into the box manually, then click Load.', 'er'); byId('charUrlInput').focus(); }
     });
     var ib = byId('charInstallBtn'); if (ib) ib.addEventListener('click', charInstall);
-    var ab = byId('charAuthorBtn'); if (ab) ab.addEventListener('click', function () {
-      var nm = (byId('charAuthorName').value || '').trim();
+    var ab = byId('charAuthorBtn'); if (ab) ab.addEventListener('click', function () {      var nm = (byId('charAuthorName').value || '').trim();
       var instr = (byId('charAuthorInstr').value || '').trim();
       if (!nm) { setText('charAuthorNote', 'give your character a name first'); return; }
       if (!instr) { setText('charAuthorNote', 'write a sentence or two about who they are'); return; }
@@ -3641,6 +3645,10 @@ console.log('ham band reflector ready');
         if (res && res.ok) { setText('charAuthorNote', 'done \u2014 she is now ' + nm); log('character authored: ' + nm + ' (personality replaced)'); refresh(); }
         else setText('charAuthorNote', 'could not apply: ' + ((res && res.reason) || 'unknown'));
       });
+    });
+    var rb = byId('charAuthorResetBtn'); if (rb) rb.addEventListener('click', function () {
+      var ie = byId('charAuthorInstr'); if (ie) ie.value = CHLOE_PERSONA;
+      setText('charAuthorNote', 'restored the default Chloe personality \u2014 edit it or press Become this character');
     });
     var cb = byId('charClearBtn'); if (cb) cb.addEventListener('click', function () {
       call('config.setCharacter', { name: null }).then(function (res) {
