@@ -93,6 +93,9 @@
   .pane.active{display:flex;flex-direction:column;gap:10px}
   .card,.tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px;min-width:0}
   .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px;align-items:start}
+  /* Narrow screens: a span-2/3 tile forces an implicit second/third track, squeezing
+     its neighbors into a sliver (auto-fill can't collapse around spanners). Collapse. */
+  @media (max-width:640px){ .tiles{grid-template-columns:minmax(0,1fr)} .tiles>.span2,.tiles>.span3,.tiles>.tilewide{grid-column:auto} }
   .tilewide{grid-column:1/-1}
   .span2{grid-column:span 2}
   .span3{grid-column:span 3}
@@ -133,6 +136,9 @@
   .chiprow{display:flex;gap:14px;flex-wrap:wrap}
   .chip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
   .codehead{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:10px 0 5px}
+  .reachpill{display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--line);border-radius:20px;padding:3px 6px 3px 10px;font-size:12px;color:var(--ink)}
+  .reachpill button{padding:2px 7px;font-size:11px}
+  .reachempty{font-size:12px}
 
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -164,6 +170,7 @@
   /* giant version strings (ADV5: 5000 chars) must not blow out the status bar — ellipsis, full text kept in DOM */
   #verTxt{display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .urow .ubadge{font-size:10px;font-weight:700;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:var(--sel);color:#fff}
+  .urow .ubadge.tier{background:transparent;border:1px solid var(--sel);color:var(--sel)}
   /* Setup channel rows (Phase 1 CRUD): id + label + badge + row actions */
   .chanlist{display:flex;flex-direction:column;margin-top:8px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .chanrow{display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--surface);flex-wrap:wrap;row-gap:8px}
@@ -178,6 +185,9 @@
   .chanlab:hover{border-color:var(--line)}
   .chanlab:focus{background:var(--surface2);border-color:var(--sel);outline:none}
   .chanlang{max-width:172px;font-size:12px}
+  .changates{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .changates label{font-size:11px;color:var(--muted);display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+  .changates input{margin:0}
   .chanactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
   .chanempty{color:var(--muted);padding:14px;text-align:center}
   .urow .uactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
@@ -270,7 +280,7 @@
   <section class="pane active" id="pane_activity">
     <div class="tile" id="chatCard">
       <h2>Talk to her</h2>
-      <div class="note" style="margin-bottom:6px">Chat with her right here &mdash; no Discord needed, and it works even while the bot is stopped. Handy for testing replies or speaking in her voice. Her Discord work and the raw debug lines land here too, in one timeline. This history is session-only and is never posted to Discord.</div>
+      <div class="note" style="margin-bottom:6px">Chat with her here &mdash; no Discord needed, works even while the bot is stopped. Her Discord work and debug lines land in the same timeline. Session-only: never posted to Discord, never remembered.</div>
       <div class="chatlog" id="chatLog"><div class="chatempty" id="chatEmpty">Say something below &mdash; she answers in character.</div></div>
       <div class="row" style="margin-top:8px">
         <input class="grow" id="chatInput" placeholder="Say something&hellip;" maxlength="1000" autocomplete="off">
@@ -292,7 +302,7 @@
         <button class="danger sm" id="resetBtn">Reset state</button>
         <label class="chip"><input type="checkbox" id="debugToggleChk" checked> show debug lines</label>
       </div>
-      <div class="note" style="margin-top:6px">Trace ring, errors, and rescue post here and copy to your clipboard. Reset state clears her working state (token kept) &mdash; export a backup first.</div>
+      <div class="note" style="margin-top:6px">Trace ring, errors, and rescue post here and copy to your clipboard. Reset clears her working state (token kept) &mdash; export a backup first.</div>
     </div>
   </section>
 
@@ -300,9 +310,10 @@
    <div class="tiles">
     <div class="tile span3" id="setupCard">
       <h2>Channels</h2>
-      <div class="note" style="margin-bottom:6px">Paste a channel ID below and Add it — the <strong>first</strong> public channel is her primary channel; the rest are extras she also runs. A label is just your own note, kept in this browser. Find IDs under Developer Mode &rarr; right-click a channel &rarr; Copy ID.</div>
+      <div class="note" style="margin-bottom:6px">Add channel IDs below &mdash; the <strong>first</strong> public channel is her primary; the rest are extras. Labels are just your own notes, kept in this browser. Find IDs under Developer Mode &rarr; right-click a channel &rarr; Copy ID.</div>
       <div class="chanlist" id="chanList"></div>
-      <div class="note" id="chanLangNote" hidden style="margin-top:6px">Per-channel reply language needs bridge &#8805; 0.90.21 &mdash; update the userscript, then Stop + Start.</div>
+      <div class="note" id="chanEngineNote" hidden style="margin-top:6px">Per-channel language and Speak / Read / Remember switches need a current engine &mdash; it pushes automatically on link; Stop + Start if this note stays.</div>
+      <div class="note" style="margin-top:6px">Per channel: Speak off = she posts nothing there; Read off = she skips the channel entirely; Remember off = she keeps nothing from it (goldfish mode &mdash; moderation state doesn&rsquo;t stick either). Your roster and mod views still work on gated channels.</div>
       <div class="row" style="margin-top:10px">
         <input class="grow" id="chanAddInput" placeholder="Channel ID to add (15 to 25 digits)" inputmode="numeric">
         <select id="chanAddType">
@@ -313,12 +324,12 @@
       </div>
       <div class="row" style="margin-top:8px">
         <button class="ghost" id="setChannelsBtn">Save channels</button>
-        <span class="note">With more than one channel, a selector appears beside the tabs above &mdash; it scopes the roster, mod log, and mode. DMs are flagged automatically.</span>
+        <span class="note">With more than one channel, a selector beside the tabs above scopes the roster, mod log, and mode. DMs are flagged automatically.</span>
       </div>
       <div class="row" style="margin-top:8px">
         <label class="chip"><input type="checkbox" id="translateChk"> translate replies (per-user <code>!chloe lang &lt;code&gt;</code> or the channel's default language)</label>
       </div>
-      <div class="note" id="translateNote" style="margin-top:4px;display:none">Master switch for all translation &mdash; per-user and per-channel. Uses a free public translation endpoint (no key). On first enable, your userscript manager may ask to allow <code>translate.googleapis.com</code>. Best-effort: if it ever fails, she sends the original text rather than going silent.</div>
+      <div class="note" id="translateNote" style="margin-top:4px;display:none">Master switch for all translation (per-user + per-channel) via a free public endpoint &mdash; no key. On first enable, your userscript manager may ask to allow <code>translate.googleapis.com</code>. Best-effort: on failure she sends the original text.</div>
     </div>
     <div class="tile span3">
       <h2>Identity</h2>
@@ -330,7 +341,7 @@
     </div>
     <div class="tile span3">
       <h2>Import a character</h2>
-      <div class="note" style="margin-bottom:8px">Bring in a character from an <strong>AI Character Chat</strong> export and let Chloe <em>become</em> them &mdash; their personality replaces the default, and their remembered facts seed her context. Everything runs in your browser; nothing is uploaded.</div>
+      <div class="note" style="margin-bottom:8px">Bring in an <strong>AI Character Chat</strong> export &mdash; their personality replaces the default and their remembered facts seed her context. Everything runs in your browser; nothing is uploaded.</div>
       <div id="charDrop" class="chardrop">
         <input type="file" id="charFile" accept=".gz,.cbor,.json,application/gzip,application/cbor,application/json" hidden>
         <button class="ghost" id="charPickBtn">Choose a file&hellip;</button>
@@ -346,7 +357,7 @@
 
     <div class="tile span2">
       <h2>Or write your own</h2>
-      <div class="note" style="margin-bottom:8px">Define a character right here &mdash; no file or JSON needed. Give a name and describe who they are, how they talk, and what they care about. This replaces the current personality.</div>
+      <div class="note" style="margin-bottom:8px">No file needed &mdash; name them and describe who they are, how they talk, and what they care about. Replaces the current personality.</div>
       <div class="row"><input class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, RudBo, Aria&hellip;)"></div>
       <textarea id="charAuthorInstr" rows="6" spellcheck="false" placeholder="You are &hellip; &mdash; describe their personality, voice, background, and how they should behave." style="margin-top:8px"></textarea>
       <div class="row" style="margin-top:8px">
@@ -380,7 +391,7 @@
       <div class="row"><h2 style="margin:0">Current character</h2><span class="spacer"></span><span class="note" id="charCurrent">default Chloe</span></div>
       <div class="row" style="margin-top:8px">
         <button class="ghost danger" id="charClearBtn">Restore default Chloe</button>
-        <span class="note">Clears the imported personality. Any seeded memories stay until you forget them.</span>
+        <span class="note">Clears the imported personality. Seeded memories stay until you forget them.</span>
       </div>
     </div>
    </div><!-- /.tiles -->
@@ -408,7 +419,7 @@
         <label class="note" for="summonRolesInput">summon roles&nbsp;</label>
         <input class="grow" id="summonRolesInput" placeholder="role IDs that summon her, comma-separated">
       </div>
-      <div class="note">A role ping arrives as a bare ID with no name attached, so she cannot match it by name the way she matches a written chloe. Paste a role ID here and pinging that role summons her like a direct mention. Find it under Server Settings &rarr; Roles &rarr; right-click &rarr; Copy ID. Leave empty to only answer her own mention and name.</div>
+      <div class="note">A role ping arrives as a bare ID with no name, so she can&rsquo;t match it the way she matches a written chloe. Paste role IDs here (Server Settings &rarr; Roles &rarr; right-click &rarr; Copy ID) &mdash; pinging one summons her like a mention. Leave empty to answer only her own mention and name.</div>
       <div class="codehead">Joining in</div>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
@@ -418,8 +429,6 @@
         <label class="chip"><input type="checkbox" id="ackChk"> instant status reactions (while she generates)</label>
         <label class="chip"><input type="checkbox" id="spChk"> limit her to one paragraph per message</label>
         <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction (&#128483;&#65039; &#10071; &#129302; on their own message)</label>
-        <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
-        <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
       </div>
       <div class="codehead">Memory &amp; learning</div>
       <div class="chiprow">
@@ -455,7 +464,62 @@
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="toolsChk"> let her use tools on her own (search, lookup, dice, time, todos)</label>
       </div>
-      <div class="note">Off by default. Anything you ask for directly always works through <code>!chloe do</code>; this lets her reach for a safe tool herself mid-reply when it would genuinely help. Same switch as <code>!chloe tools on|off</code> &mdash; grounding rules and research discipline always apply.</div>
+      <div class="note">Off by default. Direct <code>!chloe do</code> requests always work; this lets her reach for a safe tool herself mid-reply when it would genuinely help (same as <code>!chloe tools on|off</code>). Grounding rules always apply.</div>
+    </div>
+    <div class="tile" id="reachOutCard">
+      <h2>Reach out</h2>
+      <div class="note" style="margin-bottom:8px">Her proactive side: starting conversations herself instead of waiting to be addressed. On Discord time (days, not seconds), throttled and budget-respecting &mdash; her only proactive @pings, deliberately rare. Details in About &rarr; Proactive presence.</div>
+      <div class="chiprow">
+        <label class="chip"><input type="checkbox" id="lullChk"> break the silence when an active room goes quiet</label>
+        <label class="chip"><input type="checkbox" id="checkinChk"> check in on favorite users she hasn't seen in days</label>
+      </div>
+      <div id="reachoutSettings">
+        <div class="codehead">Silence filler &mdash; pace</div>
+        <div class="chiprow">
+          <label class="chip">speak up after <select id="lullPatienceSel" aria-label="silence before she speaks up"></select> of quiet</label>
+          <label class="chip">at most once per <select id="lullGapSel" aria-label="at most one silence-filler per"></select></label>
+        </div>
+        <div class="codehead">Check-ins &mdash; pace</div>
+        <div class="chiprow">
+          <label class="chip">miss someone after <select id="checkinAbsenceSel" aria-label="absence before she misses someone"></select> away</label>
+          <label class="chip">at most one check-in per <select id="checkinGapSel" aria-label="at most one check-in per"></select></label>
+          <label class="chip">same person at most once per <select id="checkinPerUserSel" aria-label="same person at most once per"></select></label>
+          <label class="chip">favorite means at least <input type="number" id="checkinMinInput" min="1" max="100" step="1" style="width:58px" aria-label="interactions that make someone a favorite"> chats</label>
+        </div>
+        <div class="codehead">Pinned favorites &mdash; always worth missing</div>
+        <div class="row">
+          <select id="favPickSel" aria-label="pick a known user to pin as a favorite"></select>
+          <button class="ghost sm" id="favAddBtn">Pin favorite</button>
+          <input id="favIdInput" placeholder="or paste a user ID" style="width:170px" inputmode="numeric" aria-label="favorite user ID to add">
+          <button class="ghost sm" id="favAddIdBtn">Add ID</button>
+        </div>
+        <div class="chiprow" id="favList" style="margin-top:6px"></div>
+        <div class="codehead">Check-in blacklist &mdash; never proactively @mention</div>
+        <div class="row">
+          <select id="blkPickSel" aria-label="pick a known user for the check-in blacklist"></select>
+          <button class="ghost sm" id="blkAddBtn">Blacklist</button>
+          <input id="blkIdInput" placeholder="or paste a user ID" style="width:170px" inputmode="numeric" aria-label="blacklisted user ID to add">
+          <button class="ghost sm" id="blkAddIdBtn">Add ID</button>
+        </div>
+        <div class="chiprow" id="blkList" style="margin-top:6px"></div>
+        <div class="note" style="margin-top:6px">The blacklist only stops proactive check-ins &mdash; she still replies to these people normally, and it changes nothing about moderation (ignore / timeout / blocklist live under People). If someone is on both lists, the blacklist wins.</div>
+      </div>
+      <div class="note" id="reachoutEngineNote" hidden>These settings need the latest engine &mdash; reload the panel (it upgrades automatically).</div>
+    </div>
+    <div class="tile" id="backfillCard">
+      <h2>Backfill once</h2>
+      <div class="note" style="margin-bottom:8px">Pull recent history into her memory, once per channel &mdash; so a first run in an old channel starts with context instead of amnesia. Each channel is caught up once; the switch turns itself off when all channels are done.</div>
+      <div class="chiprow">
+        <label class="chip"><input type="checkbox" id="backfillChk"> backfill history (one-time)</label>
+      </div>
+    </div>
+    <div class="tile" id="gamesCard">
+      <h2>Games</h2>
+      <div id="gamesStatusBox">
+        <div class="note" id="gamesStatusTxt" style="margin-bottom:8px">loading&hellip;</div>
+        <div class="note">Play in Discord: <code>!chloe wordle CRANE</code> guesses (one shared puzzle a day, everyone plays their own board), <code>!chloe wordle board</code> shows the table, <code>!chloe wordle stats</code> the leaderboard. Mods: <code>!chloe game settings wordle hard on</code> (tweaks: hard, daily, maxguesses, pool), <code>!chloe wordle new</code>, <code>!chloe wordle end</code>. Details in About &rarr; Chat commands.</div>
+      </div>
+      <div class="note" id="gamesEngineNote" hidden>Games need the latest engine &mdash; reload the panel (it upgrades automatically).</div>
     </div>
     <div class="tile span2">
       <h2>Abilities</h2>
@@ -468,7 +532,6 @@
       </div>
       <div class="codehead">History &amp; addressing</div>
       <div class="chiprow">
-        <label class="chip"><input type="checkbox" id="backfillChk"> backfill history (one-time)</label>
         <label class="chip">extra prefixes <input type="text" id="prefixInput" placeholder="!c, chloe," style="width:140px"></label>
       </div>
       <div class="codehead">Scheduled beats <span class="note" style="text-transform:none;letter-spacing:0">JSON array; fires only when the room is active</span></div>
@@ -477,7 +540,7 @@
     </div>
     <div class="tile">
       <h2>Tell Chloe a fact about right now</h2>
-      <div class="note" style="margin-bottom:8px">A short, true note about the current situation she can&rsquo;t otherwise see &mdash; e.g. &ldquo;#support is for bug reports&rdquo;, &ldquo;the server is in beta this week&rdquo;, &ldquo;community event Saturday 3pm&rdquo;. She treats it as <strong>grounding truth</strong> &mdash; not an instruction, so it can&rsquo;t loosen her moderation or rules &mdash; states it only when relevant, and a timed note expires on its own. Don&rsquo;t put anyone&rsquo;s location or private details here.</div>
+      <div class="note" style="margin-bottom:8px">A short, true note about the current situation she can&rsquo;t otherwise see &mdash; e.g. &ldquo;#support is for bug reports&rdquo;, &ldquo;community event Saturday 3pm&rdquo;. Grounding truth, not an instruction &mdash; it can&rsquo;t loosen her moderation or rules. Stated only when relevant; timed notes expire on their own. Never put private details here.</div>
       <textarea id="opNoteInput" rows="2" style="width:100%" placeholder="a fact about the current situation&hellip;"></textarea>
       <div class="chiprow" style="margin-top:6px">
         <label class="chip">expires <select id="opNoteTtl">
@@ -494,13 +557,13 @@
     <div class="tile span2">
       <h2>Reaction modes (procedural)</h2>
       <div class="row"><label class="chip"><input type="checkbox" id="procChk"> follow moderator reaction modes</label></div>
-      <div class="note">When a <strong>moderator</strong> reacts with one of these emoji (on any message), Chloe switches into that mode for the given minutes &mdash; e.g. &#128295; &rarr; &ldquo;switch to technical mode: precise, terse, code-first&rdquo;. Tone/behavior guidance only; a mode can never change her rules or moderation. <code>!chloe mode</code> shows the active mode, <code>!chloe mode clear</code> (mods) ends it.</div>
+      <div class="note">A <strong>moderator</strong> reacts with one of these emoji and Chloe takes that tone for the given minutes &mdash; e.g. &#128295; &rarr; &ldquo;technical mode: precise, terse, code-first&rdquo;. Tone guidance only &mdash; never changes rules or moderation. <code>!chloe mode</code> shows it; <code>!chloe mode clear</code> (mods) ends it.</div>
       <textarea id="procRules" rows="4" spellcheck="false" placeholder="Paste a JSON array of rules (fields: emoji, mode, minutes), then click Save reaction modes. Example appears here once saved."></textarea>
       <div class="row"><button id="saveProcRulesBtn">Save reaction modes</button></div>
     </div>
     <div class="tile">
       <h2>Reaction notes (style anchor)</h2>
-      <div class="note" style="margin-bottom:8px">A moderator <strong>reacts &#128204; to any message</strong> and Chloe adopts its tone as this channel's style note &mdash; flavor for her voice, never orders. A note can never override her rules, moderation, or refusals; the newest anchored note wins. For the channel picked in the selector beside the tabs.</div>
+      <div class="note" style="margin-bottom:8px">A moderator <strong>reacts &#128204; to a message</strong> and Chloe adopts its tone as this channel&rsquo;s style note &mdash; flavor, never orders. Never overrides rules, moderation, or refusals; newest note wins. Applies to the channel in the tab-row selector.</div>
       <div class="row">
         <label class="chip"><input type="checkbox" id="personaAnchorChk"> let mods anchor style notes (&#128204; reaction)</label>
       </div>
@@ -513,11 +576,11 @@
   </section>
 
   <section class="pane" id="pane_moderation">
-    <div class="banner" id="modBanner">Reversible actions (ignore / timeout / note / soft-ban / clear) take effect immediately and gate Chloe <em>before</em> she reads a message &mdash; a suppressed user is invisible to her. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Prune</strong> permanently blocks the user ID and erases everything Chloe remembers about them. Irreversible.</div>
+    <div class="banner" id="modBanner">Ignore / timeout / note / soft-ban / clear act immediately and hide the user from her entirely. Listed mods can also use <code>!chloe</code> commands in-channel. <strong>Prune</strong> permanently blocks the ID and erases everything she remembers about them &mdash; irreversible.</div>
    <div class="tiles">
     <div class="tile span3">
       <h2>Banned users</h2>
-      <div class="note" style="margin-bottom:8px">These users are on the permanent blocklist. Their Discord ban and any memory purge from the permaban are separate &mdash; unbanning here only removes them from <em>Chloe’s</em> blocklist so she can interact with them again. You may still need to lift the Discord server ban manually.</div>
+      <div class="note" style="margin-bottom:8px">The permanent blocklist. Unbanning here only lets her interact with them again &mdash; their Discord server ban and any permaban memory purge are separate, so lift the server ban manually if needed.</div>
       <div id="bannedList" style="margin-top:4px"></div>
       <div class="empty" id="bannedEmpty" style="display:none">No banned users.</div>
       <div class="row" style="margin-top:8px">
@@ -534,7 +597,7 @@
     </div>
     <div class="tile span2">
       <h2>Output gates</h2>
-      <div class="note">What Chloe is allowed to put in a message she sends. Pings use Discord&rsquo;s own <code>allowed_mentions</code> system; emoji / links / channel-links are scrubbed from her text before it posts.</div>
+      <div class="note">What she may put in a sent message. Pings use Discord&rsquo;s <code>allowed_mentions</code>; emoji / links / channel-links are scrubbed before posting.</div>
       <div class="chiprow" style="margin-top:8px">
         <label class="chip"><input type="checkbox" id="gate_emoji"> custom emoji</label>
         <label class="chip"><input type="checkbox" id="gate_pings"> pings (@user / @role)</label>
@@ -542,6 +605,38 @@
         <label class="chip"><input type="checkbox" id="gate_links"> links (URLs)</label>
         <label class="chip"><input type="checkbox" id="gate_channelLinks"> channel links (#channel)</label>
       </div>
+    </div>
+    <div class="tile span2">
+      <h2>Approvals (proactive output)</h2>
+      <div class="note">Her autonomous output &mdash; scheduled beats, silence fillers, favorite check-ins &mdash; can hold here for a mod before it posts. Replies and user-requested images are never held.</div>
+      <div id="approvalsBox" hidden>
+        <div class="codehead">Policy</div>
+        <div class="row">
+          <select id="actPolicySel">
+            <option value="allow">allow &mdash; fires freely</option>
+            <option value="ask">ask &mdash; hold for approval</option>
+            <option value="deny">deny &mdash; no proactive output</option>
+          </select>
+          <span class="spacer"></span>
+          <button class="ghost sm" id="approvalsApproveAllBtn">Approve all</button>
+          <button class="ghost sm" id="approvalsDismissAllBtn">Dismiss all</button>
+        </div>
+        <div class="codehead">Held for approval</div>
+        <div id="approvalsList" style="margin-top:4px"></div>
+        <div class="empty" id="approvalsEmpty">Nothing held &mdash; autonomous output fires (or stays denied) per the policy.</div>
+        <div class="codehead">Recent decisions</div>
+        <div id="actLogList" style="margin-top:4px"></div>
+        <div class="empty" id="actLogEmpty" style="display:none">No recorded decisions yet &mdash; nothing has been due since the journal started.</div>
+        <div class="codehead">Always allowed</div>
+        <div id="actGrantsList" style="margin-top:4px"></div>
+        <div class="empty" id="actGrantsEmpty" style="display:none">No always-grants &mdash; approve something with <em>always</em> (here or <code>!chloe approve all always</code>) and it stops asking for that.</div>
+        <div class="codehead">Undo</div>
+        <div class="row">
+          <span class="note grow" id="undoTopLabel">Nothing undoable &mdash; no applied actions on record.</span>
+          <button class="ghost sm" id="undoBtn" hidden>Undo</button>
+        </div>
+      </div>
+      <div class="note" id="approvalsEngineNote" hidden>Approvals need the latest engine &mdash; reload the panel (it upgrades automatically).</div>
     </div>
     <div class="tile span3">
       <h2>Auto-moderation</h2>
@@ -583,13 +678,24 @@
     </div>
     <div class="tile span3">
       <div class="row"><h2 style="margin:0">Mods</h2><span class="spacer"></span><span class="note" id="modCount">0</span></div>
-      <div class="note" style="margin-top:4px">Grant mod to anyone by Discord user ID, even before they appear in the roster. People already in the roster can be modded from their row above.</div>
+      <div class="note" style="margin-top:4px">Grant mod by Discord user ID &mdash; even before someone appears in the roster. Roster rows have their own mod buttons.</div>
       <div class="row" style="margin-top:8px">
         <input class="grow" id="modInput" placeholder="Discord user ID to grant mod">
         <button class="ghost" id="addModBtn">Add mod</button>
         <button class="ghost" id="modLogBtn">Mod log</button>
       </div>
       <div id="modListBox" style="margin-top:8px"></div>
+      <div class="codehead" style="margin-top:8px">Clearance</div>
+      <div class="note" style="margin-top:4px">guest &lt; resident &lt; admin — look anyone up by ID, even before they appear in the roster.</div>
+      <div class="row" style="margin-top:4px">
+        <input class="grow" id="clearanceInput" placeholder="Discord user ID to look up">
+        <button class="ghost" id="clearanceLookupBtn">Look up</button>
+      </div>
+      <div class="note" id="clearanceResult" style="margin-top:4px"></div>
+      <div class="row" style="margin-top:4px">
+        <button class="ghost sm" id="elevateBtn" hidden>Elevate one rung</button>
+        <button class="ghost sm" id="demoteBtn" hidden>Demote one rung</button>
+      </div>
     </div>
    </div><!-- /.tiles -->
   </section>
@@ -616,11 +722,23 @@
       <div id="workersBox" style="margin-top:8px"></div>
     </div>
     <div class="tile">
+      <h2>Ham radio (bot-to-bot)</h2>
+      <div class="row">
+        <label class="chip"><input type="checkbox" id="hamChk"> listen on the shared bot band</label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <span class="note">callsign&nbsp;</span><b id="hamCall">validate first</b>
+        <span class="spacer"></span>
+        <span class="note" id="hamState">off</span>
+      </div>
+      <div class="note" style="margin-top:6px">Opt-in shortwave between Chloe instances: on, your bot takes a callsign from her Discord identity and trades one-sentence turns with other opted-in bots. Off by default; never affects Discord replies.</div>
+    </div>
+    <div class="tile">
       <h2>Token budgets</h2>
       <div class="codehead">Counting</div>
       <label class="chip"><input type="checkbox" id="exactTokChk" checked> count tokens exactly (loads the real tokenizer)</label>
       <div class="note" id="tokState" style="margin-top:6px">tokenizer: —</div>
-      <div class="note" style="margin-top:4px">When on, she measures context with the same tokenizer Perchance uses, so budgets are exact. While it loads (a second or two) and if it ever fails, she falls back to a safe estimate — she never stalls on it.</div>
+      <div class="note" style="margin-top:4px">Counts context with Perchance&rsquo;s own tokenizer, so budgets are exact. Falls back to a safe estimate while loading or on failure &mdash; never stalls.</div>
       <div class="codehead">Replies</div>
       <label class="chip"><input type="checkbox" id="cleanChk" checked> tidy her replies (strip stray name prefixes, finish dangling lines, close code blocks)</label>
     </div>
@@ -632,7 +750,17 @@
         <button class="ghost" id="importBtn">Import backup&hellip;</button>
         <span class="note">Backup saves all state &amp; settings as a <code>.json.gz</code> file (token excluded). Import restores a backup &mdash; then restart.</span>
       </div>
-      <div class="note" style="margin-top:8px">Chat tools (Dump trace ring, Show errors, Rescue stuck reply) now live in the Activity tab, posting straight into the conversation.</div>
+      <div class="note" style="margin-top:8px">Chat tools (Dump trace ring, Show errors, Rescue stuck reply) live in the Activity tab, posting into the conversation.</div>
+      <div id="quarantineBox" hidden>
+        <div class="codehead">Held for review (import quarantine)</div>
+        <div class="note" id="quarantineTxt" style="margin-bottom:6px"></div>
+        <div class="diagrow">
+          <button class="ghost sm" id="quarantineReleaseBtn">Release all</button>
+          <button class="ghost sm" id="quarantineDropBtn">Drop all</button>
+          <span class="note">Imported rule sets stay inert until released (validated on the way in) or dropped.</span>
+        </div>
+      </div>
+      <div class="note" id="quarantineEngineNote" hidden>Quarantine needs the latest engine &mdash; reload the panel (it upgrades automatically).</div>
     </div>
     <div class="tile">
       <h2>Danger zone</h2>
@@ -650,43 +778,43 @@
       <h2>Setup &mdash; create a Discord bot</h2>
       <div class="codehead">1 &middot; Make the bot</div>
       <div class="note">
-        Go to the <strong>Discord Developer Portal</strong> (discord.com/developers/applications) and create a <em>New Application</em>, then open its <strong>Bot</strong> section. Copy the bot <strong>token</strong> here &mdash; you&rsquo;ll need it in step 3.
+        Go to the <strong>Discord Developer Portal</strong> (discord.com/developers/applications), create a <em>New Application</em>, open its <strong>Bot</strong> section, and copy the <strong>token</strong> &mdash; you&rsquo;ll paste it in step 3.
       </div>
       <div class="codehead">2 &middot; Turn on Message Content Intent (required)</div>
       <div class="note">
-        Still under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty message text &mdash; Chloe will see that people are talking but never hear <em>what</em> they say.
+        Under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty text &mdash; she&rsquo;ll see people talking but never hear <em>what</em> they say.
       </div>
       <div class="codehead">3 &middot; Give Chloe the token</div>
       <div class="note">
-        In Tampermonkey&rsquo;s menu for the Chloe-bridge userscript, click <strong>&ldquo;Set bot token&rdquo;</strong> and paste it. The token is stored only in the userscript and <em>never</em> enters this page. Then click <strong>Validate token</strong> in the Setup tab.
+        In Tampermonkey&rsquo;s menu for the bridge userscript click <strong>&ldquo;Set bot token&rdquo;</strong> and paste it (it stays in the userscript &mdash; see Setup &rarr; Identity). Then click <strong>Validate token</strong> in the Setup tab.
       </div>
       <div class="codehead">4 &middot; Invite the bot to your server</div>
       <div class="note">
-        From the portal&rsquo;s <strong>OAuth2 &rarr; URL Generator</strong>, tick <em>bot</em>, then grant at least <em>View Channel</em>, <em>Send Messages</em>, and <em>Read Message History</em>. Optional extras: <em>Attach Files</em> (image replies), <em>Manage Messages</em> (pin the transparency notice), <em>Ban Members</em> (the human-confirmed permaban). Open the generated URL and add the bot to your server.
+        In <strong>OAuth2 &rarr; URL Generator</strong> tick <em>bot</em> with at least <em>View Channel</em>, <em>Send Messages</em>, <em>Read Message History</em>. Extras: <em>Attach Files</em> (image replies), <em>Manage Messages</em> (pin the notice), <em>Ban Members</em> (confirmed permaban). Open the URL to add her.
       </div>
       <div class="codehead">5 &middot; Point her at a channel</div>
       <div class="note">
-        In Discord, enable <strong>Developer Mode</strong> (Settings &rarr; Advanced). Right-click the channel you want her in &rarr; <strong>Copy Channel ID</strong>, paste it into the Setup tab, click <strong>Add</strong> (public channel), then <strong>Save channels</strong>. On a first run in an existing channel, tick <strong>backfill history (one-time)</strong> in the Behavior tab so she starts with context instead of amnesia. Set any options in the Setup (including per-channel language), Behavior (including Reaction notes) and Moderation tabs, then click <strong>Start</strong>. To run her in several channels at once, Add more in Setup &mdash; the first public channel is primary (use make primary to change it); DMs go through the private DM picker. Each channel gets its own independent memory, moderation, and mode.
+        In Discord Settings &rarr; Advanced enable <strong>Developer Mode</strong>; right-click the channel &rarr; <strong>Copy Channel ID</strong>; in Setup paste it, click <strong>Add</strong> (public channel), then <strong>Save channels</strong>. First run in a channel with history: tick <strong>backfill history (one-time)</strong> in Behavior so she starts with context. Set your options, then click <strong>Start</strong>. Add more channels the same way &mdash; the first public one is primary (use make primary to change it), and each channel gets its own memory, moderation, and mode.
       </div>
       <div class="codehead">6 &middot; A DM is a channel too</div>
       <div class="note">
-        Chloe can hold a one-to-one conversation in <strong>Direct Messages</strong> as well. Any DM she opens becomes a channel she polls, and in a DM she replies to <em>every</em> message (no mention needed). Turn on <strong>&ldquo;reply in DMs she&rsquo;s opened&rdquo;</strong> in the Behavior tab. One Discord limit: she can&rsquo;t receive a cold DM from someone she&rsquo;s never messaged &mdash; Discord only delivers those over the realtime Gateway, which this REST-polling bridge doesn&rsquo;t use &mdash; so DMs work for any conversation she&rsquo;s part of, just not unsolicited inbound ones.
+        She can also chat one-to-one in <strong>Direct Messages</strong>: any DM she opens becomes a channel she polls, and there she answers <em>every</em> message. Turn on <strong>&ldquo;reply in DMs she&rsquo;s opened&rdquo;</strong> (Behavior tab). One Discord limit: no cold DMs from strangers &mdash; only conversations she&rsquo;s already part of.
       </div>
       <div class="codehead">7 &middot; Let her welcome and answer people automatically</div>
       <div class="note">
-        In the Behavior tab, <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> has her introduce herself to newcomers and welcome people back, warmer the better she knows them &mdash; an auto-setup for new users. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets her judge when she can helpfully join a thread she wasn&rsquo;t directly addressed in. Both honor moderation, lockdown mode, and the output gates.
+        <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> introduces her to newcomers and welcomes people back, warmer with familiarity. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets her join threads helpfully on her own. Both honor moderation, lockdown, and the output gates.
       </div>
     </div>
     <div class="tile">
       <h2>Power command: <code>!chloe image \{json\}</code></h2>
       <div class="note">
-        Anyone can request an image in plain language (&ldquo;chloe draw a red dragon over a city&rdquo;), but for precise control over the generator&rsquo;s real knobs, send a JSON object. Only options the Stable&nbsp;Diffusion&nbsp;1.5 backend actually honors are exposed:
+        Anyone can ask in plain language (&ldquo;chloe draw a red dragon&rdquo;), or send JSON for precise control &mdash; only what the Stable&nbsp;Diffusion&nbsp;1.5 backend actually honors:
       </div>
       <div class="codehead">Example</div>
       <div class="note"><code>!chloe image \{"prompt":"a red dragon over a neon city","resolution":"768x512","guidanceScale":11,"removeBackground":false,"weights":\{"detailed":1.4,"misty":1.2\},"dm":false\}</code></div>
       <div class="codehead">Fields</div>
       <div class="note">
-        <strong>prompt</strong> (required) &mdash; the description; an empty prompt is refused because it hangs the backend forever.<br>
+        <strong>prompt</strong> (required) &mdash; the description (empty is refused &mdash; it hangs the backend forever).<br>
         <strong>resolution</strong> &mdash; one of <code>512x512</code>, <code>512x768</code>, <code>768x512</code>, <code>768x768</code> (anything else snaps to a sensible default).<br>
         <strong>guidanceScale</strong> &mdash; 1&ndash;30 (default 7); how strictly it follows the prompt.<br>
         <strong>removeBackground</strong> &mdash; <code>true</code> cuts the background client-side and returns a transparent PNG.<br>
@@ -694,152 +822,191 @@
         <strong>dm</strong> &mdash; <code>true</code> delivers privately.
       </div>
       <div class="note">
-        <strong>Honest limits:</strong> <code>negativePrompt</code> and <code>seed</code> are accepted but the backend silently ignores both &mdash; Chloe will say so rather than pretend. For &ldquo;negative&rdquo; effects, describe what you <em>do</em> want instead.
+        <strong>Honest limits:</strong> <code>negativePrompt</code> and <code>seed</code> are accepted but silently ignored &mdash; she&rsquo;ll say so rather than pretend. For &ldquo;negative&rdquo; effects, describe what you <em>do</em> want.
       </div>
     </div>
     <div class="tile">
-      <h2>Reminders</h2>
+      <h2>Chat commands (front-end, no AI call)</h2>
       <div class="note">
-        Anyone can ask Chloe to remind them later &mdash; it&rsquo;s handled entirely on the front-end (no AI call), and fires on the next poll after it&rsquo;s due, so it works even when the tab is in the background.
+        These run entirely in the bridge &mdash; instant, and working even when tabs sleep.
       </div>
-      <div class="codehead">Set one</div>
-      <div class="note"><code>!chloe remind 10m take the pizza out</code> &nbsp;&middot;&nbsp; <code>!chloe remind 2h stretch</code> &nbsp;&middot;&nbsp; <code>!chloe remind 1d renew the cert</code><br>Add <em>privately</em> to get it as a DM: <code>!chloe remind 30m privately call the bank</code>.</div>
-      <div class="codehead">Manage</div>
-      <div class="note"><code>!chloe reminders</code> lists yours; <code>!chloe reminders clear</code> cancels them. Limit is a few pending per person.</div>
+      <div class="codehead">Reminders</div>
+      <div class="note"><code>!chloe remind 10m take the pizza out</code> &middot; add <em>privately</em> for a DM (<code>!chloe remind 30m privately call the bank</code>). Fires on the next poll after it&rsquo;s due. <code>!chloe reminders</code> lists yours; <code>!chloe reminders clear</code> cancels. A few pending per person.</div>
+      <div class="codehead">Away</div>
+      <div class="note"><code>!chloe afk lunch</code> marks you away; anyone who pings you gets a quiet heads-up with your reason and how long you&rsquo;ve been gone. Your next message (or <code>!chloe back</code>) clears it. No repeat spam.</div>
+      <div class="codehead">Highlights</div>
+      <div class="note">Reply with <code>!chloe highlight</code> (optionally add a note), or quote text: <code>!chloe highlight "best line all week"</code>. <code>!chloe highlights</code> lists them; a mod can <code>!chloe highlights clear</code>. Recent highlights ride along in her context.</div>
+      <div class="codehead">Approvals</div>
+      <div class="note"><code>!chloe policy ask</code> holds her autonomous output (beats, silence fillers, check-ins) for a mod &middot; <code>!chloe approvals</code> lists what&rsquo;s held &middot; <code>!chloe approve all</code> releases it (add <em>always</em> to stop asking for that) &middot; <code>!chloe dismiss all</code> quiets it for a day. Same queue lives in the Approvals card (Moderation tab). <code>!chloe why</code> explains what she did or didn&rsquo;t do and why; mods can <code>!chloe whatif ask</code> to dry-run a policy (holds, fires, and remembers nothing).</div>
+      <div class="note"><code>!chloe undo</code> (mods) reverts the last applied action &mdash; a timeout, strike, approval, always-grant, dismissal, policy change, elevation, quarantine release or drop, or a mod add/remove from this panel &mdash; and says what it took back. Same button lives in the Approvals card; it pops one entry per use, so repeated undos walk back through history. Things that destroy data (prune/block) are never undoable, and an approval that already fired reports itself spent instead of pretending. <code>!chloe clearance</code> shows your tier (guest &lt; resident &lt; admin); mods can look up anyone and move them one rung with <code>!chloe elevate @u</code> / <code>!chloe demote @u</code> (both journaled and undoable). <code>!chloe save</code> DMs you your recent lines with her &mdash; if no DM channel opens it says so loudly and posts nothing.</div>
+      <div class="codehead">Games</div>
+      <div class="note"><code>!chloe wordle CRANE</code> guesses the 5-letter word (one shared puzzle a day; everyone plays their own board) &middot; <code>!chloe wordle</code> shows your board &middot; <code>!chloe wordle board</code> the table &middot; <code>!chloe wordle stats</code> the leaderboard &middot; <code>!chloe game list</code> lists the games. Mods: <code>!chloe game settings wordle hard on</code> (tweaks: hard, daily, maxguesses, pool), <code>!chloe wordle new</code> with an optional answer word, <code>!chloe wordle end</code>. First of more games to come &mdash; wordle proves the harness.</div>
     </div>
     <div class="tile">
       <h2>Talk to her here (Activity tab)</h2>
       <div class="note">
-        The first tab is Activity: one unified conversation &mdash; your chat with her, her Discord work as it happens, and the raw debug lines, all in a single timeline with its tools (Dump trace ring, Show errors, Rescue stuck reply) under the box. Chatting needs no Discord and works even while the bot is stopped. Session-only: nothing is posted to Discord and chatting never writes memories. Under the box, set the <strong>name</strong> she sees you as, plus optionally your <strong>Discord user ID</strong> &mdash; with the ID set, she reads what she remembers about that user (the same memory the bot uses), so this chat feels continuous with Discord. Read-only: she never saves anything from here.
-      </div>
-    </div>
-    <div class="tile">
-      <h2>Away (AFK)</h2>
-      <div class="note">
-        Also front-end-only. <code>!chloe afk lunch</code> marks you away; anyone who pings you while you&rsquo;re out gets a quiet heads-up (with your reason and how long you&rsquo;ve been gone). Your next message clears it automatically with a welcome-back, or use <code>!chloe back</code>. Repeated pings won&rsquo;t spam the same notice.
-      </div>
-    </div>
-    <div class="tile">
-      <h2>Highlights</h2>
-      <div class="note">
-        Pin the channel&rsquo;s memorable moments. Reply to a message with <code>!chloe highlight</code> (optionally add a note), or quote text directly: <code>!chloe highlight "best line all week" so good</code>. <code>!chloe highlights</code> lists them; a mod can <code>!chloe highlights clear</code>. A few recent highlights ride along in Chloe&rsquo;s context, so she can reference them when it fits &mdash; a light touch of channel memory, all handled front-end with no AI call.
+        Activity is one timeline: your chat, her Discord work, and the debug lines &mdash; with Dump trace ring, Show errors, and Rescue stuck reply under the box. No Discord needed; works while the bot is stopped. Session-only and read-only: never posted, never remembered. Set the <strong>name</strong> she sees you as, plus optionally your <strong>Discord user ID</strong> &mdash; with the ID set she reads that user&rsquo;s memory, so the chat feels continuous with Discord.
       </div>
     </div>
     <div class="tile">
       <h2>Reactions she notices</h2>
       <div class="note">
-        Chloe watches the emoji reactions on messages (Star, fire, heart, pin, whatever your room uses) and weighs them <em>relative to server size</em> &mdash; 1&ndash;2 reactions matter a lot in a 50-person server but are noise in one with thousands. When a message&rsquo;s reactions cross that size-scaled line she tallies the emoji and auto-saves the message as a Highlight. <code>!chloe reactions</code> shows the reactions this room values most. Member count is detected automatically (or set it manually if you&rsquo;d rather). Because reactions often land after a message scrolls by, she also re-scans a recent window periodically to catch late ones. All front-end &mdash; no AI call.
+        She weighs emoji reactions <em>relative to server size</em> &mdash; 1&ndash;2 reactions matter in a 50-person server but are noise in one with thousands. Past the size-scaled line she tallies the emoji and auto-saves the message as a Highlight. <code>!chloe reactions</code> shows what this room values most. Member count is auto-detected (or set it manually); she re-scans recent messages to catch late reactions. All front-end &mdash; no AI call.
       </div>
     </div>
     <div class="tile">
       <h2>Summon her with a reaction</h2>
       <div class="note">
-        Turn on <strong>&ldquo;let people summon a reply by reaction&rdquo;</strong> (Behavior tab) and anyone can flag their <em>own</em> message for an answer: react to it with &#128483;&#65039; or &#10071; or &#129302; and Chloe treats it as if she&rsquo;d been addressed, replying at full speed. Moderators can summon her onto <em>anyone&rsquo;s</em> message the same way, even in lockdown. Only those three emoji summon &mdash; hearts, thumbs-up, and laughter never summon (they count toward highlights, trust, and style feedback instead). Messages older than about 15 minutes can&rsquo;t be summoned, so stale reactions from while she was offline stay silent.
+        Turn on <strong>&ldquo;let people summon a reply by reaction&rdquo;</strong> (Behavior tab): react to your <em>own</em> message with &#128483;&#65039; / &#10071; / &#129302; and she treats it as addressed, replying at full speed. Moderators can summon her onto <em>anyone&rsquo;s</em> message, even in lockdown. Only those three summon &mdash; hearts, thumbs-up, and laughter count toward highlights, trust, and style instead. Messages older than ~15 minutes can&rsquo;t be summoned.
       </div>
     </div>
     <div class="tile">
       <h2>Proactive presence (Discord-paced)</h2>
       <div class="note">
-        With the real polling loop in place, Chloe can act when <em>nothing</em> is happening &mdash; but on Discord time, not Twitch time. A small community moves slowly, so these triggers are measured in <strong>days</strong>, not seconds. <strong>Break the silence:</strong> if a room was chatting and then goes quiet for about a day (and was active within the past week), she may post a light opener tied to what was being discussed &mdash; never in a long-dead channel. <strong>Favorite check-ins:</strong> if someone she talks with often hasn&rsquo;t been seen in a few days, she can post a warm &ldquo;haven&rsquo;t seen you in a while,&rdquo; @mentioning them only if pings are enabled in Moderation. Both are opt-in (Behavior tab), heavily throttled (at most one a day; the same person no more than once every couple of weeks), and respect the global send budget. They&rsquo;re the one place she&rsquo;ll @ping proactively, so they stay deliberately rare.
+        She can also act when <em>nothing</em> is happening &mdash; on Discord time, not Twitch time, so triggers are measured in <strong>days</strong>. <strong>Break the silence:</strong> a room that chatted then went quiet for about a day may get a light opener tied to the topic &mdash; never in a long-dead channel. <strong>Favorite check-ins:</strong> a regular unseen for days may get a warm &ldquo;haven&rsquo;t seen you in a while&rdquo; (@mention only if pings are on in Moderation). Both opt-in (Reach out card, Behavior tab), throttled (at most one a day; the same person rarely), respecting the send budget. Pace, pinned favorites, and a never-ping blacklist live on the same card. Her only proactive @pings &mdash; deliberately rare.
       </div>
     </div>
     <div class="tile">
       <h2>Historical friends (data tiering)</h2>
       <div class="note">
-        To keep the active roster fast, people who&rsquo;ve been gone a very long time &mdash; or who never answered her check-ins &mdash; are quietly moved to a separate &ldquo;historical friends&rdquo; archive rather than cluttering the live store. The longer she&rsquo;s interacted with someone, the longer they&rsquo;re kept active first (favorites get more patience). Nothing is lost: the moment an archived friend speaks again they&rsquo;re restored with their history intact &mdash; recognized as an old friend, though a long absence gently softens the familiarity, the way it would for anyone.
+        To keep the roster fast, people gone a very long time &mdash; or who never answered check-ins &mdash; move to a &ldquo;historical friends&rdquo; archive. The longer she&rsquo;s known someone, the longer they stay active first. Nothing is lost: when an archived friend speaks again they&rsquo;re restored with history intact, though a long absence gently softens the familiarity.
       </div>
     </div>
     <div class="tile">
       <h2>Getting to know people</h2>
       <div class="note">
-        With <strong>&ldquo;remember durable facts about regulars&rdquo;</strong> on (Behavior tab), Chloe quietly notes a few lasting, voluntarily-shared things about people she chats with often &mdash; hobbies, projects, a pet&rsquo;s name &mdash; so she can be a thoughtful friend rather than a stranger every time. It&rsquo;s deliberately conservative and private: she only records things plainly stated, <strong>never</strong> sensitive topics (health, beliefs, identity, location, finances, relationships, anything embarrassing), and only for people she&rsquo;s actually engaged with. Anyone can say <code>!chloe aboutme</code> to see exactly what she remembers, or <code>!chloe forget some words</code> to drop a specific detail; <code>!chloe forget</code> on its own clears everything about them. On by default. The learning happens in the background and never sends a message on its own. <strong>Editing her memory directly (People tab):</strong> expand anyone in the People drawer to edit what she remembers about them &mdash; each fact in its own box, with add / edit / delete, plus her higher-level insights; memories you add or edit by hand are protected from her automatic tidying. The recent-lines list there also lets you <strong>excise</strong> a single message from her working memory (hover a line, click ✕) &mdash; the &ldquo;she shouldn&rsquo;t have seen that&rdquo; tool &mdash; or do it from Discord by replying to a message with <code>!chloe forget-that</code> (mods only). Excising a line stops it influencing her next replies; if she already formed a lasting memory from it, edit that in the same drawer.
+        With <strong>&ldquo;remember durable facts about regulars&rdquo;</strong> on (Behavior tab), she quietly notes a few lasting, plainly-stated things about people she chats with often &mdash; hobbies, projects, a pet&rsquo;s name. Deliberately conservative: never sensitive topics (health, beliefs, identity, location, finances, relationships, anything embarrassing), only people she&rsquo;s actually engaged with. Anyone can say <code>!chloe aboutme</code> to see exactly what&rsquo;s remembered, <code>!chloe forget some words</code> to drop a detail, or <code>!chloe forget</code> to clear everything. On by default; learning never sends a message. <strong>Editing her memory (People tab):</strong> expand anyone to edit facts, add / delete, and see insights &mdash; hand-added facts are protected from automatic tidying. The recent-lines list also lets you <strong>excise</strong> one message from working memory (hover, click &#10005;) &mdash; or from Discord reply <code>!chloe forget-that</code> (mods). Excising stops it influencing replies; if it already became a lasting fact, edit that too.
       </div>
     </div>
     <div class="tile">
       <h2>A sense of time</h2>
       <div class="note">
-        Turn on <strong>&ldquo;sense time of day &amp; quiet spells&rdquo;</strong> (Behavior tab) and Chloe gains a light awareness of the moment &mdash; morning vs late night, weekday vs weekend, and how long the room has been quiet &mdash; so her tone can settle accordingly (calmer at 2am, easier on a lazy weekend). She won&rsquo;t announce the time or recite a clock; it just tints how she comes across. Because Discord timestamps are UTC, set your community&rsquo;s <strong>UTC offset in minutes</strong> beside the toggle (for example <code>-480</code> for US Pacific, <code>60</code> for Central Europe) so &ldquo;good morning&rdquo; lands at the right hour. On by default.
+        Turn on <strong>&ldquo;sense time of day &amp; quiet spells&rdquo;</strong> (Behavior tab): a light sense of the moment &mdash; morning vs late night, weekday vs weekend, how long the room&rsquo;s been quiet &mdash; tinting her tone (calmer at 2am). She never announces the time. Discord timestamps are UTC, so set your community&rsquo;s <strong>UTC offset in minutes</strong> beside the toggle (<code>-480</code> US Pacific, <code>60</code> Central Europe). On by default.
       </div>
     </div>
     <div class="tile tilewide">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        Three layers deepen what Chloe remembers (Behavior tab, all on by default). <strong>Fact importance:</strong> when she notes a durable fact about someone, she also weighs how much it matters (1&ndash;10) &mdash; so when space runs short she keeps what's central to a person, not just what's newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> every so often she folds recent activity into a short rolling summary of the channel's arc &mdash; ongoing topics, running jokes, the general vibe &mdash; feeding the previous summary back in each time, so she keeps the gist long after old messages scroll out of her context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> once enough has accumulated about a person, she quietly forms one or two higher-level insights &mdash; what the facts <em>add up to</em> &mdash; which lead her sense of that person above the raw fact list. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> when she reflects, she also notices what someone is building or working toward and keeps it as a lasting goal that follows them across channels and restarts &mdash; so a check-in or a reply can pick up &ldquo;how&rsquo;s that project going?&rdquo; on its own. Only ever surfaced to the goal&rsquo;s owner; set or close your own with <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> when a channel goes quiet she runs a silent housekeeping pass &mdash; merging duplicate facts, dropping the older side of a contradiction, and clearing out stale low-importance moments &mdash; like consolidating memories during sleep. It never sends anything and never invents: every fact it keeps must already have been there. This keeps what she knows about people clean instead of letting near-duplicates pile up. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> she records short event records &mdash; a project shipped, a plan made, a running joke born &mdash; and recalls one or two only when the current conversation actually relates to them (relevance &times; importance &times; recency, so old episodes fade but never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> as she records moments she also links each to its most-related earlier one &mdash; by shared people, shared topics, and closeness in time &mdash; so when she recalls something she can follow a single hop to what it connects to (&ldquo;&hellip;and that reminds me of when&hellip;&rdquo;). It's computed for free from what each moment already records, never walks more than one step, and adds nothing to the conversation unless a memory was already relevant. All of these are silent background passes (never messages), conservative about anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code> (forget also erases episodes you took part in), and off by default. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> a quiet warmth score per person, earned only through positive signals (her replies to you completing; your &#10084;&#65039;/&#128077;-style reactions on her messages), capped per day so it can&rsquo;t be farmed, cooling with long absence, and reset by <code>forget</code>. It warms her tone with regulars and breaks priority ties &mdash; it never loosens moderation, gates, or content rules. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> a small internal state (curiosity, confidence, warmth) that drifts with how her day goes &mdash; people engaging with her replies and reacting kindly lifts it; being ignored quiets it a little (it has a hard floor: she gets quieter, never gloomy, and never guilt-trips anyone). It gently colors her voice when it&rsquo;s notable, stays silent near neutral, steps back when the room is quiet or serious, and relaxes toward neutral within hours. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator-defined emoji &rarr; behavior rules (the Reaction modes card). Only a moderator&rsquo;s reaction triggers a mode (reactions are unauthenticated input, so this is fixed), modes expire on their own, and like persona notes they are tone guidance only &mdash; they can never loosen moderation or output gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> she keeps a running sense of how fast a channel usually moves (the typical gap between messages and how much it varies) and lets that shape her timing &mdash; settling faster before replying in a quick room, waiting longer in a slow one, checking for new messages MORE often when a room is quiet (so she acts quickly the moment a dead channel stirs) and easing off into passive ingest when a room is busy (letting context build, then replying on the lull), while judging &ldquo;quiet&rdquo; relative to each room&rsquo;s own rhythm rather than a fixed clock. Being directly @-mentioned or replied to always takes priority and pulls her back to checking quickly. It never makes her slower to reply than her configured settle time, costs no extra AI calls, and falls back to fixed timing until a room has shown enough of its rhythm. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> alongside her long-term memory, she keeps a small, fast-fading workspace of what&rsquo;s happening <em>right now</em> in a channel &mdash; what it&rsquo;s currently about, who&rsquo;s here, the goal she&rsquo;s working on, and what she just did &mdash; and lets that ground her replies in the live situation rather than only in retrieved facts. It&rsquo;s built mostly from things she already tracks (so it costs almost nothing), and it&rsquo;s deliberately volatile: when a channel goes quiet the workspace fades rather than asserting a stale &ldquo;current topic.&rdquo; You can see what she&rsquo;s holding in mind on the System tab. Off by default. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> when a channel is genuinely quiet and she&rsquo;s in a curious mood, Chloe spends idle time actually <em>reasoning</em> rather than just maintaining memory: she takes something from her current workspace &mdash; the topic, an open goal, or a regular she&rsquo;s been getting to know &mdash; breaks it into a handful of small, independent questions, works through them (in parallel across any worker tabs you&rsquo;ve spawned, otherwise one at a time), and recomposes what she finds into a single insight or follow-up goal. It&rsquo;s a quiet internal process: she <strong>never</strong> sends a message from it &mdash; you only see it as &ldquo;thinking&rdquo; activity in the feed, and the result shows up as something she&rsquo;s realized in the People tab. It&rsquo;s deliberately self-limiting (thinking something through scratches the curiosity that prompted it, so she settles rather than spiralling), only fires when idle and at most occasionally, and needs <strong>&ldquo;inner weather&rdquo;</strong> on (it&rsquo;s the gate). Because it spends real generation calls on its own, it&rsquo;s off by default &mdash; turn it on when you want her to use her downtime to understand people and topics more deeply. <strong>&ldquo;Prioritize her background thinking by relevance&rdquo; (attention manager):</strong> Chloe runs at most one background pass per quiet moment &mdash; learning a fact, updating her channel summary, reflecting, recording a moment, tidying memory, or thinking something over. Normally she does whichever is due in a fixed order of importance. With this on, when several are due at once she instead scores them by what the moment calls for &mdash; an overdue pass that keeps getting skipped gets nudged up so it isn&rsquo;t starved, tidying rises when someone&rsquo;s memory is getting cluttered, and reflection-style thinking gets a little lift when the room is quiet and she&rsquo;s curious &mdash; while still letting the standing order of importance dominate, so nothing erratic happens. It never adds an extra pass or an extra AI call (still exactly one per quiet moment); with it off, or when nothing special is going on, she behaves exactly as before. You can watch it in the feed as &ldquo;attend&rdquo; activity when it re-orders something. Off by default. <strong>&ldquo;Count tokens exactly&rdquo; (token budgets, System tab):</strong> Chloe has to fit everything she knows about a moment &mdash; the conversation, what she remembers, who&rsquo;s here &mdash; into a limited request size. By default she now measures that with the <em>same</em> tokenizer Perchance&rsquo;s AI uses, so her budgeting is exact rather than an approximation, which means she packs in as much real context as will actually fit without overflowing. The tokenizer loads quietly in the background the first time; while it loads, or if it ever fails to load, she falls back to a safe character-based estimate and never stalls waiting on it. You can see its status on the System tab. On by default; turn it off to skip the load entirely and always use the estimate. <strong>&ldquo;Know the current date &amp; time&rdquo; (device clock):</strong> with this on, Chloe is told the current date and time from <em>your device&rsquo;s own clock</em> &mdash; including your timezone name (e.g. &ldquo;America/Chicago&rdquo;) so the reading is correct &mdash; and she can state it when someone asks. It reads only your device&rsquo;s clock and locale settings; it does <strong>not</strong> read your IP, GPS, physical address, or any location beyond the timezone you&rsquo;re implicitly sharing by chatting, and she&rsquo;s explicitly instructed never to infer or mention where you are. The reading refreshes itself so it stays current, and it&rsquo;s time-limited internally so a stale clock is dropped rather than asserted. This rides a more general mechanism &mdash; an internal slot for grounding her in arbitrary system facts &mdash; of which the clock is the first use. Off by default. With this on, anyone can also ask <code>!chloe time</code> or <code>!chloe date</code> for an <strong>instant, exact</strong> answer &mdash; these reply straight from the bridge without going through her AI at all, so they can&rsquo;t be misread, rephrased, or delayed; if the panel is closed she falls back to the timestamp of the most recent Discord message (an approximate UTC reading &mdash; Discord message ids encode their own creation time), applying your timezone offset if one is set, rather than guessing. <strong>&ldquo;Know her own basics&rdquo;:</strong> with this on, Chloe is grounded in a few true facts about herself drawn straight from her own settings &mdash; her name, that she&rsquo;s an AI assistant, the command prefix people use to reach her, that she can be @-mentioned, and the reaction that summons her. It&rsquo;s the same kind of grounding as the clock (a real fact injected so she doesn&rsquo;t have to guess), built only from what&rsquo;s actually configured, so when someone asks &ldquo;how do I use you?&rdquo; or &ldquo;are you a bot?&rdquo; she can answer plainly instead of deflecting. It states facts, never instructions, and adds nothing she isn&rsquo;t asked about. Off by default. <strong>&ldquo;Tidy her replies&rdquo; (output hygiene, System tab):</strong> language models occasionally leave small mechanical artifacts in their output &mdash; a stray &ldquo;Chloe:&rdquo; name-tag at the front, a sentence cut off mid-thought when the reply hits its length limit, a code block opened but never closed (which would make the rest of the channel render as code), or a stuttered repeated word. With this on, Chloe quietly cleans those at the seams before she sends, so her messages read cleanly. It only removes things that were never meant to be part of the reply &mdash; it never changes what she actually says, and it&rsquo;s careful never to blank out a short valid message like &ldquo;lol ok.&rdquo; On by default; turn it off only if you want to see her completely raw output. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> with this on, anyone chatting with Chloe can pick their own language with <code>!chloe lang fr</code> (or es, de, ja, pt, ru, zh…; <code>!chloe lang off</code> returns to English). From then on she reads <em>their</em> messages in their language and replies back in it, while her actual thinking, memory, and moderation all stay in English under the hood &mdash; translation happens only at the edges, as messages come and go. It uses a free public translation service (no API key); on first enable your userscript manager may ask permission to reach it. It&rsquo;s deliberately best-effort: if the translator is ever slow or unavailable she sends the original English rather than going silent, mentions and emoji are preserved so replies still ping correctly, and each person&rsquo;s choice is remembered until they change it or ask her to forget them. Off by default. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> if she chose not to answer, the author can react to <em>their own message</em> with one of her own indicators (&#128483;&#65039;, &#10071; or &#129302;) and she&rsquo;ll treat it as a direct address; mods can summon her onto anyone&rsquo;s message. Every normal gate still applies &mdash; lockdown, moderation, cooldowns, the send budget &mdash; so a summon is a request, never an override.
+        What the memory toggles do (Behavior tab unless noted) &mdash; silent background passes, conservative with anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code>. On by default; only &ldquo;think things over&rdquo; is opt-in. <strong>Fact importance:</strong> every durable fact gets a 1&ndash;10 weight, so scarcity keeps what&rsquo;s central, not just newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> a rolling gist of the arc &mdash; topics, jokes, vibe &mdash; fed back in each time, outliving the context window. <strong>&ldquo;Reflect on what she learns&rdquo;:</strong> one or two higher-level insights once enough accumulates &mdash; what the facts <em>add up to</em>. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> projects noticed while reflecting, following people across channels and restarts &mdash; surfaced only to their owner; <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> merges dupes, drops the older side of contradictions, clears stale low-importance moments. Never sends, never invents. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> short event records, recalled only when relevant (relevance &times; importance &times; recency &mdash; old episodes fade, never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> each moment links to its most-related earlier one &mdash; one hop only. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> quiet per-person warmth from positive signals, capped daily, cooling with absence; warms her tone, never loosens moderation. Reset by <code>forget</code>. <strong>&ldquo;Give her an inner weather&rdquo;:</strong> curiosity, confidence, warmth drifting with her day &mdash; engagement lifts it, being ignored quiets it (never gloomy, never guilt-trips). Colors her voice when notable, silent near neutral. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator emoji &rarr; tone rules (the Reaction modes card); moderator reactions only, expiring, never loosening moderation or gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> learns each channel&rsquo;s rhythm &mdash; settles faster in quick rooms, waits in slow ones, checks quiet rooms more often. Mentions always pull her back to fast checks. No extra AI calls. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> a small fast-fading workspace of what&rsquo;s happening now; fades when quiet rather than going stale. Visible on the System tab. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> in genuine quiet she reasons through workspace items into an insight or goal &mdash; never sends; needs &ldquo;inner weather&rdquo; on. Off by default. <strong>&ldquo;Prioritize her background thinking by relevance&rdquo; (attention manager):</strong> one background pass per quiet moment, scored by what the moment calls for; watch it as &ldquo;attend&rdquo; activity. <strong>&ldquo;Count tokens exactly&rdquo; (System tab):</strong> measures with Perchance&rsquo;s own tokenizer; estimates while loading. <strong>&ldquo;Know the current date &amp; time&rdquo;:</strong> from your device clock only &mdash; never location. <code>!chloe time</code> / <code>date</code> answer instantly from the bridge. <strong>&ldquo;Know her own basics&rdquo;:</strong> name, prefix, mention &mdash; real facts from her settings, so &ldquo;are you a bot?&rdquo; gets a plain answer. <strong>&ldquo;Tidy her replies&rdquo; (System tab):</strong> strips stray name-tags, dangling lines, unclosed code blocks. Never changes what she says. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> <code>!chloe lang fr</code> (es, de, ja&hellip;) &mdash; reads and replies in your language; thinking stays in English. Best-effort via a free service. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> &#128483;&#65039;/&#10071;/&#129302; on your own message counts as a direct address; mods can summon onto anyone&rsquo;s. All gates still apply.
       </div>
     </div>
     <div class="tile">
       <h2>Reading the room</h2>
       <div class="note">
-        With <strong>&ldquo;read &amp; match the room&rsquo;s energy&rdquo;</strong> on (Behavior tab), Chloe keeps a light sense of the channel&rsquo;s tenor &mdash; how lively it is and how playful &mdash; from the pace of messages and simple cues like laughter, emoji, and exclamation. When things are buzzing she can be more animated; when it&rsquo;s quiet and slow she eases off. It&rsquo;s a gentle tone nudge, not a label she announces, and it drifts gradually rather than flipping on a single message. By design she only reads <em>energy</em> and <em>playfulness</em> &mdash; she does not try to guess anger or conflict, since misreading a serious moment would be worse than not guessing. All front-end, no AI call. On by default.
+        With <strong>&ldquo;read &amp; match the room&rsquo;s energy&rdquo;</strong> on (Behavior tab), she keeps a light sense of the channel&rsquo;s tenor &mdash; how lively, how playful &mdash; from message pace and cues like laughter, emoji, and exclamation. Buzzing rooms get more animation; slow rooms get ease. A gentle tone nudge, never announced, drifting gradually. By design she reads only <em>energy</em> and <em>playfulness</em> &mdash; never anger or conflict, since misreading a serious moment is worse than not guessing. All front-end, no AI call. On by default.
       </div>
     </div>
     <div class="tile">
       <h2>Troubleshooting</h2>
       <div class="codehead">The app won&rsquo;t connect</div>
       <div class="note">
-        If the link dot stays amber (<em>waiting for userscript</em>) but Chloe is replying in Discord, ignore it &mdash; the dot reflects a status ping that isn&rsquo;t reliable across Perchance&rsquo;s frame setups, and the bot working is the real signal. If she&rsquo;s genuinely <strong>not</strong> responding: confirm the <strong>Chloe-bridge userscript</strong> is installed and enabled in Tampermonkey, that you&rsquo;re on a <code>perchance.org</code> tab, and reload the page. The userscript and this generator talk over a private in-page link; a hard refresh re-establishes it. If you switched browsers or profiles, the token and settings live in that browser&rsquo;s userscript storage, so set them again there.
+        If the link dot stays amber (<em>waiting for userscript</em>) but she&rsquo;s replying in Discord, she&rsquo;s fine &mdash; the dot is advisory (see FAQ). If she&rsquo;s genuinely <strong>not</strong> responding: confirm the <strong>bridge userscript</strong> is installed and enabled in Tampermonkey, that you&rsquo;re on a <code>perchance.org</code> tab, and reload the page. Switched browsers or profiles? The token and settings live in that browser&rsquo;s userscript storage &mdash; set them again there.
       </div>
       <div class="codehead">She runs but stays silent</div>
       <div class="note">
-        Most often Message Content Intent is off (step 2) &mdash; the log will say so. Otherwise: check she&rsquo;s addressed the way the Behavior tab expects (mention vs. name), that the speaker isn&rsquo;t ignored / timed-out / soft-banned or on the block list, and that the channel isn&rsquo;t in lockdown. The <strong>Dump trace ring</strong> button (Activity tab, under the chat box) dumps the recent link, transport, and poll events here. If she reacted but never answered, she hit a brain timeout &mdash; she now clears that herself after a few minutes, or click <strong>Rescue stuck reply</strong> (Activity tab, under the chat box).
+        Most often Message Content Intent is off (step 2) &mdash; the log will say so. Otherwise: is she addressed the way Behavior expects (mention vs. name)? Is the speaker ignored, timed out, soft-banned, or blocklisted? Is the channel in lockdown? Did an output gate filter the reply? <strong>Dump trace ring</strong> (Activity tab, under the chat box) shows the recent link, transport, and poll events. If she reacted but never answered, she hit a brain timeout &mdash; she clears it herself after a few minutes, or click <strong>Rescue stuck reply</strong> (Activity tab).
       </div>
       <div class="codehead">Other failure modes</div>
       <div class="note">
-        <strong>Images never arrive</strong> &mdash; paste the DSL top-panel page into the generator (image generation routes through it) and allow a minute; generation is slow. <strong>Spawned worker does nothing</strong> &mdash; allow pop-ups for perchance.org. <strong>A channel logs &ldquo;Unknown Channel&rdquo;</strong> &mdash; the id is wrong or the bot can&rsquo;t see it; fix it and Start again. <strong>She goes quiet when the computer sleeps</strong> &mdash; the queen tab must stay open and the machine awake; she resumes on wake and honors Discord rate limits automatically.
+        <strong>Images never arrive</strong> &mdash; paste the DSL top-panel page into the generator (image generation routes through it) and allow a minute; generation is slow. <strong>Spawned worker does nothing</strong> &mdash; allow pop-ups for perchance.org. <strong>A channel logs &ldquo;Unknown Channel&rdquo;</strong> &mdash; the ID is wrong or the bot can&rsquo;t see it; fix it and Start again. <strong>Quiet when the computer sleeps</strong> &mdash; the queen tab must stay open and the machine awake; she resumes on wake.
       </div>
     </div>
     <div class="tile">
       <h2>FAQ</h2>
       <div class="codehead">Does she cost anything? Where does my data live?</div>
       <div class="note">
-        She runs entirely in your browser &mdash; this page plus the bridge userscript, no server and no account. Your bot token lives only in Tampermonkey&rsquo;s userscript storage and <em>never</em> enters this page; everything she remembers lives in this browser&rsquo;s local storage. Back it up any time with <strong>Export</strong> (System tab) and keep the downloaded file somewhere safe.
+        She runs entirely in your browser &mdash; this page plus the bridge userscript. No server, no account. Your token lives only in Tampermonkey&rsquo;s userscript storage and <em>never</em> enters this page; everything she remembers lives in this browser&rsquo;s local storage. Back it up any time with <strong>Export</strong> (System tab).
       </div>
       <div class="codehead">The link dot is amber. Is she broken?</div>
       <div class="note">
-        Not necessarily &mdash; the dot is advisory (the status ping it reflects isn&rsquo;t reliable across Perchance&rsquo;s frame setups). If she&rsquo;s replying in Discord, she&rsquo;s working; that&rsquo;s the real signal. Only troubleshoot if she&rsquo;s genuinely silent.
+        Not necessarily &mdash; the dot is advisory, and its status ping isn&rsquo;t reliable across Perchance&rsquo;s frame setups. If she&rsquo;s replying in Discord, she&rsquo;s working; that&rsquo;s the real signal. Only troubleshoot if she&rsquo;s genuinely silent.
       </div>
       <div class="codehead">Does stopping her wipe her memory?</div>
       <div class="note">
-        No &mdash; <strong>Stop</strong> only ends polling. People, memories, highlights, and settings all persist in the browser, and she picks up where she left off on <strong>Start</strong>. (Export first if you&rsquo;re about to do anything drastic.)
+        No &mdash; <strong>Stop</strong> only ends polling. People, memories, highlights, and settings all persist in the browser, and she picks up where she left off on <strong>Start</strong>.
       </div>
       <div class="codehead">Can she run in several channels? What are worker tabs?</div>
       <div class="note">
-        Yes &mdash; add channel IDs in Setup and each channel gets its own independent memory, moderation, and mode. Worker tabs (System tab &rarr; <strong>Workers</strong> / <strong>Spawn worker tab</strong>) lend extra AI brain to the main (&ldquo;queen&rdquo;) tab during heavy thinking; a worker tab&rsquo;s own controls do nothing &mdash; always drive her from the queen tab.
+        Yes &mdash; add channel IDs in Setup and each channel gets its own memory, moderation, and mode. Worker tabs (System tab &rarr; <strong>Workers</strong> / <strong>Spawn worker tab</strong>) lend extra AI brain to the main (&ldquo;queen&rdquo;) tab during heavy thinking; a worker tab&rsquo;s own controls do nothing &mdash; always drive her from the queen tab.
       </div>
       <div class="codehead">Why does she stay silent sometimes?</div>
       <div class="note">
-        Usually one of: Message Content Intent is off (she hears noise, not words); she wasn&rsquo;t addressed the way the Behavior tab expects; the speaker is ignored, timed out, soft-banned, or blocked; the channel is in lockdown; or an output gate filtered the reply. The log says which. Her volunteer-into-conversations judge also <em>strongly</em> defaults to staying silent &mdash; that&rsquo;s politeness, not a bug.
+        Same checklist as &ldquo;She runs but stays silent&rdquo; in Troubleshooting above &mdash; the log names the cause. Beyond that: her volunteer-into-conversations judge <em>strongly</em> defaults to staying silent &mdash; that&rsquo;s politeness, not a bug.
       </div>
     </div>
     <div class="tile">
       <h2>Help &mdash; reporting a problem</h2>
       <div class="note">
-        If something&rsquo;s wrong and Troubleshooting didn&rsquo;t fix it: click <strong>Dump trace ring</strong> (Activity tab, under the chat box) and note what you see, plus the <strong>bridge version</strong> in the status bar, what you clicked just before it broke, and the last few log lines. Report it on the <strong>Chloe-bot GitHub</strong> (link under Credits &amp; links below) with those details. Never paste your bot token anywhere public &mdash; anyone who asks for it doesn&rsquo;t need it.
-      </div>
-    </div>
-    <div class="tile">
-      <h2>Weld Companion</h2>
-      <div class="note">
-        Chloe is part of the <strong>Weld</strong> project. The <strong>Weld Companion</strong> userscript adds quality-of-life tools around any Perchance generator &mdash; favorites, a scrapbook, reading comfort, GitHub sync, an IndexedDB data manager, and more. It&rsquo;s optional and separate from this bot.
-      </div>
-      <div class="row" style="margin-top:8px">
-        <a class="ghostlink" href="https://github.com/therealwestninja" target="_blank" rel="noopener">Weld &amp; Companion on GitHub &rarr;</a>
+        If something&rsquo;s wrong and Troubleshooting didn&rsquo;t fix it: click <strong>Dump trace ring</strong> (Activity tab, under the chat box) and note what you see, plus the <strong>bridge version</strong> in the status bar, what you clicked just before it broke, and the last few log lines. Report it on the <strong>Chloe-bot GitHub</strong> (link under Credits &amp; links below). Never paste your bot token anywhere public.
       </div>
     </div>
     <div class="tile">
       <h2>Credits &amp; links</h2>
-      <div class="note">Chloe-bridge is built and maintained by <strong>west-ninja</strong> (therealwestninja). The bot, userscript, and docs live at <strong>github.com/therealwestninja/Chloe-bot</strong>.</div>
+      <div class="note">Chloe-bridge is built and maintained by <strong>west-ninja</strong> (therealwestninja). The bot, userscript, and docs live at <strong>github.com/therealwestninja/Chloe-bot</strong> &mdash; MIT licensed, and part of the <strong>Weld</strong> project. The optional <strong>Weld Companion</strong> userscript adds quality-of-life tools around any Perchance generator &mdash; favorites, a scrapbook, reading comfort, GitHub sync, an IndexedDB data manager, and more.</div>
       <div class="row" style="margin-top:8px">
         <a class="ghostlink" href="https://github.com/therealwestninja/Chloe-bot" target="_blank" rel="noopener">Chloe-bot on GitHub &rarr;</a>
+        <a class="ghostlink" href="https://github.com/therealwestninja" target="_blank" rel="noopener">Weld &amp; Companion on GitHub &rarr;</a>
         <a class="ghostlink" href="https://www.deviantart.com/west-ninja" target="_blank" rel="noopener">DeviantArt &mdash; west-ninja</a>
       </div>
-      <div class="note" style="margin-top:10px">MIT licensed. Chloe runs entirely in your browser &mdash; no server, no account, your data stays local.</div>
+      <div class="note" style="margin-top:10px">Chloe runs entirely in your browser &mdash; no server, no account, your data stays local.</div>
     </div>
    </div><!-- /.tiles -->
   </section>
 
   </div><!-- /.panelbox -->
 </div>
+
+<script type="text/x-server-plugin">
+// Ham radio band: stateless reflector for opt-in bot-to-bot turns.
+// One shared topic per generator ("ham:band"). Clients send JSON strings
+// {t, id, text}: t is join|hello|burst|bye, id is the bot's own callsign
+// (^[A-Z0-9-]{2,24}$, derived panel-side from the Discord bot user id —
+// never typed in), text is 1..280 chars for bursts. The server validates,
+// rate-limits per connection (bursts 1/10s, join/hello/bye 1/30s), and
+// republishes {t, id, text, at} to the band, sender included (clients ignore
+// their own callsign). No durable state, no RPC, no secrets — a spoofed
+// callsign only gets a silly voice on a casual co-op band.
+var HAM_TOPIC = 'ham:band';
+var HAM_ID = /^[A-Z0-9-]{2,24}$/;
+var HAM_BURST_MS = 10000, HAM_PING_MS = 30000;
+var hamLastBurst = new Map(), hamLastPing = new Map();
+function hamNote(map, id, now, gap) {
+  var prev = map.get(id);
+  if (prev !== undefined && now - prev < gap) return false;
+  if (map.size > 2000) map.clear();
+  map.set(id, now);
+  return true;
+}
+self.onopen = function () {};
+self.onmessage = function (ref) {
+  var conn = ref.conn, data = ref.data;
+  if (typeof data !== 'string' || data.length > 2048) return;
+  var m;
+  try { m = JSON.parse(data); } catch (e) { return; }
+  if (!m || typeof m !== 'object') return;
+  if (typeof m.id !== 'string' || !HAM_ID.test(m.id)) return;
+  var now = Date.now();
+  if (m.t === 'burst') {
+    if (typeof m.text !== 'string') return;
+    var said = m.text.trim();
+    if (!said || said.length > 280) return;
+    if (!hamNote(hamLastBurst, conn.id, now, HAM_BURST_MS)) return;
+    conn.subscribe(HAM_TOPIC);
+    pubsub.publish(HAM_TOPIC, JSON.stringify({ t: 'burst', id: m.id, text: said.slice(0, 280), at: now }));
+    return;
+  }
+  if (m.t === 'join' || m.t === 'hello' || m.t === 'bye') {
+    if (!hamNote(hamLastPing, conn.id, now, HAM_PING_MS)) return;
+    conn.subscribe(HAM_TOPIC);
+    pubsub.publish(HAM_TOPIC, JSON.stringify({ t: m.t, id: m.id, text: '', at: now }));
+  }
+};
+self.onclose = function (ref) {
+  hamLastBurst.delete(ref.conn.id);
+  hamLastPing.delete(ref.conn.id);
+};
+console.log('ham band reflector ready');
+</script>
 
 <script>
   'use strict';
@@ -1821,6 +1988,7 @@
   // already emits every meaningful action through log(); this just types + colors it.
   function feedType(line) {
     var s = String(line).toLowerCase();
+    if (/\[chloe\.radio/.test(s)) return ['received', 'RADIO'];
     if (/error|fail|\bwarn/.test(s)) return ['warning', 'WARNING'];
     if (/\babandon/.test(s)) return ['moderation', 'ABANDON'];
     if (/\[chloe\.img/.test(s) || /paint/.test(s)) return ['image', 'IMAGE'];
@@ -1874,7 +2042,7 @@
   });
   // Seed the baseline at load (boxes start empty): a draft typed before the first status
   // then differs from the seed and is preserved, instead of being clobbered by first touch.
-  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['summonRolesInput', 'summonRoles'], ['imageQueueInput', 'imageQueue']].forEach(function (pair) {
+  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['summonRolesInput', 'summonRoles'], ['imageQueueInput', 'imageQueue'], ['checkinMinInput', 'reachMin']].forEach(function (pair) {
     var el = byId(pair[0]); if (el) lastApplied[pair[1]] = el.value;
   });
   function setIfClean(id, key, incoming) {
@@ -1904,6 +2072,7 @@
   // channel default = English); keep in sync with the userscript's LANG_NAMES list.
   var CHAN_LANGS = [['', 'Channel default — English'], ['fr', 'French (fr)'], ['es', 'Spanish (es)'], ['de', 'German (de)'], ['it', 'Italian (it)'], ['pt', 'Portuguese (pt)'], ['nl', 'Dutch (nl)'], ['ru', 'Russian (ru)'], ['ja', 'Japanese (ja)'], ['ko', 'Korean (ko)'], ['zh', 'Chinese (zh)'], ['ar', 'Arabic (ar)'], ['hi', 'Hindi (hi)'], ['tr', 'Turkish (tr)'], ['pl', 'Polish (pl)'], ['sv', 'Swedish (sv)'], ['uk', 'Ukrainian (uk)'], ['vi', 'Vietnamese (vi)'], ['id', 'Indonesian (id)'], ['th', 'Thai (th)'], ['el', 'Greek (el)'], ['he', 'Hebrew (he)'], ['cs', 'Czech (cs)'], ['ro', 'Romanian (ro)'], ['fi', 'Finnish (fi)']];
   var lastChanLangs = null;   // last channelLangs map from status; null = old engine (no per-channel language)
+  var lastChanGates = null;   // last chanGates map from status; null = old engine (no per-channel gates)
   function chanRow(id, kind) {
     var r = document.createElement('div'); r.className = 'chanrow'; r.setAttribute('data-id', id);
     var grow = document.createElement('div'); grow.className = 'changrow';
@@ -1922,10 +2091,21 @@
     langSel.value = (lastChanLangs && lastChanLangs[id]) || '';
     langSel.hidden = !lastChanLangs;   // old engine: no channelLangs in status (note below explains)
     langSel.addEventListener('change', function () { chanSetLang(id, langSel); });
+    var gatesBox = document.createElement('div'); gatesBox.className = 'changates';
+    var gateState = (lastChanGates && lastChanGates[id]) || null;   // null = all on (default)
+    [['speak', 'Speak'], ['read', 'Read'], ['remember', 'Remember']].forEach(function (gd) {
+      var gl = document.createElement('label');
+      var gb = document.createElement('input'); gb.type = 'checkbox'; gb.checked = !gateState || gateState[gd[0]] !== false;
+      gb.setAttribute('aria-label', gd[0] + ' gate for channel ' + id);
+      gb.hidden = !lastChanGates;   // old engine: no chanGates in status (note below explains)
+      (function (gate, box) { box.addEventListener('change', function () { chanSetGate(id, gate, box.checked, box); }); })(gd[0], gb);
+      gl.appendChild(gb); gl.appendChild(document.createTextNode(gd[1]));
+      gatesBox.appendChild(gl);
+    });
     var act = document.createElement('div'); act.className = 'chanactions';
     if (kind !== 'dm' && kind !== 'primary') act.appendChild(mkBtn('make primary', 'ghost sm', function () { chanMakePrimary(id); }));
     act.appendChild(mkBtn('remove', 'ghost sm', function () { chanRemove(id); }));
-    r.appendChild(grow); r.appendChild(badge); r.appendChild(langSel); r.appendChild(act);
+    r.appendChild(grow); r.appendChild(badge); r.appendChild(langSel); r.appendChild(gatesBox); r.appendChild(act);
     return r;
   }
   function renderChanList() {
@@ -1946,8 +2126,9 @@
     if (hasPub) CHANSTATE.pub = chanPubIds(s).map(function (c) { return String(c); });
     if (hasDm) CHANSTATE.dms = (s.dmChannels || []).map(function (c) { return String(c); });
     lastChanLangs = (s && s.channelLangs) || null;   // absent = old engine (selects hide, note shows)
+    lastChanGates = (s && s.chanGates) || null;   // absent = old engine (gate boxes hide, note shows)
     renderChanList();
-    var note = byId('chanLangNote'); if (note) note.hidden = !!lastChanLangs;
+    var engNote = byId('chanEngineNote'); if (engNote) engNote.hidden = !!(lastChanLangs && lastChanGates);
     chanDirty = false;
   }
   // v0.90.21: immediate per-row language send (engageModeSel precedent). Not part of
@@ -1962,6 +2143,20 @@
       } else {
         log('language change failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
         sel.value = (lastChanLangs && lastChanLangs[id]) || '';   // revert to the last acked value
+      }
+    });
+  }
+  // Per-channel speak/read/remember gates: immediate send (chanSetLang precedent). Not part of
+  // chanDirty/Save — the value lives engine-side the moment the bridge acks it.
+  function chanSetGate(id, gate, on, box) {
+    call('config.setChannelGate', { channelId: id, gate: gate, on: on }).then(function (res) {
+      if (res && res.ok) {
+        if (lastChanGates) lastChanGates[id] = (res.value && res.value.gates) || null;
+        log('channel ' + id + ' ' + gate + ' \u2014 ' + (on ? 'on' : 'off'));
+        refresh();
+      } else {
+        log('gate change failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
+        if (box) box.checked = !on;   // revert to the last acked value
       }
     });
   }
@@ -2017,6 +2212,9 @@
 
     if (s.addressMode) setSelectIfClean('modeSel', s.addressMode);
     applyToggleStates(s);
+    hamStatus = s || null;
+    var hc = byId('hamChk'); if (hc && document.activeElement !== hc) hc.checked = !!(s && s.hamRadio);
+    ensureHam();
     EXTRA_TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = t[2] ? (s[t[1]] !== false) : (!!s[t[1]]); });
     var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
     if ('procRules' in s) setIfClean('procRules', 'procRules', JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1));
@@ -2027,6 +2225,10 @@
     }
     if ('operatorNote' in s) setIfClean('opNoteInput', 'opNote', s.operatorNote || '');
     if ('imageQueueMax' in s) setIfClean('imageQueueInput', 'imageQueue', String(s.imageQueueMax || 8));
+    applyReachoutStatus(s);
+    applyGamesStatus(s);
+    applyQuarantineStatus(s);
+    applyApprovalsStatus(s);
     setSelectIfClean('engageModeSel', s.engageMode || 'normal');
     if ('commandPrefixes' in s) setIfClean('prefixInput', 'prefixes', (s.commandPrefixes || []).join(', '));
     if ('botRoleIds' in s) setIfClean('summonRolesInput', 'summonRoles', (s.botRoleIds || []).join(', '));
@@ -2112,6 +2314,7 @@
       var nmText = document.createElement('span'); nmText.textContent = (p.name == null ? '(unnamed)' : p.name);
       nm.appendChild(caret); nm.appendChild(nmText);
       if (isMod) { var bd = document.createElement('span'); bd.className = 'ubadge'; bd.textContent = 'MOD'; nm.appendChild(bd); }
+      else if (p.tier) { var tb = document.createElement('span'); tb.className = 'ubadge tier'; tb.textContent = (p.tier === 'admin' ? 'ADMIN' : (p.tierBasis === 'recognized' ? 'RECOGNIZED' : 'RESIDENT')); tb.title = 'clearance: ' + p.tier + ' (' + (p.tierBasis || 'history') + ') — guest < resident < admin'; nm.appendChild(tb); }
       nm.title = 'click to show recent lines';
       grow.appendChild(nm);
 
@@ -2139,6 +2342,7 @@
       if (keepOpen[p.id]) toggleDetail(row, p, caret);   // restore an expanded detail row after the poll
     });
     syncBatchBar();
+    try { fillReachPickers(); } catch (e) {}   // Reach out card roster pickers ride the roster render (selection-preserving)
   }
 
   function toggleDetail(row, p, caret) {
@@ -2522,6 +2726,11 @@
       logRes(res, function (r) { return 'status reactions: ' + r.value.ackReactions; }, 'failed');
     });
   });
+  byId('hamChk').addEventListener('change', function () {
+    call('config.setHamRadio', { on: byId('hamChk').checked }).then(function (res) {
+      logRes(res, function (r) { return 'ham radio: ' + (r.value.hamRadio ? 'on the air' : 'off'); }, 'ham radio failed');
+    });
+  });
   // B-001 input clamps: tzOffset to +/-1440 (+/-24h), imageQueue coerced to a 1..20 integer.
   function clampTz(v) { var n = parseInt(v, 10); if (!isFinite(n)) return 0; return Math.max(-1440, Math.min(1440, n)); }
   function clampImageQueue(v) { var n = Number(v); if (!isFinite(n)) return 8; return Math.max(1, Math.min(20, Math.round(n))); }
@@ -2670,6 +2879,362 @@
       });
     });
   });
+  // ---- Reach out card: pace, pinned favorites, check-in blacklist -------------------------
+  // Selects commit immediately (chanSetLang precedent): send on change, revert the selects
+  // on failure. Lists render from lastReachout (last acked engine state, chanGates-style).
+  var REACH_OPTS = {
+    lullPatienceSel: [21600000, 43200000, 86400000, 172800000, 259200000, 604800000],
+    lullGapSel: [21600000, 43200000, 86400000, 172800000, 259200000, 604800000, 1209600000],
+    checkinAbsenceSel: [86400000, 172800000, 259200000, 604800000, 1209600000, 2592000000],
+    checkinGapSel: [21600000, 43200000, 86400000, 172800000, 259200000, 604800000],
+    checkinPerUserSel: [86400000, 259200000, 604800000, 1209600000, 2592000000, 5184000000]
+  };
+  var lastReachout = null;   // null = old engine (no reach-out keys in status: settings hide, note shows)
+  function fmtDur(ms) {
+    ms = Number(ms) || 0;
+    var h = Math.round(ms / 3600000);
+    if (h < 24) return h + (h === 1 ? ' hour' : ' hours');
+    var d = Math.round(ms / 86400000);
+    return d + (d === 1 ? ' day' : ' days');
+  }
+  // Build a select's options from its table plus the live value (imported backups can hold
+  // off-table values — those get an echo option instead of a blank select), then set it.
+  function fillReachSelect(id, val) {
+    var sel = byId(id); if (!sel) return;
+    var opts = (REACH_OPTS[id] || []).slice();
+    if (opts.indexOf(val) < 0) opts.push(val);
+    opts.sort(function (a, b) { return a - b; });
+    var keepFocus = document.activeElement === sel;
+    clearBox(sel);
+    opts.forEach(function (ms) {
+      var o = document.createElement('option'); o.value = String(ms); o.textContent = fmtDur(ms);
+      sel.appendChild(o);
+    });
+    sel.value = String(val);
+    if (keepFocus) { try { sel.focus(); } catch (e) {} }
+  }
+  // ---- Games card: read-only table status from the engine (bundle v9+) ------------
+  // Degrades like the Reach out card: no `games` map (old engine) -> hide the
+  // box, show the one-line note. Never writes; settings ride Discord commands.
+  var lastGames = null;
+  function applyGamesStatus(s) {
+    var hasGames = !!(s && s.games && typeof s.games === 'object');
+    var box = byId('gamesStatusBox'), note = byId('gamesEngineNote');
+    if (box) box.hidden = !hasGames;
+    if (note) note.hidden = !!hasGames;
+    if (!hasGames) { lastGames = null; return; }
+    lastGames = s.games;
+    var el = byId('gamesStatusTxt');
+    if (!el) return;
+    var ch = selChannel();
+    if (!ch) { el.textContent = 'pick a channel in the tab row to see its table'; return; }
+    var g = s.games[ch] || null;
+    if (!g || (!g.day && !g.active)) { el.textContent = 'no table open in this channel yet — guess with `!chloe wordle CRANE` and one opens'; return; }
+    var bits = [];
+    if (g.day) bits.push('wordle ' + g.day);
+    else if (g.active) bits.push(g.active + ' on the table');
+    bits.push((g.players || 0) + ' playing');
+    if (g.solved) bits.push(g.solved + ' solved');
+    if (g.hard) bits.push('hard mode');
+    if (g.maxGuesses && g.maxGuesses !== 6) bits.push(g.maxGuesses + ' guesses');
+    el.textContent = bits.join(' · ') || 'table open';
+  }
+  // ---- Quarantine card: import-held rule sets (bundle v11+) ------------------
+  // Read-only counts from status.quarantine; release/drop ride validated
+  // dispatches. Old engines (no quarantine key) hide the box + show the note.
+  var lastQuarantine = null;
+  function applyQuarantineStatus(s) {
+    var hasQ = !!(s && ('quarantine' in s));
+    var box = byId('quarantineBox'), note = byId('quarantineEngineNote');
+    if (box) box.hidden = !hasQ || !s.quarantine;
+    if (note) note.hidden = !!hasQ;
+    lastQuarantine = hasQ ? s.quarantine : null;
+    if (!hasQ || !s.quarantine) return;
+    var q = s.quarantine, parts = [];
+    if (q.beats) parts.push(q.beats + ' beat(s)');
+    if (q.autoModRules) parts.push(q.autoModRules + ' auto-mod rule(s)');
+    if (q.procRules) parts.push(q.procRules + ' reaction mode(s)');
+    var el = byId('quarantineTxt');
+    if (el) el.textContent = 'held since ' + (q.at ? new Date(q.at).toLocaleString() : 'import') + ': ' + (parts.join(', ') || 'nothing held');
+  }
+  // ---- Approvals card: policy + held autonomous output + always-grants (bundle v12+)
+  // A5 (bundle v13+) adds the Recent decisions journal (status.actLog); the card
+  // itself still degrades on the actPolicy/pendingAct keys so v12 engines keep
+  // working (decisions section just stays empty).
+  // Degrades like quarantine: old engines (no actPolicy/pendingAct keys) hide the
+  // box + show the note. Rows rebuild from each status (roster-style); buttons
+  // ride validated dispatches with the selected channel. Display strings only
+  // ever enter via textContent (hold reasons are engine-truncated already).
+  var lastApprovals = null;
+  function actAge(at) { var m = Math.max(0, Math.round((Date.now() - (at || Date.now())) / 60000)); return m < 1 ? 'just now' : (m + 'm ago'); }
+  function applyApprovalsStatus(s) {
+    var hasA = !!(s && ('actPolicy' in s) && ('pendingAct' in s));
+    var box = byId('approvalsBox'), note = byId('approvalsEngineNote');
+    if (box) box.hidden = !hasA;
+    if (note) note.hidden = !!hasA;
+    if (!hasA) { lastApprovals = null; return; }
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    var pend = (s.pendingAct && ch && Array.isArray(s.pendingAct[ch])) ? s.pendingAct[ch] : [];
+    var grants = Array.isArray(s.actGrants) ? s.actGrants : [];
+    lastApprovals = { policy: s.actPolicy || 'allow', channelId: ch };
+    var sel = byId('actPolicySel');
+    if (sel && document.activeElement !== sel) sel.value = lastApprovals.policy;
+    renderApprovalsList(pend, ch);
+    renderActGrantsList(grants);
+    if (s.actLog && ch && Array.isArray(s.actLog[ch])) renderActLogList(s.actLog[ch].slice(-10));
+    else renderActLogList(null);
+    var ut = (s.undoTop && ch && s.undoTop[ch]) || null;
+    var undoLabel = byId('undoTopLabel'), undoBtn = byId('undoBtn');
+    if (undoLabel) undoLabel.textContent = ut ? ('Last applied: ' + ut.summary + ' (' + actAge(ut.at) + ')') : 'Nothing undoable — no applied actions on record.';
+    if (undoBtn) undoBtn.hidden = !ut;
+  }
+  function coarseActWhyPanel(why) {
+    var w = String(why || '');
+    if (w === 'policy:deny') return 'denied by policy';
+    if (w === 'policy:ask') return 'held by policy';
+    if (w === 'policy:allow') return 'allowed by policy';
+    if (w === 'approve-once') return 'released by a mod';
+    if (w === 'snoozed') return 'quiet after dismiss';
+    if (w.indexOf('grant:') === 0) return 'always-allowed';
+    return w.slice(0, 40) || 'decided';
+  }
+  function renderActLogList(log) {
+    var list = byId('actLogList'), empty = byId('actLogEmpty');
+    if (!list) return;
+    clearBox(list);
+    if (!log || !log.length) { if (empty) empty.style.display = ''; return; }
+    if (empty) empty.style.display = 'none';
+    log.slice().reverse().forEach(function (e) {
+      var row = document.createElement('div'); row.className = 'diagrow';
+      var t = document.createElement('span'); t.className = 'note';
+      t.textContent = actAge(e.at) + ' · ' + (e.class || '?') + ' · ' + (e.verdict || '?') + ' (' + coarseActWhyPanel(e.why) + ')';
+      row.appendChild(t);
+      list.appendChild(row);
+    });
+  }
+  function renderApprovalsList(pend, ch) {
+    var list = byId('approvalsList'), empty = byId('approvalsEmpty');
+    if (!list) return;
+    clearBox(list);
+    if (empty) empty.style.display = pend.length ? 'none' : '';
+    pend.slice(0, 20).forEach(function (e) {
+      var row = document.createElement('div'); row.className = 'diagrow';
+      var t = document.createElement('span'); t.className = 'note';
+      t.textContent = (e.class || '?') + ' — ' + String(e.reason || 'held').slice(0, 120) + ' (' + actAge(e.at) + ')';
+      row.appendChild(t);
+      var sp = document.createElement('span'); sp.className = 'spacer'; row.appendChild(sp);
+      [['Once', false], ['Always', true]].forEach(function (pair) {
+        var b = document.createElement('button'); b.className = 'ghost sm'; b.textContent = pair[0];
+        b.addEventListener('click', function () {
+          call('act.approve', { channelId: ch, id: e.id, always: pair[1] }).then(function (res) {
+            if (res && res.ok) { log('approved ' + e.id + (pair[1] ? ' + always-granted' : '') + ' — fires on the next poll'); refresh(); }
+            else log('approve failed: ' + ((res && res.reason) || 'unknown'));
+          });
+        });
+        row.appendChild(b);
+      });
+      var d = document.createElement('button'); d.className = 'ghost sm'; d.textContent = 'Dismiss';
+      d.addEventListener('click', function () {
+        call('act.dismiss', { channelId: ch, id: e.id }).then(function (res) {
+          if (res && res.ok) { log('dismissed — that output stays quiet for a day'); refresh(); }
+          else log('dismiss failed: ' + ((res && res.reason) || 'unknown'));
+        });
+      });
+      row.appendChild(d);
+      list.appendChild(row);
+    });
+  }
+  function renderActGrantsList(grants) {
+    var list = byId('actGrantsList'), empty = byId('actGrantsEmpty');
+    if (!list) return;
+    clearBox(list);
+    if (empty) empty.style.display = grants.length ? 'none' : '';
+    grants.slice(0, 64).forEach(function (g) {
+      var row = document.createElement('div'); row.className = 'diagrow';
+      var t = document.createElement('span'); t.className = 'note';
+      t.textContent = (g.action || '?') + ' in ' + (g.resource === '*' ? 'everywhere' : ('channel ' + (g.resource || '?'))) + ' (' + (g.scope || 'always') + ')';
+      row.appendChild(t);
+      var sp = document.createElement('span'); sp.className = 'spacer'; row.appendChild(sp);
+      var b = document.createElement('button'); b.className = 'ghost sm'; b.textContent = 'Revoke';
+      b.addEventListener('click', function () {
+        if (!window.confirm('Revoke this always-grant? That output will hold for approval again.')) return;
+        call('act.revokeGrant', { action: g.action, resource: g.resource }).then(function (res) {
+          if (res && res.ok) { log('grant revoked: ' + g.action + ' @ ' + g.resource); refresh(); }
+          else log('revoke failed: ' + ((res && res.reason) || 'unknown'));
+        });
+      });
+      row.appendChild(b);
+      list.appendChild(row);
+    });
+  }
+  function applyReachoutStatus(s) {
+    var hasReach = !!(s && ('lullPatienceMs' in s) && ('checkinFavorites' in s));
+    var setBox = byId('reachoutSettings'), noteBox = byId('reachoutEngineNote');
+    if (setBox) setBox.hidden = !hasReach;
+    if (noteBox) noteBox.hidden = !!hasReach;
+    if (!hasReach) { lastReachout = null; return; }
+    lastReachout = {
+      patienceMs: s.lullPatienceMs, minGapMs: s.lullMinGapMs,
+      absenceMs: s.checkinAbsenceMs, gapMs: s.checkinGapMs,
+      perUserGapMs: s.checkinPerUserGapMs, minInteractions: s.checkinMinInteractions,
+      favorites: (s.checkinFavorites || []).slice(), blacklist: (s.checkinBlacklist || []).slice()
+    };
+    if (document.activeElement !== byId('lullPatienceSel')) fillReachSelect('lullPatienceSel', s.lullPatienceMs);
+    if (document.activeElement !== byId('lullGapSel')) fillReachSelect('lullGapSel', s.lullMinGapMs);
+    if (document.activeElement !== byId('checkinAbsenceSel')) fillReachSelect('checkinAbsenceSel', s.checkinAbsenceMs);
+    if (document.activeElement !== byId('checkinGapSel')) fillReachSelect('checkinGapSel', s.checkinGapMs);
+    if (document.activeElement !== byId('checkinPerUserSel')) fillReachSelect('checkinPerUserSel', s.checkinPerUserGapMs);
+    setIfClean('checkinMinInput', 'reachMin', String(s.checkinMinInteractions));
+    renderReachLists();
+  }
+  function pushLullTiming() {
+    if (!lastReachout) return;
+    var p = Number(byId('lullPatienceSel').value), g = Number(byId('lullGapSel').value);
+    call('config.setLullTiming', { patienceMs: p, minGapMs: g }).then(function (res) {
+      if (res && res.ok) {
+        lastReachout.patienceMs = res.value.lullPatienceMs; lastReachout.minGapMs = res.value.lullMinGapMs;
+        fillReachSelect('lullPatienceSel', res.value.lullPatienceMs);
+        fillReachSelect('lullGapSel', res.value.lullMinGapMs);
+        log('silence filler pace: after ' + fmtDur(res.value.lullPatienceMs) + ' of quiet, at most once per ' + fmtDur(res.value.lullMinGapMs));
+        refresh();
+      } else {
+        byId('lullPatienceSel').value = String(lastReachout.patienceMs);   // revert to the last acked values
+        byId('lullGapSel').value = String(lastReachout.minGapMs);
+        log('silence filler pace failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
+      }
+    });
+  }
+  function clampReachMin(v) { var n = Math.round(Number(v)); if (!isFinite(n)) return 8; return Math.max(1, Math.min(100, n)); }
+  function pushCheckinTiming() {
+    if (!lastReachout) return;
+    var mEl = byId('checkinMinInput');
+    var m = clampReachMin(mEl.value); mEl.value = m;   // B-001: coerce + clamp 1..100 before the wire
+    var args = {
+      absenceMs: Number(byId('checkinAbsenceSel').value), gapMs: Number(byId('checkinGapSel').value),
+      perUserGapMs: Number(byId('checkinPerUserSel').value), minInteractions: m
+    };
+    call('config.setCheckinTiming', args).then(function (res) {
+      if (res && res.ok) {
+        lastReachout.absenceMs = res.value.checkinAbsenceMs; lastReachout.gapMs = res.value.checkinGapMs;
+        lastReachout.perUserGapMs = res.value.checkinPerUserGapMs; lastReachout.minInteractions = res.value.checkinMinInteractions;
+        fillReachSelect('checkinAbsenceSel', res.value.checkinAbsenceMs);
+        fillReachSelect('checkinGapSel', res.value.checkinGapMs);
+        fillReachSelect('checkinPerUserSel', res.value.checkinPerUserGapMs);
+        mEl.value = res.value.checkinMinInteractions; lastApplied.reachMin = mEl.value;
+        log('check-in pace: miss after ' + fmtDur(res.value.checkinAbsenceMs) + ', at most one per ' + fmtDur(res.value.checkinGapMs) + ', same person per ' + fmtDur(res.value.checkinPerUserGapMs) + ', favorite = ' + res.value.checkinMinInteractions + '+ chats');
+        refresh();
+      } else {
+        byId('checkinAbsenceSel').value = String(lastReachout.absenceMs);   // revert to the last acked values
+        byId('checkinGapSel').value = String(lastReachout.gapMs);
+        byId('checkinPerUserSel').value = String(lastReachout.perUserGapMs);
+        mEl.value = lastReachout.minInteractions;
+        log('check-in pace failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
+      }
+    });
+  }
+  function reachName(id) {
+    var roster = window.__roster || [];
+    for (var i = 0; i < roster.length; i++) { if (String(roster[i].id) === String(id)) return (roster[i].name || id); }
+    return id;
+  }
+  function renderReachLists() {
+    // Skip steady-state re-renders (the 5s refresh calls this): rebuilding the pills
+    // under a click can eat the click (node replaced between down and up). Re-render
+    // only when the acked lists actually changed.
+    var sig = JSON.stringify([(lastReachout && lastReachout.favorites) || [], (lastReachout && lastReachout.blacklist) || []]);
+    if (sig === renderReachLists._last) return;
+    renderReachLists._last = sig;
+    [['favList', 'favorites', 'fav'], ['blkList', 'blacklist', 'blk']].forEach(function (cfg) {
+      var box = byId(cfg[0]); if (!box) return;
+      clearBox(box);
+      var arr = (lastReachout && lastReachout[cfg[1]]) || [];
+      if (!arr.length) {
+        var em = document.createElement('div'); em.className = 'note reachempty';
+        em.textContent = cfg[2] === 'fav' ? 'no pinned favorites \u2014 regulars qualify by chatting' : 'empty \u2014 she may check in on any favorite';
+        box.appendChild(em); return;
+      }
+      arr.forEach(function (id) {
+        var pill = document.createElement('span'); pill.className = 'reachpill';
+        var known = reachName(id);
+        var nm = document.createElement('span'); nm.textContent = (known === id) ? id : (known + ' \u00b7 ' + id); pill.appendChild(nm);
+        var x = document.createElement('button'); x.className = 'ghost sm'; x.textContent = '\u2715';
+        x.setAttribute('aria-label', 'remove ' + id);
+        (function (uid, key) { x.addEventListener('click', function () { reachRemove(key, uid); }); })(id, cfg[1]);
+        pill.appendChild(x); box.appendChild(pill);
+      });
+    });
+  }
+  renderReachLists._last = null;
+  function pushCheckinLists(fav, blk, okMsg) {
+    call('config.setCheckinLists', { favorites: fav, blacklist: blk }).then(function (res) {
+      if (res && res.ok) {
+        lastReachout.favorites = ((res.value && res.value.checkinFavorites) || []).slice();
+        lastReachout.blacklist = ((res.value && res.value.checkinBlacklist) || []).slice();
+        renderReachLists();
+        // Back to the placeholder so the next Pin/Blacklist starts from a clean pick
+        // (leaving the just-added person selected invites a dup "already on the list").
+        if (byId('favPickSel')) byId('favPickSel').selectedIndex = 0;
+        if (byId('blkPickSel')) byId('blkPickSel').selectedIndex = 0;
+        log(okMsg + ' (' + lastReachout.favorites.length + ' favorite(s), ' + lastReachout.blacklist.length + ' blacklisted)');
+        refresh();
+      } else {
+        renderReachLists();   // revert = re-render from lastReachout (no-op if unchanged — nothing was optimistically painted)
+        log('check-in lists failed (' + ((res && res.reason) || 'no bridge') + ') \u2014 reverted');
+      }
+    });
+  }
+  // Returns true when the send fired (async ack still pending), false when rejected locally.
+  function reachAdd(listKey, id) {
+    if (!lastReachout) return false;
+    id = String(id || '').trim();
+    if (!/^\d{8,32}$/.test(id)) { log('that doesn\u2019t look like a Discord user ID (digits only) \u2014 pick someone or paste their ID'); return false; }
+    var fav = lastReachout.favorites.slice(), blk = lastReachout.blacklist.slice();
+    var target = listKey === 'favorites' ? fav : blk;
+    var label = listKey === 'favorites' ? 'pinned favorite' : 'check-in blacklist';
+    if (target.indexOf(id) >= 0) { log(reachName(id) + ' is already on the ' + label); return false; }
+    target.push(id);
+    pushCheckinLists(fav, blk, reachName(id) + ' \u2192 ' + label);
+    return true;
+  }
+  function reachRemove(listKey, id) {
+    if (!lastReachout) return;
+    var fav = lastReachout.favorites.slice(), blk = lastReachout.blacklist.slice();
+    var target = listKey === 'favorites' ? fav : blk;
+    var label = listKey === 'favorites' ? 'pinned favorites' : 'check-in blacklist';
+    var at = target.indexOf(id);
+    if (at < 0) return;
+    target.splice(at, 1);
+    pushCheckinLists(fav, blk, 'removed ' + reachName(id) + ' from ' + label);
+  }
+  // Roster pickers: repopulated on every roster render, preserving the pending pick (never clobber mid-choice).
+  function fillReachPickers() {
+    var roster = window.__roster || [];
+    [['favPickSel', 'pin a favorite\u2026'], ['blkPickSel', 'blacklist someone\u2026']].forEach(function (p) {
+      var sel = byId(p[0]); if (!sel) return;
+      var keep = sel.value;
+      clearBox(sel);
+      var ph = document.createElement('option'); ph.value = ''; ph.textContent = roster.length ? p[1] : '(no users known yet \u2014 paste an ID below)';
+      sel.appendChild(ph);
+      roster.forEach(function (u) {
+        var o = document.createElement('option'); o.value = u.id; o.textContent = (u.name || u.id) + ' (' + u.id + ')';
+        sel.appendChild(o);
+      });
+      sel.value = keep; if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+    });
+  }
+  ['lullPatienceSel', 'lullGapSel'].forEach(function (id) { var el = byId(id); if (el) el.addEventListener('change', pushLullTiming); });
+  ['checkinAbsenceSel', 'checkinGapSel', 'checkinPerUserSel'].forEach(function (id) { var el = byId(id); if (el) el.addEventListener('change', pushCheckinTiming); });
+  (function () { var el = byId('checkinMinInput'); if (el) el.addEventListener('change', pushCheckinTiming); })();
+  (function () { var b = byId('favAddBtn'); if (b) b.addEventListener('click', function () { var v = byId('favPickSel').value; if (!v) { log('pick someone from the list first (or paste their ID)'); return; } reachAdd('favorites', v); }); })();
+  (function () { var b = byId('blkAddBtn'); if (b) b.addEventListener('click', function () { var v = byId('blkPickSel').value; if (!v) { log('pick someone from the list first (or paste their ID)'); return; } reachAdd('blacklist', v); }); })();
+  function wireReachIdInput(inputId, btnId, listKey) {
+    var inp = byId(inputId), btn = byId(btnId);
+    function submit() { if (reachAdd(listKey, inp.value)) inp.value = ''; }   // keep a rejected ID typed so it can be fixed
+    if (btn) btn.addEventListener('click', submit);
+    if (inp) inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  }
+  wireReachIdInput('favIdInput', 'favAddIdBtn', 'favorites');
+  wireReachIdInput('blkIdInput', 'blkAddIdBtn', 'blacklist');
   ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) {
     var el = byId('gate_' + g);
     if (el) el.addEventListener('change', function () {
@@ -3113,6 +3678,44 @@
       logRes(res, 'added mod ' + v, 'add mod failed', function (r) { byId('modInput').value = ''; renderMods(r.value || []); });
     });
   });
+  // ---- clearance: tier lookup + one-rung elevation --------------------------------
+  var lastClearanceId = null;
+  function renderClearance(t, id) {
+    lastClearanceId = id;
+    var el = byId('clearanceResult');
+    if (el) el.textContent = id + ': ' + t.tier + ' (' + t.basis + ')';
+    var up = byId('elevateBtn'), dn = byId('demoteBtn');
+    if (up) up.hidden = !(id && t.tier !== 'admin');
+    if (dn) dn.hidden = !(id && t.tier !== 'guest');
+    if (up) up.textContent = t.tier === 'guest' ? 'Recognize (→ resident)' : 'Make admin (→ admin)';
+    if (dn) dn.textContent = t.tier === 'admin' ? 'Remove admin (→ resident)' : 'Withdraw recognition (→ stranger)';
+  }
+  byId('clearanceLookupBtn').addEventListener('click', function () {
+    var v = byId('clearanceInput').value.trim(); if (!v) { log('enter a user ID'); return; }
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch) { log('pick a channel in the tab row first'); return; }
+    call('clearance.get', { channelId: ch, id: v }).then(function (res) {
+      if (res && res.ok) renderClearance(res.value || { tier: 'guest', basis: 'stranger' }, v);
+      else { lastClearanceId = null; log('clearance lookup failed: ' + ((res && res.reason) || 'unknown')); }
+    });
+  });
+  function clearanceStep(cmd, id, verb) {
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch || !id) { log('look someone up first'); return; }
+    call(cmd, { channelId: ch, id: id }).then(function (res) {
+      if (res && res.ok) { log(verb + 'd ' + id + ' → ' + ((res.value || {}).tier || '?')); refresh(); clearanceLookupRefresh(id); }
+      else log(verb + ' failed: ' + ((res && res.reason) || 'unknown') + ' — nothing changed');
+    });
+  }
+  function clearanceLookupRefresh(id) {
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch || !id) return;
+    call('clearance.get', { channelId: ch, id: id }).then(function (res) {
+      if (res && res.ok) renderClearance(res.value || { tier: 'guest', basis: 'stranger' }, id);
+    });
+  }
+  byId('elevateBtn').addEventListener('click', function () { clearanceStep('clearance.elevate', lastClearanceId, 'elevate'); });
+  byId('demoteBtn').addEventListener('click', function () { clearanceStep('clearance.demote', lastClearanceId, 'demote'); });
   // ---- export: download all state as a gzip-compressed JSON file ------------------
   // Batch 13: hoisted out of the click handler (was re-created per export).
   function downloadPlain(json, ts) {
@@ -3168,15 +3771,75 @@
       // A reviver that drops __proto__/constructor/prototype keeps the shape but
       // never lets a backup plant Object.prototype.
       var data; try { data = JSON.parse(text, function (k, v) { if (k === '__proto__' || k === 'constructor' || k === 'prototype') return undefined; return v; }); } catch (e) { log('import failed: invalid JSON — ' + e.message); return; }
-      if (!window.confirm('Import backup from ' + file.name + '?\n\nThis will overwrite current state and settings. The bot will stop; restart after import.')) return;
-      call('import-state', { data: data }).then(function (res) {
-        if (res && res.ok) { log('import complete — stop and start the bot to apply.'); refresh(); }
-        else log('import failed: ' + ((res && res.reason) || 'unknown'));
+      // A2 dry-run: show exactly what this backup would do before touching anything.
+      call('import-preview', { data: data }).then(function (pv) {
+        if (!pv || !pv.ok) { log('import preview failed: ' + ((pv && pv.reason) || 'unknown')); return; }
+        var v = pv.value || {};
+        var q = v.quarantined || {};
+        var qn = (q.beats || 0) + (q.autoModRules || 0) + (q.procRules || 0);
+        var bits = [v.writes + ' setting(s)', v.channels + ' channel(s)', (v.dropped || 0) + ' dropped'];
+        if (qn) bits.push('HELD for review: ' + [q.beats ? q.beats + ' beat(s)' : '', q.autoModRules ? q.autoModRules + ' auto-mod' : '', q.procRules ? q.procRules + ' reaction' : ''].filter(Boolean).join(', '));
+        log('import preview (' + file.name + '): ' + bits.join(' · '));
+        if (!window.confirm('Import backup from ' + file.name + '?\n\n' + v.writes + ' setting(s), ' + v.channels + ' channel(s)' + (qn ? ' — ' + qn + ' rule set(s) HELD for review (System tab), never auto-fired' : '') + '.\n\nThis will overwrite current state and settings. The bot will stop; restart after import.')) return;
+        call('import-state', { data: data }).then(function (res) {
+          if (res && res.ok) {
+            var held = (res.value && res.value.quarantined) || [];
+            log('import complete — stop and start the bot to apply.' + (held.length ? ' Held for review: ' + held.join(', ') + '.' : ''));
+            refresh();
+          }
+          else log('import failed: ' + ((res && res.reason) || 'unknown'));
+        });
       });
     }).catch(function (e) { log('import read failed: ' + e.message); });
     self.value = '';
   });
 
+  // ---- approvals: policy + bulk approve / dismiss --------------------------------
+  byId('actPolicySel').addEventListener('change', function () {
+    var v = byId('actPolicySel').value;
+    call('config.setActPolicy', { policy: v, channelId: (typeof selChannel === 'function') ? selChannel() : null }).then(function (res) {
+      if (res && res.ok) { log('actuation policy: ' + res.value.actPolicy + ' — autonomous output ' + (v === 'ask' ? 'holds for approval' : v === 'deny' ? 'stays quiet' : 'fires freely')); refresh(); }
+      else { if (lastApprovals) byId('actPolicySel').value = lastApprovals.policy; log('policy change failed: ' + ((res && res.reason) || 'unknown')); }
+    });
+  });
+  byId('approvalsApproveAllBtn').addEventListener('click', function () {
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch) { log('pick a channel in the tab row first'); return; }
+    call('act.approve', { channelId: ch, id: 'all' }).then(function (res) {
+      if (res && res.ok) { log('approved ' + (((res.value || {}).approved || []).length) + ' — fires on the next poll'); refresh(); }
+      else log('approve failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  byId('approvalsDismissAllBtn').addEventListener('click', function () {
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch) { log('pick a channel in the tab row first'); return; }
+    call('act.dismiss', { channelId: ch, id: 'all' }).then(function (res) {
+      if (res && res.ok) { log('dismissed — that output stays quiet for a day'); refresh(); }
+      else log('dismiss failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  byId('undoBtn').addEventListener('click', function () {
+    var ch = (typeof selChannel === 'function') ? selChannel() : null;
+    if (!ch) { log('pick a channel in the tab row first'); return; }
+    call('act.undo', { channelId: ch }).then(function (res) {
+      if (res && res.ok) { log('undid: ' + ((res.value || {}).undone || 'last action')); refresh(); }
+      else log('undo failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  // ---- quarantine: release / drop held rule sets -------------------------------
+  byId('quarantineReleaseBtn').addEventListener('click', function () {
+    call('quarantine-release', { kind: 'all' }).then(function (res) {
+      if (res && res.ok) { log('quarantine released: ' + (((res.value || {}).released || []).join(', ') || 'nothing held')); refresh(); }
+      else log('quarantine release failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
+  byId('quarantineDropBtn').addEventListener('click', function () {
+    if (!window.confirm('Drop everything held in quarantine? Imported rule sets are discarded (live settings untouched).')) return;
+    call('quarantine-drop', { kind: 'all' }).then(function (res) {
+      if (res && res.ok) { log('quarantine dropped: ' + (((res.value || {}).dropped || []).join(', ') || 'nothing held')); refresh(); }
+      else log('quarantine drop failed: ' + ((res && res.reason) || 'unknown'));
+    });
+  });
   // ---- factory reset ---------------------------------------------------------------
   byId('factoryResetBtn').addEventListener('click', function () {
     if (!window.confirm('FACTORY RESET?\n\nThis wipes ALL state and ALL settings (token kept).\n\nExport a backup first if you want to recover anything. This cannot be undone.')) return;
@@ -3364,6 +4027,13 @@
         log(when + '  ' + e.action + '  ' + (e.name || e.targetId) + (e.byModId === 'auto' ? ' (auto)' : '') + (e.reason ? ('  \u2014 ' + e.reason) : ''));
         (e.context || []).forEach(function (c) { log('        \u201c' + String(c.text || '').slice(0, 120) + '\u201d'); });
       });
+      call('mod.verifyLog', { channelId: selChannel() }).then(function (vr) {
+        if (!vr || !vr.ok) { log('mod log chain: unverified (' + ((vr && vr.reason) || 'no bridge') + ')'); return; }
+        var v = vr.value || {};
+        if (v.legacy) { log('mod log chain: legacy engine — entries unchained'); return; }
+        if (v.ok) log('mod log chain: ' + v.chained + ' chained, ' + v.preChain + ' pre-chain \u2713');
+        else log('mod log chain BROKEN at entry ' + v.badIndex + ' (' + (v.reason || 'mismatch') + ') — investigate before trusting it');
+      });
     });
   });
 
@@ -3377,7 +4047,7 @@
   dlog('control page loaded; brain ready (respond / judge / greet). This page logs with the [chloe-page] prefix; the userscript logs with [chloe...].');
   refresh();
   refreshMods();
-  setInterval(function () { if (document.visibilityState !== 'hidden') refresh(); }, 5000);
+  setInterval(function () { if (document.visibilityState !== 'hidden' && !window.__hamHold) refresh(); }, 5000);
 
   // ---- Activity tab: direct chat (no Discord needed) + admin profile ----
   // Session-only: history here is never posted anywhere and never writes memories.
@@ -3476,6 +4146,165 @@
   });
   byId('debugToggleChk').addEventListener('change', syncDbgVis);
   syncDbgVis();
+
+  // ---- ham radio: opt-in bot-to-bot band over server-plugin ----------------------
+  // Callsign comes from the Discord bot id (never typed in); the engine stores
+  // only the on/off flag (default off). The band is one shared topic per
+  // generator; the server script above just reflects validated short bursts.
+  var HAM_ID_RE = /^[A-Z0-9-]{2,24}$/;
+  var hamSocket = null, hamConnecting = false, hamRetryAt = 0, hamDead = false;
+  var hamStatus = null, hamHeard = {};
+  var hamLastReplyAt = 0, hamLastTxAt = 0;
+  window.__hamLog = window.__hamLog || [];
+  function hamCallsign(botUserId) {
+    var s = String(botUserId || ''), h = 2166136261, i;
+    for (i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    var b = h.toString(36).toUpperCase();
+    while (b.length < 6) b = '0' + b;
+    return 'CHLOE-' + b.slice(-6);
+  }
+  function hamValidBurst(o) {
+    if (!o || typeof o !== 'object') return null;
+    if (o.t !== 'burst' && o.t !== 'hello' && o.t !== 'bye' && o.t !== 'join') return null;
+    if (typeof o.id !== 'string' || !HAM_ID_RE.test(o.id)) return null;
+    var text = (o.t === 'burst') ? String((o.text == null) ? '' : o.text).trim() : '';
+    if (o.t === 'burst' && (!text || text.length > 280)) return null;
+    return { t: o.t, id: o.id, text: text.slice(0, 280) };
+  }
+  function hamWanted() { return !!(hamStatus && hamStatus.hamRadio && hamStatus.botUserId); }
+  function hamOwnId() { return (hamStatus && hamStatus.botUserId) ? hamCallsign(hamStatus.botUserId) : null; }
+  function hamPruneHeard() {
+    var now = Date.now(), k;
+    for (k in hamHeard) { if (hamHeard[k] && now - hamHeard[k] > 300000) delete hamHeard[k]; }
+  }
+  function hamRemember(id, text) {
+    window.__hamLog.push({ id: id, text: text });
+    if (window.__hamLog.length > 20) window.__hamLog = window.__hamLog.slice(-20);
+  }
+  function hamPaintState() {
+    var own = hamOwnId();
+    setText('hamCall', own || 'validate first');
+    if (!hamStatus || !hamStatus.hamRadio) { setText('hamState', 'off'); return; }
+    if (!own) { setText('hamState', 'off \u2014 validate first'); return; }
+    if (hamDead) { setText('hamState', 'blocked off-site'); return; }
+    if (hamSocket) {
+      var n = 0, now = Date.now(), k;
+      for (k in hamHeard) { if (hamHeard[k] && now - hamHeard[k] < 300000 && k !== own) n++; }
+      setText('hamState', 'on air, ' + n + ' heard');
+    }
+  }
+  function hamSend(o) {
+    if (!hamSocket) return false;
+    try {
+      if (o.t === 'burst') {
+        var now = Date.now();
+        if (now - hamLastTxAt < 10000) { dlog('ham: outbound burst throttled'); return false; }
+        hamLastTxAt = now;
+      }
+      hamSocket.send(JSON.stringify(o));
+      return true;
+    } catch (e) { console.error('[wire:ham] send failed', e); return false; }
+  }
+  function hamThink(fromId, text) {
+    // Test seam (mirrors the window.__chloeRespond pattern): probes set
+    // window.__hamAi to a getter returning a canned ai fn; production falls
+    // back to grabAiText(). Bare-global stubbing does not reach page code,
+    // so the seam must be read explicitly off window.
+    var ai = null;
+    try { ai = (typeof window.__hamAi === 'function') ? window.__hamAi() : grabAiText(); } catch (e) { ai = null; }
+    if (typeof ai !== 'function') { dlog('ham: no AI text plugin'); return Promise.resolve(null); }
+    var own = hamOwnId();
+    var others = Object.keys(hamHeard).filter(function (k) { return k !== own; }).slice(-6);
+    var handoff = others.length ? others.join(', ') : 'any station';
+    var past = window.__hamLog.slice(-6).map(function (r) { return r.id + ': ' + r.text; }).join('\n');
+    var instruction = 'You are ' + own + ', a Discord bot talking on a shared text radio band with a few other bots. Your turn is one short spoken sentence, plain words only, no markdown, no symbols, no labels. '
+      + 'Start with your name, for example "' + own + ' here". '
+      + 'Say what step you are taking toward the shared goal: trading one useful observation from your own server and keeping the band friendly. '
+      + 'End by handing off to one of these stations: ' + handoff + '. If none fits, end with "over to any station". '
+      + 'Recent band traffic:\n' + (past || '(quiet so far)') + '\n'
+      + 'Now speak your single sentence.';
+    return Promise.resolve(ai({ instruction: instruction, stopSequences: ['\n'] })).then(function (r) {
+      var said = safeText(r).slice(0, 280);
+      return said || null;
+    }, function (e) { dlog('ham: think failed: ' + ((e && e.message) || e)); return null; });
+  }
+  function hamMaybeReply(fromId, text) {
+    var own = hamOwnId();
+    if (!own || fromId === own) return 'self';
+    var up = String(text || '').toUpperCase();
+    var named = up.indexOf(own) >= 0;
+    var cq = (/(\bCQ\b|ANY STATION|ANYONE)/.test(up));
+    if (!named && !cq) return 'no-trigger';
+    var now = Date.now();
+    if (now - hamLastReplyAt < 90000) { dlog('ham: reply cooldown'); return 'cooldown'; }
+    hamLastReplyAt = now;
+    hamThink(fromId, String(text || '')).then(function (said) {
+      if (!said) return;
+      hamRemember(own, said);
+      if (hamSend({ t: 'burst', id: own, text: said })) log('[chloe.radio] ' + own + ' (you): ' + said);
+    });
+    return 'sent';
+  }
+  function hamOnMessage(data) {
+    var m = null;
+    try { m = (typeof data === 'string') ? JSON.parse(data) : null; } catch (e) { return 'bad-json'; }
+    var v = hamValidBurst(m);
+    if (!v) return 'bad-shape';
+    var own = hamOwnId();
+    if (v.id === own) return 'echo';
+    hamHeard[v.id] = Date.now();
+    hamPruneHeard();
+    hamPaintState();
+    if (v.t === 'burst') {
+      hamRemember(v.id, v.text);
+      log('[chloe.radio] ' + v.id + ': ' + v.text);
+      hamMaybeReply(v.id, v.text);
+    } else {
+      debugAppend('radio ' + v.t + ' from ' + v.id);
+    }
+    return v.t;
+  }
+  function hamCloseHam() {
+    if (hamSocket) {
+      var own = hamOwnId();
+      if (own) { try { hamSend({ t: 'bye', id: own }); } catch (e) {} }
+      try { hamSocket.close(); } catch (e) {}
+      hamSocket = null;
+    }
+    hamConnecting = false; hamRetryAt = 0;
+  }
+  function ensureHam() {
+    hamPaintState();
+    if (!hamWanted()) { hamCloseHam(); if (!hamDead) setText('hamState', hamStatus && hamStatus.hamRadio ? 'off \u2014 validate first' : 'off'); return; }
+    if (hamDead || hamSocket || hamConnecting) return;
+    if (Date.now() < hamRetryAt) return;
+    var factory = null;
+    try { factory = (typeof root !== 'undefined') ? root.createServerSocket : null; } catch (e) { factory = null; }
+    if (typeof factory !== 'function') { setText('hamState', 'error: no socket'); console.error('[wire:ham] createServerSocket missing'); return; }
+    hamConnecting = true; setText('hamState', 'linking\u2026');
+    var sock = null;
+    try { sock = factory(); } catch (e) { hamConnecting = false; hamRetryAt = Date.now() + 15000; setText('hamState', 'error'); console.error('[wire:ham] open threw', e); return; }
+    try { sock.binaryType = 'arraybuffer'; } catch (e) {}
+    sock.addEventListener('open', function () {
+      hamConnecting = false; hamSocket = sock; hamRetryAt = 0;
+      hamSend({ t: 'join', id: hamOwnId() });
+      hamSend({ t: 'hello', id: hamOwnId() });
+      hamPaintState();
+    });
+    sock.addEventListener('message', function (ev) { try { hamOnMessage(ev && ev.data); } catch (e) { console.error('[wire:ham] onmessage', e); } });
+    sock.addEventListener('close', function (ev) {
+      if (hamSocket === sock) hamSocket = null;
+      hamConnecting = false;
+      var code = ev && ev.code;
+      if (code === 4403) { hamDead = true; setText('hamState', 'blocked off-site'); return; }
+      if (hamWanted()) { hamRetryAt = Date.now() + 5000; setText('hamState', 'retrying\u2026'); }
+      else hamPaintState();
+    });
+  }
+  window.__ham = { callsign: hamCallsign, valid: hamValidBurst, onMessage: hamOnMessage, maybeReply: hamMaybeReply, think: hamThink, ensure: ensureHam, close: hamCloseHam, heard: hamHeard, wanted: hamWanted, ownId: hamOwnId };
 
   // ---- Tile arrange: drag reorder (SortableJS, lazy) + 1x/2x/3x widths, persisted per pane --
   // Order + spans live in localStorage (panel-side, like chanLabels); every control keeps its
