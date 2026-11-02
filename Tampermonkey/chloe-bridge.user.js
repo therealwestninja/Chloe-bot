@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chloe shell (Discord <- Perchance)
 // @namespace    therealwestninja
-// @version      1.2
+// @version      1.4
 // @description  Thin stable shell: GM transport/storage, control link, engine-bundle cache. Engine logic arrives from the control generator panel (__installEngine) — reinstall this file only for transport/grant changes.
 // @author       therealwestninja
 // @match        https://*.perchance.org/*
@@ -13,18 +13,10 @@
 // @grant        unsafeWindow
 // @grant        GM_openInTab
 // @grant        GM_addValueChangeListener
-// @connect      discord.com
-// @connect      translate.googleapis.com
-// @connect      api.duckduckgo.com
-// @connect      en.wikipedia.org
-// @connect      wikipedia.org
-// @connect      api.open-meteo.com
-// @connect      geocoding-api.open-meteo.com
-// @connect      api.quotable.io
-// @connect      byabbe.se
-// @connect      restcountries.com
-// @connect      api.datamuse.com
-// @connect      api.dictionaryapi.dev
+// @connect      *
+// (v1.4: wildcard — news sources are arbitrary user-chosen site roots, so no
+// fixed host list can cover them. The engine's own fetchText allowlist still
+// restricts sitemap fetching to configured feed hosts + their chains.)
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -47,7 +39,7 @@
   'use strict';
   if (window.top !== window) return;   // shell + engine live in the top frame only
 
-  var SHELL_VERSION = '1.2';
+  var SHELL_VERSION = '1.4';
   var NS = 'chloe:';
   var BUNDLE_KEY = NS + 'engine:bundle';   // { version, source }
   var ORIGIN_OK = /^(null|https:\/\/([a-z0-9]{32}\.)?perchance\.org)$/;
