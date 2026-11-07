@@ -1309,9 +1309,20 @@ console.log('ham band reflector ready');
 
   // Shell/world split: the userscript is a thin shell; the engine bundle lives here
   // (src/engine.bundle.js) and is pushed over the link when the shell's copy is
-  // missing or stale. Runs once per pinned peer; old monolith bridges answer __hello
-  // with "unknown command", which we treat as "no shell — carry on".
+  // missing or stale. The bundle FILE's own version stamp is the source of truth
+  // (not main.pjs): the panel pushes the file labeled with the stamp it actually
+  // contains, so a bare version bump with no rebuild changes nothing and breaks
+  // nothing — the shell already has that content and stays 'current'. Runs once
+  // per pinned peer; old monolith bridges answer __hello with "unknown command",
+  // which we treat as "no shell — carry on".
   function wantEngineVersion() { try { return (typeof root !== 'undefined' && root.ENGINE_BUNDLE_VERSION) ? String(root.ENGINE_BUNDLE_VERSION) : null; } catch (e) { return null; } }
+  // Read the version the bundle file actually stamps (its own marker), or null
+  // when unparseable — then the caller falls back to main.pjs and says so loudly.
+  function embeddedBundleVersion(src) { try { var m = String(src || '').match(/__CHLOE_ENGINE_BUNDLE_VERSION = "([^"]+)"/); return (m && m[1]) ? String(m[1]) : null; } catch (e) { return null; } }
+  // main.pjs versions arrive DSL-quoted (`"49"`, quotes included) while stamps and
+  // shell labels may or may not carry them — compare the bare form everywhere so a
+  // quote-style difference alone can never look like a version difference.
+  function bareEngineVersion(v) { var s = String(v == null ? '' : v); if (s.length >= 2 && s.charAt(0) === '"' && s.charAt(s.length - 1) === '"') return s.slice(1, -1); return s; }
   function callPinned(cmd, args, timeoutMs) {
     if (!peerWin) return Promise.resolve({ ok: false, reason: 'no peer' });
     var peerAtSend = peerWin, originAtSend = peerOrigin;
@@ -1349,9 +1360,8 @@ console.log('ham band reflector ready');
         shellWarnedFor = peerWin;
         log('Bridge shell v' + linkShell + ' is older than v' + NEWS_SHELL_WANT + ' \u2014 news fetching is blocked there (reinstall the bridge userscript for the new shell; everything else keeps working).');
       }
-      if (have === want) { engineEnsuredFor = peerWin; dlog('engine bundle ' + have + ' already installed (shell ' + h.value.shell + ')'); return 'current'; }
-      dlog('engine bundle installed=' + (have || 'none') + ' want=' + want + ' — pushing');
-      log('Updating bot engine to v' + want + '…');
+      if (bareEngineVersion(have) === bareEngineVersion(want) && typeof engineBundleText === 'string' && embeddedBundleVersion(engineBundleText) === bareEngineVersion(want)) { engineEnsuredFor = peerWin; dlog('engine bundle ' + have + ' already installed (shell ' + h.value.shell + ')'); return 'current'; }
+      dlog('engine bundle installed=' + (have || 'none') + ' want=' + want + ' — fetching file');
       var needFetch = !(typeof engineBundleText === 'string' && engineBundleText.length > 1000);
       var srcP = needFetch
         ? fetch('src/engine.bundle.js').then(function (r) {
@@ -1361,13 +1371,23 @@ console.log('ham band reflector ready');
         : Promise.resolve(engineBundleText);
       return srcP.then(function (src) {
         if (!peerWin || peerWin !== peerAtStart) return 'stale';
-        // Stale-fetch guard: the bundle file must actually BE the version we claim, or the
-        // shell files a wrong-labeled engine and stops upgrading (want matches, content is old).
-        // (want carries its DSL quotes, so it matches the bundle's JSON marker verbatim.)
-        if (src.indexOf('__CHLOE_ENGINE_BUNDLE_VERSION = ' + want) < 0) { dlog('bundle fetch stale for v' + want + ' — will retry on the next hello'); engineBundleText = null; engineRetryAt = Date.now() + 30000; return 'stale'; }
-        return callPinned('__installEngine', { version: want, source: src }, 120000);
+        // File-truth: the pushed label always comes from the content itself, so a
+        // main.pjs bump with no rebuild can never file a wrong-labeled engine (or
+        // wedge the loop) — the shell already holds that content and stays current.
+        var bareWant = bareEngineVersion(want);
+        var file = embeddedBundleVersion(src);
+        if (!file) { log('Engine bundle has no version stamp — trusting main.pjs v' + bareWant + ' (rebuild the bundle to restore the stamp).'); file = bareWant; }
+        else if (file !== bareWant) dlog('main.pjs wants v' + bareWant + ' but the bundle file stamps v' + file + ' — pushing the file as v' + file + ' (rebuild to advance; the bump alone changes nothing)');
+        if (bareEngineVersion(have) === file) { engineEnsuredFor = peerWin; dlog('engine bundle ' + have + ' already installed (shell ' + h.value.shell + ')'); return 'current'; }
+        // Label with main.pjs when it names this exact content (the historical
+        // quoted form), else the file's own stamp quoted — the label always
+        // describes the content being pushed, never an unbuilt bump.
+        var label = (file === bareWant) ? want : ('"' + file + '"');
+        log('Updating bot engine to v' + file + '…');
+        return callPinned('__installEngine', { version: label, source: src }, 120000);
       }).then(function (r) {
         if (!peerWin || peerWin !== peerAtStart) return 'stale';
+        if (typeof r === 'string') return r;   // 'current' decided after the fetch — a verdict, not a failure
         if (r && r.ok) { engineEnsuredFor = peerWin; log('Bot engine updated (' + r.value.engine + ').'); dlog('engine install ok'); return 'installed'; }
         log('Engine update FAILED: ' + ((r && r.reason) || 'unknown') + ' — bot commands will fail until it succeeds.');
         return 'failed';
