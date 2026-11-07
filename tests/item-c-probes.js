@@ -31,7 +31,9 @@ try {
   cases.forEach(c => { try { feedEvent(c[0], '00:00:00'); } catch (e) { tagOk = false; got.push(c[0] + ':THREW'); return; } });
   const rows = feed.querySelectorAll('.ev');
   const last10 = Array.prototype.slice.call(rows, -10);
-  last10.forEach((r, i) => { got.push(r.className + '/' + r.querySelector('.tag').textContent); if (r.className !== 'ev ' + cases[i][1] || r.querySelector('.tag').textContent !== cases[i][2]) tagOk = false; });
+  // UI juice adds a transient 'fresh' entrance class (rowIn .16s) — assert by meaning
+  // (classList contains the type + tag text exact), not by exact className.
+  last10.forEach((r, i) => { got.push(r.className + '/' + r.querySelector('.tag').textContent); if (!r.classList.contains(cases[i][1]) || r.querySelector('.tag').textContent !== cases[i][2]) tagOk = false; });
   ck('C1-tags', tagOk, got.join(' ; ').slice(0, 400));
   // C2 — prefix strip: [chloe.xxx] removed from .msg but chip shows type
   try { feedEvent('[chloe.poll] 5 fetched, 3 ingested', '00:00:01'); } catch (e) {}
@@ -68,6 +70,17 @@ try {
   const shownAgain = !feed.classList.contains('hide-dbg');
   ck('C7-toggle', hasDbg && hiddenNow && shownAgain, 'dbg=' + hasDbg + ' hidden=' + hiddenNow + ' shown=' + shownAgain);
   try { tgl.checked = beforeToggle; tgl.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+  // C8 — explicit types bypass the keyword classifier; payload keywords can't flip the chip
+  try { log('news test: https://lionsgate.example/model-blocked terror warning failure', 'news'); } catch (e) {}
+  let c8 = feed.querySelectorAll('.ev'); let r8 = c8[c8.length - 1];
+  ck('C8-explicit-news', r8 && r8.classList.contains('news') && r8.querySelector('.tag').textContent === 'NEWS', r8 ? r8.className + '/' + r8.querySelector('.tag').textContent : '<none>');
+  try { log('news run failed (anything at all)', 'error'); } catch (e) {}
+  let c8b = feed.querySelectorAll('.ev'); let r8b = c8b[c8b.length - 1];
+  ck('C8-explicit-error', r8b && r8b.classList.contains('error') && r8b.querySelector('.tag').textContent === 'ERROR', r8b ? r8b.className + '/' + r8b.querySelector('.tag').textContent : '<none>');
+  // C9 — untyped scan reads the head only: payload keywords past ~140 chars can't flip the chip
+  var c9line = 'news test: https://example.com/' + new Array(150).join('a') + ' model lionsgate terror episodes failure warning';
+  var c9 = feedType(c9line);
+  ck('C9-head-scan', c9[0] === 'system' && c9[1] === 'SYSTEM', c9.join('/') + ' len=' + c9line.length);
 } finally { restore(); }
 ck('C0-restored', feed.innerHTML === beforeFeed, 'timeline restored');
 const pass = checks.every(c => c.ok);

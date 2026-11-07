@@ -10,7 +10,7 @@ const EXTRA_IDS = ['ackChk','goalChk','sleepChk','paceChk','epiGraphChk','timeCh
 const ALL = TOG_IDS.concat(EXTRA_IDS);
 const beforeChk = {}; ALL.forEach(id => { const el = byId(id); beforeChk[id] = el ? el.checked : null; });
 const beforeVals = {};
-['procRules','autoModRules','beatsBox','opNoteInput','prefixInput','noticeInput','tzOffset','imageQueueInput','engageModeSel','modeSel'].forEach(id => { const el = byId(id); beforeVals[id] = el ? el.value : null; });
+['procRules','autoModRules','beatsBox','opNoteInput','prefixInput','noticeInput','tzOffset','imageQueueInput','engageModeSel','modeSel','charAuthorName','charAuthorInstr'].forEach(id => { const el = byId(id); beforeVals[id] = el ? el.value : null; });
 const beforeNotice = byId('noticeState').textContent, beforeChar = byId('charCurrent').textContent;
 const beforeAnchor = byId('personaAnchorChk') ? byId('personaAnchorChk').checked : null;
 const beforeApplied = (typeof lastApplied !== 'undefined') ? Object.assign({}, lastApplied) : null;

@@ -28,10 +28,13 @@ function restore() {
 try {
   byId('tab_behavior').click();
   // B10-1 — F10 code-shape: refresh fail path resets run pair to unknown
+  // (R2 rotate-45: the reset lives in paintRunIdle(), shared with applyStatus's
+  // setRunPair — so this asserts the delegation invariant, not inline text.)
   try {
     const src = refresh.toString();
-    ck('B10-1-f10-shape', src.indexOf("setText('runTxt', '\\u2026')") >= 0 && src.indexOf("setText('sb_run', '\\u2026')") >= 0,
-      src.indexOf('runTxt') >= 0 ? 'fail path resets run pair' : 'no run reset in refresh');
+    const idle = paintRunIdle.toString();
+    ck('B10-1-f10-shape', src.indexOf('paintRunIdle') >= 0 && idle.indexOf("setText('runTxt', '\\u2026')") >= 0 && idle.indexOf("setText('sb_run', '\\u2026')") >= 0,
+      src.indexOf('runTxt') >= 0 || src.indexOf('paintRunIdle') >= 0 ? 'fail path resets run pair via paintRunIdle' : 'no run reset in refresh');
   } catch (e) { ck('B10-1-f10-shape', false, 'threw: ' + e); }
   // B10-2 — F11: focused modeSel resists; unfocused follows (parity with engageModeSel)
   try {

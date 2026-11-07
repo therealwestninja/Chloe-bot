@@ -104,11 +104,12 @@ try {
   const impData = { cfg: {} };
   impData.cfg['chanGate:' + primary] = { speak: false, dance: true };
   impData.cfg['chanGate:12'] = { speak: false };
-  impData.cfg['chanGate:' + second] = 'nope';
-  impData.cfg['chanGate:' + third] = { remember: 0 };
+  let junk = 1;   // chanGate:12 (bad id) is always junk; the shape-junk below needs
+  if (second !== primary) { impData.cfg['chanGate:' + second] = 'nope'; junk++; }   // distinct live channels — single-channel setups skip (would clobber primary)
+  if (third !== primary && third !== second) { impData.cfg['chanGate:' + third] = { remember: 0 }; junk++; }
   const imp = await call('import-state', { data: impData }, 30000);
   ck('G8-import-ok', !!(imp && imp.ok), 'import-state acked');
-  ck('G8-import-dropped', !!(imp && imp.ok && imp.value && imp.value.dropped === 3), 'dropped 3 junk entries (saw ' + ((imp && imp.ok && imp.value && imp.value.dropped) || '?') + ')');
+  ck('G8-import-dropped', !!(imp && imp.ok && imp.value && imp.value.dropped === junk), 'dropped ' + junk + ' junk entries (saw ' + ((imp && imp.ok && imp.value && imp.value.dropped) || '?') + ')');
   const stImp = await call('status', null, 15000);
   const gImp = stImp && stImp.ok && stImp.value.chanGates[primary];
   ck('G8-import-applied', !!(gImp && gImp.speak === false && gImp.dance === undefined), 'speak off applied, dance stripped: ' + JSON.stringify(gImp));

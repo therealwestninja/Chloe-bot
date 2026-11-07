@@ -55,8 +55,8 @@ try {
   while (Date.now() - t0 < 75000) {
     await new Promise(r => setTimeout(r, 2000));
     const tail = logText().slice(mark);
-    if (!startLine && (/start failed: timeout/.test(tail) || /[AP]M  started T0 polling/.test(tail))) startLine = 'seen';
-    if (!stopLine && (/stop failed: timeout/.test(tail) || /[AP]M  stopped/.test(tail))) stopLine = 'seen';
+    if (!startLine && (/start failed: timeout/.test(tail) || /started T0 polling/.test(tail))) startLine = 'seen';
+    if (!stopLine && (/stop failed: timeout/.test(tail) || /stopped/.test(tail))) stopLine = 'seen';
     if (!valLine && (/token validation failed: timeout/.test(tail) || /token OK ->/.test(tail))) valLine = 'seen';
     if (startLine && stopLine && valLine) break;
   }
@@ -64,7 +64,43 @@ try {
   ck('D4-start-timeout-loud', !!startLine, startLine || ('THROTTLED — no start line within 75s' + (throttled ? ' (deferred, not a wire fail)' : '')));
   ck('D4-stop-timeout-branch', !!stopLine, stopLine || 'THROTTLED (deferred)');
   ck('D4-validate-reports', !!valLine, valLine || 'THROTTLED (deferred)');
-  if (throttled) ck('D4-note', true, 'timer clamp suspected: 5s refresh + 8s calls overlap in background iframe; success branch needs linked userscript regardless');
+  // D4-fix (11-08): a silent panel leg is AMBIGUOUS (reply lost downstream vs
+  // request never sent vs link dark vs clamped fallback timer). The engine's
+  // own linkStats are ground truth — status + diag.trace answer even in the
+  // historical failure windows. Classify before shrugging.
+  if (throttled) {
+    var truth = { traceOk: false, counts: null, last: null, running: null };
+    try {
+      var tr = await call('diag.trace', null, 15000);
+      if (tr && tr.ok && tr.value && tr.value.length) {
+        var lastLine = tr.value[tr.value.length - 1];
+        var m = /counts=(\{.*\})\s*$/.exec(lastLine.msg || '');
+        truth.traceOk = true;
+        truth.counts = m ? m[1] : null;
+        var lm = /last=(\S+) (\S+)/.exec(lastLine.msg || '');
+        truth.last = lm ? (lm[1] + ' ' + lm[2]) : null;
+      }
+      var st2 = await call('status', null, 15000);
+      if (st2 && st2.ok && st2.value) truth.running = !!st2.value.running;
+    } catch (e) { truth.err = String((e && e.message) || e); }
+    ck('D4-engine-truth', truth.traceOk, truth.traceOk ? ('engine counts ' + truth.counts + ' | last ' + truth.last + ' | running=' + truth.running) : ('trace failed: ' + (truth.err || 'no link')));
+    var cls = 'unclassified';
+    if (truth.traceOk) {
+      var c = {};
+      try { c = JSON.parse(truth.counts || '{}'); } catch (e2) {}
+      var missing = [];
+      if (!startLine) missing.push('start');
+      if (!stopLine) missing.push('stop');
+      var heard = missing.filter(function (k) { return (c[k] || 0) > 0; });
+      var unheard = missing.filter(function (k) { return !(c[k] > 0); });
+      if (heard.length && !unheard.length) cls = 'REPLY-LOST (engine heard ' + heard.join('+') + ', panel saw nothing — downstream/message loss, not dispatch)';
+      else if (unheard.length && !heard.length) cls = 'NEVER-SENT (engine never saw ' + unheard.join('+') + ' — panel post/timer domain)';
+      else if (heard.length) cls = 'MIXED (heard ' + heard.join('+') + ', never-sent ' + unheard.join('+') + ')';
+      else cls = 'nothing-missing?? (unreachable — throttled implies a missing leg)';
+    } else cls = 'LINK-DARK (ground truth unreachable too — genuinely unreachable, not reply loss)';
+    ck('D4-class', truth.traceOk, cls);
+    ck('D4-note', true, 'conditional: background timer clamp hides the 8s fallback; the ladder above discriminates clamp vs loss vs dark');
+  }
   // D5 — Batch 12: link-state-aware (was link-idle). With the link up D4's round-trip ends
   // in a successful refresh → dot on/linked; link-down → dot idle/waiting. Invariant: explicit +
   // consistent badge (no crash, no stuck contradiction), not a fixed state.

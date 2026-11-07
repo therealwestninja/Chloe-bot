@@ -3,13 +3,14 @@ const checks = [];
 function ck(id, ok, detail) { checks.push({ id, ok: !!ok, detail: String(detail || '') }); if (!ok) { try { console.error('[wire:EG-adv]', id, detail); } catch (e) {} } }
 function byId(id) { return document.getElementById(id); }
 const beforeVals = {};
-['procRules','autoModRules','beatsBox','gate_emoji'].forEach(id => { const el = byId(id); beforeVals[id] = id === 'gate_emoji' ? el.checked : el.value; });
+['procRules','autoModRules','beatsBox','gate_emoji','charAuthorName','charAuthorInstr'].forEach(id => { const el = byId(id); beforeVals[id] = id === 'gate_emoji' ? el.checked : el.value; });
 const beforeApplied = (typeof lastApplied !== 'undefined') ? Object.assign({}, lastApplied) : null;
 const STRIP = ['runDot','runTxt','sb_run_dot','sb_run'];
 const beforeStrip = {}; STRIP.forEach(id => { const el = byId(id); beforeStrip[id] = el ? { t: el.textContent, c: el.className } : null; });
 function restore() {
   byId('procRules').value = beforeVals.procRules; byId('autoModRules').value = beforeVals.autoModRules; byId('beatsBox').value = beforeVals.beatsBox;
   byId('gate_emoji').checked = beforeVals.gate_emoji;
+  byId('charAuthorName').value = beforeVals.charAuthorName; byId('charAuthorInstr').value = beforeVals.charAuthorInstr;
   STRIP.forEach(id => { const el = byId(id), b = beforeStrip[id]; if (el && b) { el.textContent = b.t; el.className = b.c; } });
   try { if (typeof lastApplied !== 'undefined' && beforeApplied) { Object.keys(lastApplied).forEach(k => { delete lastApplied[k]; }); Object.assign(lastApplied, beforeApplied); } } catch (e) {}
   // (dials tree-shook 2026-10-22: no dial state to restore)

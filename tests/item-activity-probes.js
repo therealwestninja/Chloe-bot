@@ -32,8 +32,8 @@ try {
   byId('chatInput').value = 'hello probe';
   byId('chatSendBtn').click();
   let replied = null;
-  for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 250)); const ls = [...pane.querySelectorAll('#chatLog .chatline.her .cmsg')]; if (ls.length && ls[ls.length - 1].textContent === 'stubbed hi') { replied = true; break; } }
-  ck('ACT4-reply', !!replied, 'stubbed her-line rendered');
+  for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 250)); const ls = [...pane.querySelectorAll('#chatLog .chatline.bot .cmsg')]; if (ls.length && ls[ls.length - 1].textContent === 'stubbed hi') { replied = true; break; } }
+  ck('ACT4-reply', !!replied, 'bot-line rendered');
   ck('ACT4-history', chatHistory.length >= 2 && chatHistory[0].text === 'hello probe', 'history=' + chatHistory.length);
   const n0 = pane.querySelectorAll('#chatLog .chatline').length;
   byId('chatInput').value = '   ';

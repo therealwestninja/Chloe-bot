@@ -23,7 +23,7 @@ function restore() {
 try {
   // L0 — one select per row, 25 options (default + 24 codes), code values present
   chanDirty = false;
-  try { applyStatus({ running: false, channelId: 'L1', publicChannels: ['L1', 'L2'], dmChannels: [], channelLangs: { L1: 'fr', L2: null }, chanGates: { L1: { speak: true, read: true, remember: true }, L2: { speak: true, read: true, remember: true } } }); } catch (e) { ck('L0-render', false, 'threw'); }
+  try { applyStatus({ running: false, channelId: 'L1', publicChannels: ['L1', 'L2'], dmChannels: [], channelLangs: { L1: 'fr', L2: null }, chanGates: { L1: { speak: true, read: true, remember: true }, L2: { speak: true, read: true, remember: true } }, thoughtsFeeds: {} }); } catch (e) { ck('L0-render', false, 'threw'); }
   const sels = [...document.querySelectorAll('#chanList select.chanlang')];
   const opts = sels.length ? [...sels[0].options].map(o => o.value) : [];
   ck('L0-render', sels.length === 2 && opts.length === 25 && opts[0] === '' && opts.includes('fr') && opts.includes('ja') && opts.includes('fi'), 'selects=' + sels.length + ' opts=' + opts.length);
@@ -63,4 +63,4 @@ try {
 finally { restore(); try { refresh(); } catch (e) {} }
 let ok = CHANSTATE.pub.join(',') === snapPub.join(',') && CHANSTATE.dms.join(',') === snapDms.join(',') && chanDirty === snapDirty;
 try { ok = ok && JSON.stringify(lastChanLangs) === JSON.stringify(snapLangs) && JSON.stringify(lastChanGates) === JSON.stringify(snapGates); } catch (e) {}
-return { ok, checks };
+return { ok, pass: ok, checks };

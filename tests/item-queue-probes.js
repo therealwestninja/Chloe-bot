@@ -1,62 +1,52 @@
-// Queue probes — brain lines (FIFO, one running at a time per backend).
-// Fully offline except the plugin's presence: instrumented runs prove FIFO order,
-// and no-AI fast paths (facts with no lines, paint with empty prompt, unknown method)
-// prove end-to-end dispatch through the lines. Behavior rides the full-board re-green.
+// Queue probes — brain-line architecture lock (post-10-18: lines live engine-side).
+// The 10-18 probe drove panel textLine/imageLine globals; those moved into the engine
+// (wiring.js localTextLine/localImageLine via makeLocalLine) so the old suite tested
+// globals that no longer exist — red by design, not a product bug. This suite locks the
+// CURRENT architecture from panel-reachable paths only: absence by design, the direct
+// paint-empty decline (no AI, no hang), and the dispatch/unknown/guard shapes in the
+// executable scripts (liveSrc — never the inert preloaded copy, Batch 19 lesson).
+// Engine-side FIFO/serial/routing is proven headlessly against the REAL shipped source
+// in scratch/e2e-queue-lines.js (extracted makeLocalLine, never a hand copy).
 // Run: page_eval {path:"src/tests/item-queue-probes.js"}. Returns {pass, checks}.
+// Net-zero: writes nothing (paint-empty returns before touching __chloePaint).
 const checks = [];
 function ck(id, ok, detail) { checks.push({ id, ok: !!ok, detail: String(detail || '') }); if (!ok) { try { console.error('[wire:Q]', id, detail); } catch (e) {} } }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+const feedBk = document.getElementById('chatLog') ? document.getElementById('chatLog').textContent.length : -1;
+let adminBk = null;
+try { adminBk = localStorage.getItem('chloe.adminProfile.v1'); } catch (e) {}
+return (async function () {
 try {
-  ck('Q-0-lines-exist', typeof textLine !== 'undefined' && typeof textLine.push === 'function' && typeof imageLine !== 'undefined' && typeof imageLine.push === 'function', 'textLine/imageLine push fns');
-  // Q-1 — FIFO + serial: three overlapping runs settle strictly in push order
-  const order = [];
-  function mkRun(tag, ms) {
-    return function () {
-      order.push(tag + '-start');
-      return sleep(ms).then(function () { order.push(tag + '-end'); });
-    };
-  }
-  textLine.push(mkRun('a', 60));
-  textLine.push(mkRun('b', 30));
-  textLine.push(mkRun('c', 10));
-  for (let i = 0; i < 100 && order.length < 6; i++) await sleep(50);
-  ck('Q-1-fifo-serial', order.join(',') === 'a-start,a-end,b-start,b-end,c-start,c-end', order.join(','));
-  // Q-2 — imageLine serializes too (factory shared, one overlapping pair)
-  const iorder = [];
-  imageLine.push(function () { iorder.push('x-start'); return sleep(40).then(function () { iorder.push('x-end'); }); });
-  imageLine.push(function () { iorder.push('y-start'); return sleep(5).then(function () { iorder.push('y-end'); }); });
-  for (let i = 0; i < 100 && iorder.length < 4; i++) await sleep(50);
-  ck('Q-2-image-serial', iorder.join(',') === 'x-start,x-end,y-start,y-end', iorder.join(','));
-  // Q-3..Q-5 — end-to-end through the real dispatcher via self-posted calls
-  const replies = {};
-  function onMsg(ev) {
-    const d = ev.data;
-    if (d && d.__chloe === 1 && d.kind === 'callres' && typeof d.nonce === 'string' && d.nonce.indexOf('qline') === 0) replies[d.nonce] = d;
-  }
-  window.addEventListener('message', onMsg);
-  try {
-    // Q-3 — three facts calls (no lines: no-AI fast path) all answered, in order
-    window.postMessage({ __chloe: 1, kind: 'call', nonce: 'qlineF1', method: 'facts', args: { name: 'Q', lines: [] } }, '*');
-    window.postMessage({ __chloe: 1, kind: 'call', nonce: 'qlineF2', method: 'facts', args: { name: 'Q', lines: [] } }, '*');
-    window.postMessage({ __chloe: 1, kind: 'call', nonce: 'qlineF3', method: 'facts', args: { name: 'Q', lines: [] } }, '*');
-    for (let i = 0; i < 100 && (!replies.qlineF1 || !replies.qlineF2 || !replies.qlineF3); i++) await sleep(50);
-    const fOk = replies.qlineF1 && replies.qlineF1.ok && replies.qlineF2 && replies.qlineF2.ok && replies.qlineF3 && replies.qlineF3.ok;
-    ck('Q-3-facts-through-line', !!fOk, 'F1=' + !!(replies.qlineF1 && replies.qlineF1.ok) + ' F2=' + !!(replies.qlineF2 && replies.qlineF2.ok) + ' F3=' + !!(replies.qlineF3 && replies.qlineF3.ok));
-    // Q-4 — unknown method bypasses the line: answered while a slow run still holds it
-    let slowDone = false;
-    textLine.push(function () { return sleep(400).then(function () { slowDone = true; }); });
-    await sleep(50); // let the slow run start
-    window.postMessage({ __chloe: 1, kind: 'call', nonce: 'qlineU1', method: 'nope', args: {} }, '*');
-    for (let i = 0; i < 60 && !replies.qlineU1; i++) await sleep(50);
-    ck('Q-4-unknown-bypass', !!replies.qlineU1 && replies.qlineU1.ok === false && !slowDone, 'replied=' + !!replies.qlineU1 + ' slowDoneAtReply=' + slowDone);
-    for (let i = 0; i < 60 && !slowDone; i++) await sleep(50);
-    // Q-5 — paint routes via imageLine: empty prompt declines without AI
-    window.postMessage({ __chloe: 1, kind: 'call', nonce: 'qlineP1', method: 'paint', args: { prompt: '' } }, '*');
-    for (let i = 0; i < 60 && !replies.qlineP1; i++) await sleep(50);
-    ck('Q-5-paint-through-line', !!replies.qlineP1 && replies.qlineP1.ok === false && replies.qlineP1.reason === 'empty prompt', 'reason=' + (replies.qlineP1 && replies.qlineP1.reason));
-  } finally {
-    window.removeEventListener('message', onMsg);
-  }
+  // Q-0 — absence by design: neither the old panel names nor the engine-side names
+  // leak into panel scope (adversarial: check all four, not just the old two).
+  ck('Q-0-no-panel-lines', typeof textLine === 'undefined' && typeof imageLine === 'undefined', 'textLine=' + typeof textLine + ' imageLine=' + typeof imageLine);
+  ck('Q-0b-no-engine-leak', typeof localTextLine === 'undefined' && typeof localImageLine === 'undefined', 'localTextLine=' + typeof localTextLine + ' localImageLine=' + typeof localImageLine);
+
+  // Q-1 — direct paint-empty route: declines fast with 'empty prompt', no AI, no hang.
+  // Adversarial battery (inputs NOT used while building): '' + whitespace + missing arg.
+  let t0 = Date.now(), r1 = null;
+  try { r1 = await paint({ prompt: '' }); } catch (e) { r1 = { ok: true, reason: 'THREW ' + ((e && e.message) || e) }; }
+  ck('Q-1-paint-empty', !!r1 && r1.ok === false && r1.reason === 'empty prompt' && (Date.now() - t0) < 1000, 'reason=' + (r1 && r1.reason) + ' ' + (Date.now() - t0) + 'ms');
+  let r2 = null;
+  try { r2 = await paint({ prompt: '   ' }); } catch (e) { r2 = { ok: true }; }
+  ck('Q-1b-paint-whitespace', !!r2 && r2.ok === false && r2.reason === 'empty prompt', 'reason=' + (r2 && r2.reason));
+  let r3 = null;
+  try { r3 = await paint(); } catch (e) { r3 = { ok: true }; }
+  ck('Q-1c-paint-missing', !!r3 && r3.ok === false && r3.reason === 'empty prompt', 'reason=' + (r3 && r3.reason));
+
+  // Q-2 — dispatch table + unknown fast-path + pinned-peer guard, in executable scripts only.
+  const liveSrc = [...document.querySelectorAll('script')].filter(s => { const t = (s.type || '').toLowerCase(); return t === '' || t.indexOf('javascript') >= 0 || t === 'module'; }).map(s => s.textContent || '').join('\n');
+  ck('Q-2-dispatch', liveSrc.indexOf("else if (d.method === 'paint') handler = paint") >= 0 && liveSrc.indexOf("else if (d.method === 'facts') handler = facts") >= 0, 'paint+facts dispatch present');
+  ck('Q-2-unknown', liveSrc.indexOf('unknown method:') >= 0, 'unknown fast-path present (no line)');
+  ck('Q-2-guard', liveSrc.indexOf('ev.source !== peerWin') >= 0, 'pinned-peer guard present (self-post correctly dropped)');
+
+  // Q-3 — null-controls: this probe writes nothing (paint-empty returns before the Map,
+  // no transport, no storage). Feed + admin key identical before/after.
+  let adminAfter = null;
+  try { adminAfter = localStorage.getItem('chloe.adminProfile.v1'); } catch (e) {}
+  const feedAfter = document.getElementById('chatLog') ? document.getElementById('chatLog').textContent.length : -2;
+  ck('Q-3-net-zero', adminAfter === adminBk && feedAfter === feedBk, 'admin same=' + (adminAfter === adminBk) + ' feed same=' + (feedAfter === feedBk));
 } catch (e) { ck('Q-0-no-throw', false, String((e && e.message) || e)); }
 const pass = checks.every(c => c.ok);
 return { pass, checks };
+})();

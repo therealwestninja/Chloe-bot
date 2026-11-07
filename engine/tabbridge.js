@@ -65,16 +65,26 @@
     // the lease freshness check + claim read-back are what prevent promoting over a live queen.
     var wakeJumpMs = opts.wakeJumpMs || 150000;
     var leaseRenewMs = opts.leaseRenewMs || 10000;
-    // D7 pool autosizing. The queen keeps the live worker count near a target. It only ever
-    // SPAWNS (never kills healthy workers — quiet just means it stops replacing reaped ones),
-    // and it backs off between spawns so a discard storm or a popup-blocked spawn doesn't loop.
-    // The host supplies poolTarget() (current desired count, may change live) and doSpawn()
-    // (returns truthy on a spawn attempt). "expected N, have M -> spawn" covers Memory-Saver
-    // tab discards: a discarded worker simply stops ponging, gets reaped, and is respawned.
+    // D7 pool autosizing + surplus reaping. The queen keeps the live worker count near a target:
+    // under target it SPAWNS (backed off so a discard storm or a popup-blocked spawn doesn't loop);
+    // over target it shuts down ONE quiet surplus worker per tick (busy workers finish first, fresh
+    // joiners get the full idle window — it never kills on sight). A post-boot grace delays spawn
+    // decisions so survivors of a queen refresh can re-register before heads are counted (otherwise
+    // every refresh duplicates the pool, and the dupes lingered until cleared by hand). "expected N,
+    // have M -> spawn" covers Memory-Saver tab discards: a discarded worker simply stops ponging,
+    // gets reaped, and is respawned.
+    // A worker that NEVER saw a queen (no ping / registered / job since boot) self-closes after
+    // queenlessCloseMs instead of lingering: stillborn strays (session-restored orphans, dupes) go
+    // away on their own. Workers that ever registered keep the D6 failover path and never self-close.
     var poolTarget = (typeof opts.poolTarget === 'function') ? opts.poolTarget : function () { return 0; };
     var capable = (typeof opts.capable === 'function') ? opts.capable : function () { return true; };   // does THIS tab have a page brain it can run jobs against?
     var doSpawn = (typeof opts.doSpawn === 'function') ? opts.doSpawn : null;
     var spawnBackoffMs = opts.spawnBackoffMs || 20000;
+    var spawnGraceMs = opts.spawnGraceMs || 30000;         // post-(re)boot: let survivors re-register before counting heads
+    var surplusIdleMs = opts.surplusIdleMs || 120000;       // a surplus worker quiet this long is shut down (paced, one/tick)
+    var queenlessCloseMs = opts.queenlessCloseMs || 180000;// a worker that never saw a queen self-closes after this long (>> worst-case election, so D6 failover is untouched)
+    var bootAt = 0;                                        // stamped in start(); guards grace/queenless windows before start
+    var everSeenQueen = false;                             // worker: any ping / registered / job since boot (registered workers NEVER self-close)
     var lastSpawnAt = 0;
     var lastQueenSeenAt = 0;
     var lastWatchdogAt = 0;
@@ -118,7 +128,7 @@
       if (!claimState) { claimState = { phase: 'waiting', dueAt: now + rankDelay() }; return Promise.resolve(); }
       if (claimState.phase === 'waiting' && now >= claimState.dueAt) {
         return Promise.resolve(lease.get()).then(function (l) {
-          // A lease younger than the dead-bar means a queen MAY be alive — back off. Credit her
+          // A lease younger than the dead-bar means a queen MAY be alive — back off. Credit it
           // with life as of the lease TIMESTAMP, not as of this check: l.at is the actual evidence.
           // (Using `now` here restarted the full 90s window each cycle, doubling worst-case
           // failover when the last ping trailed the last lease renewal by a few seconds.)
@@ -137,15 +147,31 @@
       return Promise.resolve(lease.set({ id: tabId, at: now, nonce: 'reign:' + tabId }));
     }
     function autosize(now) {
-      if (!doSpawn) return;
+      if (now - bootAt < spawnGraceMs) return;   // post-boot grace: survivors re-register before we count heads
       var target = poolTarget() | 0;
-      if (target <= 0) return;
+      if (target < 0) target = 0;
       var have = Object.keys(workers).length;
-      if (have >= target) return;
-      if (now - lastSpawnAt < spawnBackoffMs) return;   // backoff: one spawn per window
-      lastSpawnAt = now;
-      var r = doSpawn();
-      log('[bridge] autosize: ' + have + '/' + target + ' workers \u2014 spawning' + (r ? '' : ' (spawn declined)'));
+      if (have < target) {
+        if (!doSpawn) return;
+        if (now - lastSpawnAt < spawnBackoffMs) return;   // backoff: one spawn per window
+        lastSpawnAt = now;
+        var r = doSpawn();
+        log('[bridge] autosize: ' + have + '/' + target + ' workers \u2014 spawning' + (r ? '' : ' (spawn declined)'));
+        return;
+      }
+      if (have > target) {
+        // downsize: shut down ONE quiet surplus worker per tick (paced). Busy workers finish
+        // first; fresh joiners get the full window. Disjoint from the spawn branch above, so
+        // the two can never fight (no spawn/close churn).
+        var cands = Object.keys(workers).filter(function (id) {
+          return workers[id].status === 'idle' && (now - (workers[id].lastBusyAt || 0)) > surplusIdleMs;
+        });
+        cands.sort(function (a, b) { return (workers[a].lastBusyAt || 0) - (workers[b].lastBusyAt || 0); });
+        if (cands.length) {
+          log('[bridge] downsize: ' + have + '/' + target + ' workers \u2014 shutting down idle ' + cands[0]);
+          sendTo(cands[0], 'shutdown');
+        }
+      }
     }
     function queenConflict(otherId) {
       if (!lease) { if (tabId > otherId) demoteSelf(); return Promise.resolve(); }
@@ -169,7 +195,7 @@
       var env = envelope(to, 'job', { jobType: jobType, args: args == null ? null : args });
       return new Promise(function (resolve, reject) {
         pending[env.id] = { resolve: resolve, reject: reject, to: to, deadline: clock.now() + (timeoutMs || requestTimeoutMs) };
-        if (workers[to]) workers[to].status = 'busy';
+        if (workers[to]) { workers[to].status = 'busy'; workers[to].lastBusyAt = clock.now(); }
         post(env);
       });
     }
@@ -219,14 +245,14 @@
         // a worker answered our startup hello — learn it (and its abilities) now instead of waiting
         // for its register/pong.
         if (env.payload && env.payload.role === 'worker' && !workers[env.from]) {
-          workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: !!env.payload.hasPage };
+          workers[env.from] = { status: 'idle', lastSeen: clock.now(), lastBusyAt: clock.now(), hasPage: !!env.payload.hasPage };
           if (typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
         }
         return;
       }
       if (env.type === 'register') {
         var fresh = !workers[env.from];
-        workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: !!(env.payload && env.payload.hasPage) };
+        workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: !!(env.payload && env.payload.hasPage), lastBusyAt: (workers[env.from] && workers[env.from].lastBusyAt) || clock.now() };
         sendTo(env.from, 'registered', { queenId: tabId });
         log('[bridge] worker ' + env.from + (fresh ? ' joined' : ' re-registered'));
         if (fresh && typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
@@ -236,7 +262,7 @@
       if (env.type === 'pong') {
         var cap = !!(env.payload && env.payload.hasPage);
         if (workers[env.from]) { workers[env.from].lastSeen = clock.now(); workers[env.from].hasPage = cap; return; }
-        workers[env.from] = { status: 'idle', lastSeen: clock.now(), hasPage: cap };   // a surviving worker adopted after promotion
+        workers[env.from] = { status: 'idle', lastSeen: clock.now(), lastBusyAt: clock.now(), hasPage: cap };   // a surviving worker adopted after promotion
         log('[bridge] adopted worker ' + env.from);
         if (typeof opts.onWorkerJoin === 'function') opts.onWorkerJoin(env.from);
         return;
@@ -249,8 +275,8 @@
     function handleAsWorker(env) {
       if (env.type === 'hello') { sendTo(env.from, 'here', { role: 'worker', hasPage: capable() }); return; }   // capability exchange
       if (env.type === 'here') { return; }   // informational; queen election uses the lease, not a vote
-      if (env.type === 'registered') { queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; lastQueenSeenAt = clock.now(); claimState = null; return; }
-      if (env.type === 'ping') { queenId = env.from; queenHasPage = !!(env.payload && env.payload.hasPage); lastQueenSeenAt = clock.now(); claimState = null; sendTo(env.from, 'pong', { hasPage: capable() }); return; }
+      if (env.type === 'registered') { everSeenQueen = true; queenId = env.payload && env.payload.queenId ? env.payload.queenId : env.from; lastQueenSeenAt = clock.now(); claimState = null; return; }
+      if (env.type === 'ping') { everSeenQueen = true; queenId = env.from; queenHasPage = !!(env.payload && env.payload.hasPage); lastQueenSeenAt = clock.now(); claimState = null; sendTo(env.from, 'pong', { hasPage: capable() }); return; }
       if (env.type === 'shutdown') {
         log('[bridge] shutdown received');
         broadcast('bye');
@@ -259,6 +285,7 @@
         return;
       }
       if (env.type === 'job') {
+        everSeenQueen = true;
         lastQueenSeenAt = clock.now();
         var jobType = env.payload && env.payload.jobType;
         var fn = jobHandlers[jobType];
@@ -298,6 +325,18 @@
         autosize(now);
       } else {
         duty = workerWatchdog(now);
+        // Stillborn strays (session-restored orphans, dupes) never saw a queen at all — after a
+        // short window they bow out on their own instead of lingering for a manual clear. Workers
+        // that ever registered keep the D6 failover path and never take this branch. Promotion via
+        // watchdog/standForQueen flips role first, so this only fires while still a worker.
+        // (No bootAt guard: tick() early-returns unless start() ran, and start() always stamps bootAt;
+        // a 0 stamp is a valid time, not "unset".)
+        if (!everSeenQueen && (now - bootAt) > queenlessCloseMs) {
+          log('[bridge] no queen seen since boot \u2014 self-closing');
+          broadcast('bye');
+          running = false;
+          if (typeof opts.onShutdown === 'function') opts.onShutdown();
+        }
       }
       Object.keys(pending).forEach(function (id) {
         if (now > pending[id].deadline) settle(id, false, 'request timed out');
@@ -309,6 +348,7 @@
       if (running) return;
       running = true;
       bus.onMessage(onBusMessage);
+      bootAt = clock.now();
       lastQueenSeenAt = clock.now(); lastWatchdogAt = 0;
       // Handshake (ask): announce ourselves and our abilities to whoever is already here. The queen
       // answers with a ping (fast discovery, no waiting a full ping interval); a peer queen answers

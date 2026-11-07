@@ -53,7 +53,7 @@
       channelId: null,
       botUserId: null,        // drop the bot's own messages by author id
       botName: null,          // for name-addressing ("chloe, ...")
-      botAliases: [],         // extra nicknames she answers to (the short form of botName is added automatically)
+      botAliases: [],         // extra nicknames it answers to (the short form of botName is added automatically)
       recentWindow: 25,       // rolling lines kept per user partition (distilled+window, spec dec #2)
       speakerRingSize: 8,     // last N distinct posters
       pollIntervalMs: 5000,
@@ -79,11 +79,11 @@
       send: null,             // async (channelId, text) -> any           (POST to Discord; runs in the userscript)
       addressMode: 'both',    // 'mention' | 'name' | 'both' | 'always' (DM)
       cooldownMs: 8000,       // per-AUTHOR reply cooldown (don't spam the same person)
-      globalCooldownMs: 2500, // min gap between ANY two of her sends (lets different people be answered promptly)
+      globalCooldownMs: 2500, // min gap between ANY two of its sends (lets different people be answered promptly)
       debounceMs: 2500,       // wait for a lull before replying (don't reply mid-burst)
       contextLines: 24,       // recent channel lines handed to the brain (hard upper bound)
-      conversationMemory: true,   // give her a TWO-SIDED, legible transcript: include her OWN recent messages (so she sees the back-and-forth she's part of) and resolve <@id>/<#id>/<@&id> refs to readable @names / #channels in what she reads, instead of dropping her turns and stripping every mention. Correctness; off == legacy one-sided view.
-      ownLinesMax: 12,        // cap on her own recent messages kept per channel for the transcript
+      conversationMemory: true,   // give its a TWO-SIDED, legible transcript: include its OWN recent messages (so it sees the back-and-forth it's part of) and resolve <@id>/<#id>/<@&id> refs to readable @names / #channels in what it reads, instead of dropping its turns and stripping every mention. Correctness; off == legacy one-sided view.
+      ownLinesMax: 12,        // cap on its own recent messages kept per channel for the transcript
       requestTokenBudget: 5000,// TOTAL tokens per request to the backend — must cover EVERYTHING:
                               // persona + instructions + intention + anti-repeat list + addressed
                               // message + the transcript. The transcript gets whatever's left after
@@ -91,11 +91,11 @@
       promptOverheadTokens: 320,// fixed reserve for the page's persona block + instruction scaffolding
                               // (measured: persona ~95 + respond/guidance scaffolding ~200, with margin)
       minTranscriptTokens: 200,// never starve the transcript below this, even if other parts are large
-      singleParagraph: false, // mod opt-in: cap her replies to one paragraph (off = she writes as long as fits)
-      toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from her reply via a `tool:` line (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todo_add/todo_list/todo_done/todo_clear); off == tools run only from `!chloe do`
-      converseEngine: true,   // (default ON) the ported rook-mesh social ganglion governs the VOLUNTEER/engage decision (bot-loop damper + worth gate + two-person skip + stagger). OFF == her legacy ad-hoc engage logic, byte-identical.
+      singleParagraph: false, // mod opt-in: cap its replies to one paragraph (off = it writes as long as fits)
+      toolsEnabled: false,    // mod opt-in (default OFF): let the AI call a SAFE tool from its reply via a `tool:` line (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todo_add/todo_list/todo_done/todo_clear); off == tools run only from `!chloe do`
+      converseEngine: true,   // (default ON) the ported rook-mesh social ganglion governs the VOLUNTEER/engage decision (bot-loop damper + worth gate + two-person skip + stagger). OFF == its legacy ad-hoc engage logic, byte-identical.
       trustHardening: true,   // (default ON) multi-participant trust: DEFANG a forged "Name:" prefix from transcript lines + a BOT author can NEVER trigger a command/directive. OFF == current behavior, byte-identical.
-      bondLadder: true,       // (default ON) a slow, hysteresis-protected relationship ladder per person (stranger/familiar/friend/close/bonded); surfaces a felt "terms" line so she's warmer with regulars. OFF == no bond field/line, byte-identical.
+      bondLadder: true,       // (default ON) a slow, hysteresis-protected relationship ladder per person (stranger/familiar/friend/close/bonded); surfaces a felt "terms" line so it's warmer with regulars. OFF == no bond field/line, byte-identical.
       // ---- image generation (off unless image + paint + sendImage supplied) ----
       image: false,           // master toggle: answer image requests
       paint: null,            // async ({prompt, resolution}) -> { ok, value:dataUrl }  (runs in the page; the plugin does the iframe song-and-dance)
@@ -115,7 +115,7 @@
       // / "same but at night" against the LAST image. Editing rebuilds the PROMPT and regenerates —
       // there is no img2img/seed lock on this backend, so an edit yields a fresh composition, not a
       // pixel-level tweak (the ack phrasing reflects this honestly).
-      imageMemory: false,            // opt-in: record + surface what she generated; enables NL edits
+      imageMemory: false,            // opt-in: record + surface what it generated; enables NL edits
       imageMemoryRing: 6,            // how many recent generations to keep per user
       imageEditWindowMs: 600000,     // after an image, a bare edit phrase targets it for this long (10m)
       imageEnhanceOffer: false,      // opt-in: after delivering, offer "want me to refine it?" once
@@ -137,10 +137,10 @@
       // channel's style note (newest mod-anchored message wins; sanitized + capped before use).
       anchorEmoji: '\ud83d\udccc',
       personaNoteMaxLen: 200,
-      antiRepeatWindow: 5,    // G1: how many of her own recent replies to show the brain to avoid self-repetition
+      antiRepeatWindow: 5,    // G1: how many of its own recent replies to show the brain to avoid self-repetition
       botLoopGrace: 2,        // bot-loop damper: consecutive bot turns answered at full chance before decay kicks in
-      botLoopFloor: 0.05,     // minimum reply chance once decaying (she keeps watching, rarely speaks)
-      botLoopHardStop: 12,    // consecutive bot turns after which she goes fully silent until a human speaks (0 = never)
+      botLoopFloor: 0.05,     // minimum reply chance once decaying (it keeps watching, rarely speaks)
+      botLoopHardStop: 12,    // consecutive bot turns after which it goes fully silent until a human speaks (0 = never)
       intentTtlMs: 1800000,   // a standing intention fades after this long without being reaffirmed (default 30m)
       intentMaxLen: 120,      // a self-set intention is capped to this many chars
       // D5: declarative job grammar. ONLY these verbs are accepted from chat-submitted JSON;
@@ -151,6 +151,7 @@
         recap:     { args: {}, required: [] },
         roster:    { args: {}, required: [] },
         remindme:  { args: { minutes: 'int', text: 'str' }, required: ['minutes', 'text'] },
+        search:    { args: { query: 'str' }, required: ['query'] },
         fetch:     { args: { url: 'str' }, required: ['url'] },
         time:      { args: {}, required: [] },
         todo_add:  { args: { text: 'str' }, required: ['text'] },
@@ -185,13 +186,13 @@
                                   // and trust land in ~1 poll in active rooms; quiet rooms stay cheap)
       // ---- feedback / preference learning (DESIGN-feedback): adapt toward the reply STYLE that's
       // landing in each channel. A bandit-lite EWMA over style "arms" (length + tone), fed by free
-      // poll-side signals (reactions on her messages, continuation, explicit !chloe good/bad), surfaced
+      // poll-side signals (reactions on its messages, continuation, explicit !chloe good/bad), surfaced
       // as a gentle soft-context nudge toward the winning arm. NOT training; on by default. ----
       feedbackLearning: true,
       feedbackAlpha: 0.3,            // EWMA weight on each new signal (recent feedback matters more)
       feedbackMinSamples: 4,         // a style arm needs this many signals before it may nudge
       feedbackMargin: 0.2,           // the winning arm must beat the runner-up by this much to nudge
-      feedbackContinuationReward: 0.3,        // soft positive when the person keeps talking after her reply
+      feedbackContinuationReward: 0.3,        // soft positive when the person keeps talking after its reply
       feedbackContinuationWindowMs: 600000,   // 10m: continuation only counts inside this window
       feedbackNegativeEmoji: ['\ud83d\udc4e'],// 👎 (negatives; positives reuse trustPositiveEmoji)
       feedbackPendingMax: 12,        // cap on outstanding replies awaiting a continuation signal
@@ -202,19 +203,19 @@
       // #12: scheduled proactive beats — light, activity-gated time-based presence (lrrbot timers).
       // Each beat: { id, intervalMs, text? | texts?[] | prompt?, activeWithinMs? }. Fires at most one
       // per poll, only if the room has been active recently (won't talk to a dead/empty channel),
-      // never during lockdown, never while she's already replying/painting.
+      // never during lockdown, never while it's already replying/painting.
       beats: [],
       beatActiveWithinMs: 1800000,  // a beat only fires if someone spoke within this window (30 min)
       beatMinGapMs: 600000,         // minimum gap between any two beats (10 min)
       // Lull filler (Neuro-sama "PATIENCE" pattern, recalibrated for Discord): a small Discord
       // community moves FAR slower than a Twitch stream — a 90-second gap is normal, not a lull. So
-      // the thresholds are on the order of DAYS, not seconds. She breaks a silence only when a room
+      // the thresholds are on the order of DAYS, not seconds. It breaks a silence only when a room
       // that WAS active has been quiet for ~a day, and was active within the past week. Off by default.
       lullFiller: false,             // proactively break a silence after a recently-active room goes quiet
-      lullPatienceMs: 86400000,      // ~1 day of silence before she fills it (Discord pace, not Twitch)
+      lullPatienceMs: 86400000,      // ~1 day of silence before it fills it (Discord pace, not Twitch)
       lullActiveWithinMs: 604800000, // only if the room was active within the past week (don't wake a dead channel)
       lullMinGapMs: 86400000,        // at most one lull filler per day
-      // Favorite-user check-ins: if a user she's interacted with a lot hasn't been seen in DAYS, she
+      // Favorite-user check-ins: if a user it's interacted with a lot hasn't been seen in DAYS, it
       // may post a warm "haven't seen you in a while" — @mentioning them only if pings are enabled
       // (the output gate decides). Discord pace: absence is measured in days. Off by default.
       checkins: false,               // proactively check in on favorite users who've been absent
@@ -230,8 +231,8 @@
       // mod's approval; 'deny' = never actuate proactively.
       actPolicy: 'allow',             // allow | ask | deny
       actGrants: [],                 // remembered [{action, resource, scope, at, until?}] (ChloeModAudit)
-      // G5 time awareness: she can sense the time of day, the day of week, and how long the room has
-      // been quiet, so her tone fits the moment (a late-night hush, a weekend lull) rather than being
+      // G5 time awareness: it can sense the time of day, the day of week, and how long the room has
+      // been quiet, so its tone fits the moment (a late-night hush, a weekend lull) rather than being
       // timeless. Needs the community's UTC offset to be right; on by default.
       timeAware: true,              // weave a light sense of time-of-day / day / quiet-duration into context
       timezoneOffsetMins: 0,         // the community's offset from UTC in minutes (e.g. -480 for US Pacific)
@@ -242,13 +243,25 @@
       // guidance. On by default.
       moodAware: true,              // sense and gently match the room's energy / playfulness
       moodDecay: 0.7,                // how much prior mood carries over each update (higher = steadier)
-      // Rolling channel summary (SillyTavern-style recursive summary): every N polls, fold the recent
+      // Rolling channel summary (SillyTavern-style recursive summary): fold the recent
       // transcript into a running ≤W-word summary of the channel's arc, fed back in each time. Rides
-      // into context so she keeps a sense of the story so far past the raw transcript window. On by default
+      // into context so it keeps a sense of the story so far past the raw transcript window. On by default
       // (the host's cfgGet fallback is also true) so a fresh install keeps memory past the 24-line window.
+      // LOAD-GATED: the EveryPolls timer below is a backstop — a pass only runs when transcript lines
+      // newer than the last rollup exist (silence never triggers one), and a full bucket of new lines
+      // forces an early pass so busy channels roll up more often (wall-clock floor still applies).
       channelSummary: true,
-      channelSummaryEveryPolls: 30,
+      channelSummaryEveryPolls: 30,   // backstop cadence (skipped when nothing is new)
+      rollupFullLines: 20,            // new transcript lines since the last rollup that force an early summary/episode pass (half the 40-line fold window)
       channelSummaryWords: 60,
+      thoughtsFeedTarget: null,      // F1: Discord channel id to post fresh summaries to (per-source-channel, lang-mirror); null = panel feed only
+      newsFeeds: [],                 // F2: [{id, name, site, channelId, intervalMs, maxItems, banWords, allowCats, blockCats}] — hourly sitemap rollups
+      fetchText: null,               // F2: wiring-provided (url) -> Promise<{ok, value|reason}> (host-allowlisted, fail-open); null = news lane inert
+      newsFn: null,                  // F2 voice: wiring-provided ({feed, date, items, itemText, prompt}) -> Promise<{ok, value}>; null = classic list only
+      newsPrompt: null,              // F2 voice: null/undefined = DEFAULT_NEWS_PROMPT (AI voice); '' = classic deterministic list; other = custom instruction ({feed} {date} {items})
+      newsPostTemplate: null,        // F2 voice: null/undefined = DEFAULT_NEWS_TEMPLATE; {feed} {date} {count} {body} (no {body} -> appended)
+      newsInContext: false,          // F2 redirect: false (default) = own 📰 rollups stay OUT of the reply transcript (they'd eat the budget + get parroted); a one-line marker folds into Thoughts instead. true = classic: own posts join chat context like any reply.
+      newsReview: false,             // F2 review queue: false (default) = composed rollups post immediately; true = they stage in the news queue (Setup → News queue) for edit/regenerate/post instead.
       // Reflection (Generative-Agents pattern): when enough IMPORTANCE has accumulated from newly
       // learned facts about a person, make one synthesis pass turning their raw facts into 1-2 durable
       // higher-level insights ("what I've come to understand about them"). Insights live on the
@@ -267,7 +280,7 @@
       episodeRecencyHalfLifeMs: 604800000, // recall decay half-life (7d): old episodes fade, never vanish
       // ---- semantic recall + FSRS-lite (DESIGN-semantic, default ON): rank recalled episodes by MEANING (local
       // embeddings via transformers.js, the same engine AICC uses) instead of keyword overlap, and let
-      // memories she REVISITS stay sharp via an FSRS forgetting curve whose stability grows on each
+      // memories it REVISITS stay sharp via an FSRS forgetting curve whose stability grows on each
       // recall. Opt-in; needs episodicMemory. Falls back to keyword overlap when no embedder. ----
       semanticRecall: true,
       embedModel: 'Xenova/bge-small-en-v1.5',  // ~33MB quantized, 384-dim; the page loads it lazily
@@ -288,19 +301,19 @@
       // only — never penalized, daily-capped so it can't be farmed, decaying with long absence.
       // Tone + a reply-priority tiebreak ONLY: trust never loosens moderation, gates, or policy.
       relationshipTrust: true,
-      trustReplyGain: 1,            // her completed reply to someone
+      trustReplyGain: 1,            // its completed reply to someone
       trustReactionGain: 2,         // their positive reaction on HER message
       trustDailyCap: 5,             // max trust earnable per person per day
       trustDecayFactor: 0.85,       // applied on the same long-absence event as familiarity decay
       trustPositiveEmoji: ['\u2764\ufe0f', '\ud83d\udc4d', '\ud83d\ude02', '\ud83c\udf89', '\ud83d\ude0a'],
       trustPriorityTier: 60,        // at/above this, the new-user-sized (+1) priority tiebreak applies
       // Own affect (DESIGN §7d): a small internal state vector — HER feel, distinct from reading the
-      // room. Front-end only (no AI calls). Flavor for her voice, NEVER a lever on users: whitelist
-      // phrasing, a hard confidence floor (no spirals), and silence when she's near neutral.
+      // room. Front-end only (no AI calls). Flavor for its voice, NEVER a lever on users: whitelist
+      // phrasing, a hard confidence floor (no spirals), and silence when it's near neutral.
       ownAffect: true,
       // Working memory (DESIGN-working-memory.md): a volatile per-channel workspace — current topic,
-      // who's here, the active goal, her recent decisions, her mood. Decays on read like affect.
-      // Mostly synthesized from signals she already has; only `topic` can cost a (reused) call.
+      // who's here, the active goal, its recent decisions, its mood. Decays on read like affect.
+      // Mostly synthesized from signals it already has; only `topic` can cost a (reused) call.
       workingMemory: true,
       semanticInjections: [],   // arbitrary system/operator facts surfaced into context (DESIGN-semantic-inject.md): [{id,text,priority,ttlMs,at}]
       cleanOutput: true,        // scrub model-mechanics noise from replies (DESIGN-clean.md): role-bleed, dangling tail, unbalanced fences
@@ -310,18 +323,18 @@
       deviceClock: null,        // {time, date, tz, at} pushed by the page for instant !chloe time/date (no AI)
       deviceClockStaleMs: 180000,   // a pushed clock older than this is considered stale (panel closed)
       // Idle deliberation (DESIGN-deliberation.md): a ReAct map-reduce reasoning loop. When genuinely
-      // idle and curious, she decomposes a thought into atomic sub-questions, answers them (parallel
+      // idle and curious, it decomposes a thought into atomic sub-questions, answers them (parallel
       // across worker tabs when a pool exists), and recomposes an insight/goal. NEVER sends. Curiosity-
       // gated (self-limiting: a resolved deliberation lowers curiosity). Opt-in (spends real calls).
       idleDeliberation: false,
       deferredIntents: false,    // self-scheduled future cognition (DESIGN-self-intents): a concluded deliberation can schedule a later REVISIT of its subject — an internal action, never a message. Needs idleDeliberation.
       selfIntentMax: 8,          // cap on queued self-intents per channel
-      selfIntentRevisitMs: 21600000,   // 6h: how far out a revisit is scheduled when she finds a topic worth coming back to
+      selfIntentRevisitMs: 21600000,   // 6h: how far out a revisit is scheduled when it finds a topic worth coming back to
       attentionManager: true,    // utility-scored AI-pass selection (DESIGN-attention.md, default ON); off = today's fixed ladder
-      selfKnowledge: true,      // ground her in her own basics (name, prefix, summon) from config (DESIGN-selfknow.md)
+      selfKnowledge: true,      // ground its in its own basics (name, prefix, summon) from config (DESIGN-selfknow.md)
       botVersion: '',            // for operational self-state grounding (passed from the shell); '' -> omitted
       // ---- user-model register (DESIGN-usermodel, roadmap #5): a light, inferred per-person register
-      // (how THEY write: typical length + tone) so she can MATCH it. Deterministic (reuses styleOf over
+      // (how THEY write: typical length + tone) so it can MATCH it. Deterministic (reuses styleOf over
       // their recent messages, no AI), on by default. Insights already cover the "what they're into" dimension;
       // this adds the communication-style dimension they don't. ----
       userModeling: true,
@@ -335,12 +348,12 @@
       workDecisionsMax: 5,          // bounded ring of recent notable actions
       workParticipantsMax: 5,
       affectDecayPerHour: 0.8,      // each value relaxes toward neutral 0.5 by this factor per hour
-      affectConfidenceFloor: 0.3,   // she never drops below this — quieter, not despondent
+      affectConfidenceFloor: 0.3,   // it never drops below this — quieter, not despondent
       affectGain: 0.08,             // size of one event nudge
-      affectEngageWindowMs: 600000, // a user message within 10m of her reply = engagement (confidence up)
-      affectIgnoreAfterMs: 1800000, // no one says anything for 30m after her reply = ignored (confidence down)
+      affectEngageWindowMs: 600000, // a user message within 10m of its reply = engagement (confidence up)
+      affectIgnoreAfterMs: 1800000, // no one says anything for 30m after its reply = ignored (confidence down)
       // Procedural memory (DESIGN §7c): operator-defined reaction→mode rules. A configured emoji
-      // from a MODERATOR (modOnly is fixed in v1 — reactions are unauthenticated input) switches her
+      // from a MODERATOR (modOnly is fixed in v1 — reactions are unauthenticated input) switches its
       // into a timed behavior mode. Persona-note sanitation; tone/behavior guidance ONLY — a mode can
       // never alter moderation, gates, or content rules.
       proceduralModes: true,
@@ -387,25 +400,25 @@
       ackLockdownEmoji: '\ud83d\udd12',
       ackSearchEmoji: '\ud83d\udd0d',
       ackClearMs: 30000,            // why-not indicators clear themselves after this long
-      // Reply references: her text replies attach to the message they answer (Discord's native
+      // Reply references: its text replies attach to the message they answer (Discord's native
       // reply threading), with the reply-ping suppressed. Pure clarity; replyReference:false to disable.
       replyReference: true,
       // Reaction summon (README §Reactions): monkey-see-monkey-do — react to YOUR OWN message with
-      // one of her own indicators and she treats it as an explicit address. Mods can summon her onto
+      // one of its own indicators and it treats it as an explicit address. Mods can summon its onto
       // anyone's message. All normal gates still apply (lockdown, moderation, cooldowns, budget).
       reactionSummon: false,
-      summonEmoji: ['\ud83d\udde3\ufe0f', '\u2757', '\ud83e\udd16'],   // her speak indicator, ! and the robot — deliberately NOT ❤️ (hearts are warmth, and casual)
+      summonEmoji: ['\ud83d\udde3\ufe0f', '\u2757', '\ud83e\udd16'],   // its speak indicator, ! and the robot — deliberately NOT ❤️ (hearts are warmth, and casual)
       summonMaxAgeMs: 900000,       // messages older than 15m can't be summoned — a stale summon found on
-                                    // cold boot (reacted while she was offline) must NOT fire (the
+                                    // cold boot (reacted while it was offline) must NOT fire (the
                                     // v0.46.3 “cold start treats history as live” bug class)
-      // Reaction polls: !chloe poll <question> | <a> | <b> ... — she posts the ballot, seeds the
+      // Reaction polls: !chloe poll <question> | <a> | <b> ... — it posts the ballot, seeds the
       // number reactions, and tallies counts on close (or auto-close). One active poll per channel.
       pollMaxAgeMs: 86400000,       // polls auto-close after a day if nobody closes them
       checkinMaxAttempts: 2,         // give up after this many ignored check-ins (~28d at a 14d gap)
       // Data tiering: cold records leave the hot store so the main roster stays fast. A user who has
       // ignored every check-in, or who's been absent a long time, is moved to a secondary "historical
       // friends" archive (separate per-user keys, never loaded on the hot path). They're restored
-      // automatically the moment they speak again. Favorite-aware: the more she's interacted with
+      // automatically the moment they speak again. Favorite-aware: the more it's interacted with
       // someone, the longer they're kept in the fast store before archival.
       archiveStale: true,            // move long-cold users out of the hot roster into the archive
       archiveAbsenceMs: 5184000000,  // base absence before a user is archived (~60 days)
@@ -413,31 +426,33 @@
       archiveFavoriteTier: 8,        // interactions per favorite tier (so an 8-interaction user waits +30d)
       archiveMaxKept: 2000,          // cap on archived users (oldest pruned beyond this)
       // --- F1 fact memory (learn people over time) ---
-      // She can remember a few durable, voluntarily-shared facts about regulars ("is learning rust",
-      // "has a cat named Pixel") so she feels like she knows them. Conservative and controllable:
+      // It can remember a few durable, voluntarily-shared facts about regulars ("is learning rust",
+      // "has a cat named Pixel") so it feels like it knows them. Conservative and controllable:
       // extraction refuses sensitive categories, users can see/forget what's stored. On by default
       // (the host's cfgGet fallback is also true) so a fresh install actually learns who people are.
       factMemory: true,              // observe and remember durable facts about people
-      factsPerUser: 6,               // how many facts she keeps per person (oldest dropped past this)
-      factMinInteractions: 4,        // only start remembering people she's actually engaged with
+      factsPerUser: 6,               // how many facts it keeps per person (oldest dropped past this)
+      factMinInteractions: 4,        // only start remembering people it's actually engaged with
       factProposeGapMs: 86400000,    // at most one extraction pass per user per day (it's an AI call)
       factProposeMinNew: 4,          // ...and only after this many new messages from them since last pass
       factTextMax: 140,              // per-fact length cap
-      factContextCount: 4,           // how many facts ride into her context for an active person
+      factContextCount: 4,           // how many facts ride into its context for an active person
       factImportanceDefault: 5,      // neutral importance for facts with none (old data / bare strings)
       factRecencyWeight: 2,          // how much recency tilts the importance-ranked fact selection
       factEveryPolls: 12,            // run the silent extraction pass at most every Nth poll
-      contradictionAware: true,     // flag when a NEW fact contradicts a HELD one (DESIGN-contradiction): keep both, record it, and (gently, AI-discretionary) let her clarify. Needs factMemory.
+      contradictionAware: true,     // flag when a NEW fact contradicts a HELD one (DESIGN-contradiction): keep both, record it, and (gently, AI-discretionary) let its clarify. Needs factMemory.
       contradictionImportanceFloor: 5,   // only flag conflicts where the new fact is at least this important (don't fuss over trivia)
-      contradictionFreshMs: 7200000,     // 2h: how long after a conflict appears she'll consider gently raising it
+      contradictionFreshMs: 7200000,     // 2h: how long after a conflict appears it'll consider gently raising it
       contradictionTtlMs: 259200000,     // 3d: an unresolved recorded conflict is cleared after this (tidied on the idle sweep)
       beatFn: null,                 // optional (beat) -> {ok,value}; in-character generation for prompt-beats
       // ---- T2 volunteer gate (off unless volunteer + judge + react supplied) ----
-      judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji } }
+      judge: null,            // async (context) -> { ok, value:{ action:'reply'|'react'|'ignore', confidence:0..1, emoji|emojis } }
       react: null,            // async (channelId, messageId, emoji) -> any
       volunteer: false,       // chime in on UN-addressed messages?
       volunteerCooldownMs: 45000,  // volunteering is rarer than answering
       judgeMinConfidence: 0.6,     // below this, a reply/react decays to ignore
+      judgeReactions: null,   // curated volunteer-reaction allowlist; null/undefined = DEFAULT_JUDGE_REACTIONS; [] = react-votes disabled
+      judgeMaxReactions: 2,   // combo cap: the judge may vote at most this many emoji on one message
       // ---- T3 reversible moderation ----
       modList: [],            // author.ids allowed to issue in-channel commands (seeded by trusted surface)
       commandPrefix: '!chloe',// text-prefix command grammar (no slash under Adapter A)
@@ -473,6 +488,11 @@
     // merge — actually find it. Without this it stayed null and blockStore()/merge silently fell back
     // to the per-channel store, so a ban or a public fact never reached secondary/DM engines.
     if (deps.globalStore) cfg.globalStore = deps.globalStore;
+    // Raw (ungated) handle on THIS channel's namespaced bucket, for converging pre-upgrade
+    // per-channel user partitions into the shared pool. Gated `store` would silently drop
+    // the legacy cleanup deletes, so migration/purge must not use it. Falls back to `store`
+    // for old callers (harnesses) that don't pass it.
+    var localRaw = deps.localStore || store;
 
     var CURSOR_KEY = 'cursor:' + cfg.channelId;
     var INDEX_KEY = 'roster:index';
@@ -500,13 +520,13 @@
     var MOOD_KEY = 'mood:' + cfg.channelId;   // G6: decayed room-tenor read (energy + playfulness)
     var CHANSUM_KEY = 'chansum:' + cfg.channelId;   // rolling recursive summary of the channel's arc
     var EPI_KEY = 'epi:' + cfg.channelId;           // episodic memory ring (experiences as events)
-    var AFFECT_KEY = 'affect:' + cfg.channelId;     // her own internal state {curiosity, confidence, warmth}
+    var AFFECT_KEY = 'affect:' + cfg.channelId;     // its own internal state {curiosity, confidence, warmth}
     var WORK_KEY = 'work:' + cfg.channelId;         // volatile cognitive workspace {topic, participants, goal, recentDecisions, mood, at}
     var DELIB_KEY = 'delib:' + cfg.channelId;       // { lastAt } — min-gap floor between deliberations
     var PROC_KEY = 'procmode:' + cfg.channelId;     // active procedural mode { mode, until, by, emoji }
     var POLL_KEY = 'poll:' + cfg.channelId;         // active reaction poll { messageId, question, options, endsAt }
     var INTENT_KEY = 'intent:' + cfg.channelId;   // Sweetie set_goal pattern: a standing intention that
-    // survives across polls and rides in every response context, so she holds a thread of purpose
+    // survives across polls and rides in every response context, so it holds a thread of purpose
     // ("getting to know the new folks", "keeping it light after that argument") rather than reacting
     // to each message in isolation. The brain may set it; it decays if not reaffirmed.
     var REMIND_KEY = 'reminders:' + cfg.channelId;   // poll-driven scheduled reminders (front-end only,
@@ -517,41 +537,144 @@
     var AFK_KEY = 'afk:' + cfg.channelId;   // user-set away state (front-end only, no AI call): set on
     // "!chloe afk", auto-cleared when the person speaks again, surfaced when others ping them.
     var HILITE_KEY = 'highlights:' + cfg.channelId;   // pinned notable messages (front-end only): saved
-    // for recall via "!chloe highlights", and a few recent ones ride in context so she can reference
+    // for recall via "!chloe highlights", and a few recent ones ride in context so it can reference
     // the channel's memorable moments — a step toward memory without the full fact-extraction build.
     var REACTTALLY_KEY = 'reacttally:' + cfg.channelId;   // running per-emoji tally of significant reactions
     var BACKFILL_KEY = 'backfill:' + cfg.channelId;
     var BEATS_KEY = 'beats:lastrun:' + cfg.channelId;   // #12: beatId -> last-fired ts (+ __lastAny)
     var FEEDBACK_KEY = 'feedback:' + cfg.channelId;     // DESIGN-feedback: per-channel EWMA over reply-style arms {len,tone}
-    var OWNLINE_KEY = 'ownlines:' + cfg.channelId;   // her OWN recent messages (text + ts), captured at ingest from
-    // the messages Discord echoes back, so the transcript she reads is two-sided (DESIGN-conversation-memory).
+    var OWNLINE_KEY = 'ownlines:' + cfg.channelId;   // its OWN recent messages (text + ts), captured at ingest from
+    // the messages Discord echoes back, so the transcript it reads is two-sided (DESIGN-conversation-memory).
     // Bounded by ownLinesMax. Per-channel; in a DM it lives in the isolated DM bucket.
     var SELFINTENT_KEY = 'selfintents:' + cfg.channelId;   // deferred self-intents: a persistent queue of future
-    // INTERNAL actions she scheduled for herself (currently: 'revisit' a deliberation subject). Poll-driven
-    // like reminders, but a fired intent never sends — it drives her own later cognition. Per-channel; in a
+    // INTERNAL actions it scheduled for itself (currently: 'revisit' a deliberation subject). Poll-driven
+    // like reminders, but a fired intent never sends — it drives its own later cognition. Per-channel; in a
     // DM it lives in the (isolated) DM bucket. Bounded by selfIntentMax.
-    var LULL_KEY = 'lull:' + cfg.channelId;   // last time she filled a silence (lull filler throttle)
+    var LULL_KEY = 'lull:' + cfg.channelId;   // last time it filled a silence (lull filler throttle)
     var CHECKIN_KEY = 'checkins:' + cfg.channelId;   // { __last: ts, byUser: { id: {at,count,seenAt} } } — check-in throttle + attempt cap
+    var LULLDIAG_KEY = 'lulldiag:' + cfg.channelId;   // last terminal lull outcome { lastAt, lastResult, lastError } — throttle ts stays in LULL_KEY
+    var CHECKINDIAG_KEY = 'checkindiag:' + cfg.channelId;   // same for check-ins (throttle/caps stay in CHECKIN_KEY)
+    var AIPASS_KEY = 'aipass:' + cfg.channelId;   // AI-pass last runs { facts|summary|reflect|episodes|consolidate|deliberate: { lastAt, lastResult, lastError } }
     var ACTPEND_KEY = 'pendingact:' + cfg.channelId;   // A1: held autonomous actions [{id, class, at, reason}]
     var ACTONCE_KEY = 'approveonce:' + cfg.channelId;  // A1: one-shot approvals {class: 1}, consumed on next fire
    var ACTSNOOZE_KEY = 'actsnooze:' + cfg.channelId;  // A1: dismissals {class: untilTs} — re-hold only after this
     var UNDO_KEY = 'undostack:' + cfg.channelId;         // A6: undo stack [{at, kind, targetId?, summary, inverse}] (bounded)
     var ACTLOG_KEY = 'actlog:' + cfg.channelId;        // A5: decision journal [{at, class, verdict, why}], bounded
-    var ARCH_INDEX_KEY = 'arch:index:' + cfg.channelId;   // index of archived ("historical friend") user ids
-    function archKey(id) { return 'arch:' + cfg.channelId + ':u:' + id; }   // per-user cold storage (never on the hot path)
+    // ---- shared cross-channel user pool -------------------------------------------
+    // Regular (non-DM) public channels with Remember ON share ONE per-user pool in the
+    // global store: someone active in 3 channels has one partition (one recent-lines
+    // window, one fact/insight set, one familiarity count) instead of 3 isolated ones.
+    // DMs and Remember-off (goldfish) channels keep strictly isolated local partitions —
+    // the goldfish model and the DM privacy boundary are unchanged.
+    function sharedUsers() { return (!cfg.isDM && cfg.chanRemember !== false && !!cfg.globalStore); }
+    function userStore() { return sharedUsers() ? cfg.globalStore : store; }
+    // Archive (cold "historical friends") follows the same split: one global cold pool for
+    // shared users, per-channel otherwise. Pre-upgrade archives live under the per-channel
+    // keys; restore + novelty checks fall back to them so nobody strands.
+    function archIndexKey() { return sharedUsers() ? 'arch:index:global' : 'arch:index:' + cfg.channelId; }
+    function archKey(id) { return (sharedUsers() ? 'arch:global:u:' : 'arch:' + cfg.channelId + ':u:') + id; }
+    function legacyArchKey(id) { return 'arch:' + cfg.channelId + ':u:' + id; }
+    function legacyArchIndexKey() { return 'arch:index:' + cfg.channelId; }
+    // ---- smart recent window ------------------------------------------------------
+    // A dumb FIFO drops the OLDEST line, so a busy room's filler ("lol","ok","k" x20)
+    // evicts the one substantive thing someone said. Score each line and evict the
+    // lowest-signal first (ties: oldest), always protecting the newest line (live edge).
+    function lineScore(t) {
+      var s = String(t == null ? '' : t).trim();
+      if (!s) return 0;
+      if (CONVERSE_FILLER.test(s) || s.length < 3) return 1;
+      var score = 3;
+      if (s.length > 40) score += 2; else if (s.length > 15) score += 1;
+      if (s.indexOf('?') >= 0) score += 2;
+      if (/@|#\d|https?:\/\//.test(s)) score += 1;
+      return score;
+    }
+    function smartTrimRecent(arr, cap) {
+      if (!Array.isArray(arr) || arr.length <= cap) return arr;
+      var keep = arr.slice(0, -1), last = arr[arr.length - 1];   // newest line is never evicted
+      if (keep.length + 1 <= cap) return arr;
+      var decorated = keep.map(function (ln, i) { return { i: i, s: lineScore(ln && ln.content), ts: (ln && ln.ts) || 0 }; });
+      decorated.sort(function (a, b) { return (a.s - b.s) || (a.ts - b.ts) || (a.i - b.i); });
+      var drop = decorated.slice(0, keep.length + 1 - cap), dropSet = {};
+      drop.forEach(function (d) { dropSet[d.i] = true; });
+      return keep.filter(function (_, i) { return !dropSet[i]; }).concat([last]);
+    }
+    function stampCh(p, chId) {
+      if (p && Array.isArray(p.recent)) p.recent.forEach(function (ln) { if (ln && !ln.ch) ln.ch = chId; });
+      return p;
+    }
+    function mergeFacts(dst, src) {
+      var seen = {}; (dst || []).forEach(function (f) { seen[normFact(f && f.text)] = true; });
+      (src || []).forEach(function (f) {
+        var k = normFact(f && f.text); if (!k || seen[k]) return; seen[k] = true; dst.push(f);
+      });
+      return dst;
+    }
+    // One-shot convergence of a pre-upgrade per-channel partition into the shared pool.
+    // Idempotent (unions by id/text, max-picks for counters) so a re-run after a midway
+    // failure just converges again instead of duplicating.
+    function mergeLegacyPartition(legacy) {
+      var ustore = userStore();
+      stampCh(legacy, cfg.channelId);
+      return Promise.resolve(ustore.get(partKey(legacy.id))).then(function (cur) {
+        var base = cur || { id: legacy.id, name: legacy.name, firstSeen: legacy.firstSeen, lastSeen: 0, interactionCount: 0, state: 'active', recent: [] };
+        var seenIds = {}; (base.recent || []).forEach(function (ln) { seenIds[String(ln.id)] = true; });
+        (legacy.recent || []).forEach(function (ln) { if (ln && !seenIds[String(ln.id)]) { seenIds[String(ln.id)] = true; base.recent.push(ln); } });
+        base.recent.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+        base.recent = smartTrimRecent(base.recent, cfg.recentWindow);
+        base.name = ((legacy.lastSeen || 0) >= (base.lastSeen || 0) ? legacy.name : base.name) || base.name || legacy.name;
+        base.firstSeen = Math.min(base.firstSeen || Infinity, legacy.firstSeen || Infinity);
+        if (!isFinite(base.firstSeen)) base.firstSeen = legacy.lastSeen || clock.now();
+        base.lastSeen = Math.max(base.lastSeen || 0, legacy.lastSeen || 0);
+        base.interactionCount = Math.max(base.interactionCount || 0, legacy.interactionCount || 0);
+        if (cfg.relationshipTrust) base.trust = Math.max(base.trust || 0, legacy.trust || 0);
+        base.facts = mergeFacts(Array.isArray(base.facts) ? base.facts : [], legacy.facts);
+        base.insights = mergeFacts(Array.isArray(base.insights) ? base.insights : [], legacy.insights);
+        if (Array.isArray(legacy.images) && legacy.images.length) {
+          base.images = (Array.isArray(base.images) ? base.images : []).concat(legacy.images).slice(-(cfg.imageMemoryRing || 6));
+        }
+        ['state', 'until', 'strikes', 'lastStrikeAt', 'modNote', 'byModId', 'modAt', 'recognized', 'bond', 'lifecycle', 'factsAt', 'factsBaseline', 'reflectImportanceAccum', 'consolidatedAt'].forEach(function (k) {
+          if (base[k] == null && legacy[k] != null) base[k] = legacy[k];
+        });
+        return Promise.resolve(ustore.set(partKey(base.id), base)).then(function () {
+          return ensureIndexed(base.id).then(function () {
+            // converge: drop the legacy local copy (best-effort; a miss here just re-merges next time)
+            return Promise.resolve(localRaw.del(partKey(base.id))).then(function () {
+              if (typeof localRaw.removeFromIndex === 'function') return Promise.resolve(localRaw.removeFromIndex(base.id)).catch(function () {});
+            }).catch(function () {});
+          }).then(function () { return base; });
+        });
+      });
+    }
+    // Hot-partition load shared by live ingest + backfill: shared pool first, cold archive
+    // second, pre-upgrade local partition last (converged into the pool on the way in).
+    function loadPartition(id) {
+      var ustore = userStore();
+      return Promise.resolve(ustore.get(partKey(id))).then(function (hot) {
+        if (hot) return hot;
+        return restoreFromArchive(id).then(function (restored) {
+          if (restored) return restored;
+          if (!sharedUsers()) return null;
+          return Promise.resolve(localRaw.get(partKey(id))).then(function (legacy) {
+            if (!legacy) return null;
+            return Promise.resolve(mergeLegacyPartition(legacy)).catch(function () { return legacy; });
+          });
+        });
+      });
+    }
 
     var running = false;
     var timer = null;
 
     // T1 reply state: a per-author queue (latest message per author) so one chatty user can't
     // starve replies to everyone else. A lost queue on reload is acceptable.
-    var reply = { queue: {}, replying: false, startedAt: 0, epoch: 0 };   // startedAt/epoch: self-rescue reclaims a lock a dead promise holds forever
-    var lastReplyAt = {};                // per-author: when she last replied to that person
+    var reply = { queue: {}, replying: false, startedAt: 0, epoch: 0, claim: null };   // startedAt/epoch: self-rescue reclaims a lock a dead promise holds forever; claim: the in-flight working-ack for the sweep
+    var lastReplyAt = {};                // per-author: when it last replied to that person
     var lastLineId = null;               // most recent non-bot channel message id (forget-that fallback target)
     var lastPollIngested = false;        // activity-aware sweep: did the previous poll bring messages?
-    var recentReplies = [];              // G1 anti-repetition: her own last few replies (PERSISTED per channel — see rememberReply)
-    // Rehydrate the anti-repeat list from the channel-scoped store so a tab reload / engine restart doesn't make her
-    // repeat her last phrasings. Best-effort + async: a reply before this resolves just sees an empty list that once.
+    var recentReplies = [];              // G1 anti-repetition: its own last few replies (PERSISTED per channel — see rememberReply)
+    // Rehydrate the anti-repeat list from the channel-scoped store so a tab reload / engine restart doesn't make its
+    // repeat its last phrasings. Best-effort + async: a reply before this resolves just sees an empty list that once.
     try { Promise.resolve(store.get('recentReplies')).then(function (v) { if (Array.isArray(v) && !recentReplies.length) recentReplies = v.slice(-(cfg.antiRepeatWindow || 5)); }, function (err) { log('[chloe.store] recentReplies rehydrate failed, starting empty (' + ((err && err.message) || err) + ')'); }); } catch (e) { log('[chloe.store] recentReplies rehydrate threw (' + ((e && e.message) || e) + ')'); }
     var consecutiveBotTurns = 0;         // bot-loop damper: human-authored messages reset this to 0
     var afkNoticed = {};                 // per-target throttle so an AFK heads-up doesn't repeat each ping
@@ -905,7 +1028,7 @@
     }
     // Called each poll. Fires any reminder whose time has come, delivers it (channel or DM), and
     // removes it. Delivery is a plain send — it doesn't consume the reply budget or judge path,
-    // because the person explicitly asked for it at this time; it's a utility, not her "voice".
+    // because the person explicitly asked for it at this time; it's a utility, not its "voice".
     function processReminders() {
       if (typeof cfg.send !== 'function') return Promise.resolve(null);
       return getReminders().then(function (list) {
@@ -967,6 +1090,13 @@
       if (h < 24) return h + ' hour' + (h === 1 ? '' : 's');
       var d = Math.round(h / 24); return d + ' day' + (d === 1 ? '' : 's');
     }
+    // Cap multi-line acks at whole lines (never cut mid-line like slice() does).
+    function clipLines(text, max) {
+      text = String(text || '');
+      if (text.length <= max) return text;
+      var cut = text.slice(0, max).replace(/\n[^\n]*$/, '');
+      return cut || text.slice(0, max);
+    }
 
     // ---- highlights (front-end only, no AI call) --------------------------------------------
     function getHighlights() { return Promise.resolve(store.get(HILITE_KEY)).then(function (h) { return Array.isArray(h) ? h : []; }); }
@@ -1005,6 +1135,19 @@
       return emoji.id ? (String(emoji.name || 'custom') + ':' + emoji.id) : String(emoji.name || '');
     }
     function emojiLabel(emoji) { return emoji ? String(emoji.name || 'reaction') : 'reaction'; }
+    // Compact reaction summary for the volunteer gate: [{ e, n, me }] capped at 5,
+    // so the judge sees what's already on a candidate (pile-on + self guards).
+    function summarizeReactions(msg) {
+      var arr = (msg && Array.isArray(msg.reactions)) ? msg.reactions : [];
+      var out = [];
+      for (var i = 0; i < arr.length && out.length < 5; i++) {
+        var r = arr[i]; if (!r || !r.emoji) continue;
+        var nm = r.emoji.id ? (String(r.emoji.name || 'custom') + ':' + r.emoji.id) : String(r.emoji.name || '');
+        if (!nm) continue;
+        out.push({ e: nm, n: Math.max(0, Number(r.count) || 0), me: !!r.me });
+      }
+      return out;
+    }
     // Running per-emoji tally for the channel: how often each reaction shows up on significant
     // messages, so Chloe knows which reactions this room actually values.
     function bumpReactionTally(emoji, by) {
@@ -1047,8 +1190,8 @@
     var trustReactKeys = [];
     // ---- feedback / preference learning state (DESIGN-feedback) ----
     var fbReactSeen = {}, fbReactKeys = [];   // msgId+emoji already scored for style feedback (bounded, idempotent across sweeps)
-    var fbPending = [];        // her recent replies awaiting a continuation signal: {style, who, at, done}
-    var lastReplyStyle = null; // style of her most recent reply here (for !chloe good/bad)
+    var fbPending = [];        // its recent replies awaiting a continuation signal: {style, who, at, done}
+    var lastReplyStyle = null; // style of its most recent reply here (for !chloe good/bad)
     // The two style "arms": length bucket and tone bucket of a reply. Cheap, computed from the text.
     function styleOf(text) {
       var t = String(text || ''); var n = t.length;
@@ -1067,7 +1210,7 @@
         return store.set(FEEDBACK_KEY, fb);
       });
     }
-    // A person kept talking after her reply -> soft positive to that reply's style (engagement reward).
+    // A person kept talking after its reply -> soft positive to that reply's style (engagement reward).
     // Never penalizes silence (someone going offline isn't negative feedback).
     function creditContinuation(humans) {
       if (!cfg.feedbackLearning || !fbPending.length || !humans || !humans.length) return Promise.resolve(null);
@@ -1119,13 +1262,13 @@
       // Trust crediting is independent of significance but JOINED to the returned promise, so
       // sweeps complete deterministically (no fire-and-forget writes racing the poll summary).
       var pos = cfg.trustPositiveEmoji || [];
-      var hers = msg.author && msg.author.id === cfg.botUserId;
-      var hasPositive = hers && (msg.reactions || []).some(function (r) { return r && r.emoji && pos.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; });
+      var isSelf = msg.author && msg.author.id === cfg.botUserId;
+      var hasPositive = isSelf && (msg.reactions || []).some(function (r) { return r && r.emoji && pos.indexOf(r.emoji.name || '') >= 0 && (r.count || 0) > 0; });
       var affectChain = hasPositive ? affectNudge({ confidence: (cfg.affectGain || 0.08), warmth: (cfg.affectGain || 0.08) }) : Promise.resolve(null);
       // DESIGN-feedback: a reaction on HER message is a free quality signal for the reply's STYLE.
       // Positives reuse the trust set; negatives are a small explicit set. Counted once per emoji/msg.
       var fbChain = Promise.resolve(null);
-      if (cfg.feedbackLearning && hers) {
+      if (cfg.feedbackLearning && isSelf) {
         var neg = cfg.feedbackNegativeEmoji || [], posHit = 0, negHit = 0;
         (msg.reactions || []).forEach(function (r) {
           var nm = r && r.emoji && (r.emoji.name || ''); if (!nm) return;
@@ -1164,7 +1307,7 @@
     }
     var gate = { pending: null };        // T2 volunteer candidate (latest un-addressed msg)
     var greet = { pending: null, greeting: false };  // T5 greeting candidate (settling-debounced)
-    var paint = { queue: [], painting: false, lastJob: null, startedAt: 0 };  // global image FIFO; one in flight at a time (startedAt: paint-lock watchdog)
+    var paint = { queue: [], painting: false, lastJob: null, startedAt: 0, claim: null };  // global image FIFO; one in flight at a time (startedAt: paint-lock watchdog; claim: in-flight ack for the sweep)
     var lastPaintAt = 0;                 // last image delivery (image clock — independent of the text clock)
     var engageMode = (cfg.engageMode === 'locked' || cfg.engageMode === 'open') ? cfg.engageMode : 'normal';
     var lastCmdAt = {};                  // per-command last-run clock (for entry.cooldownMs)
@@ -1175,11 +1318,11 @@
     var pollCount = 0;                   // drives the periodic quiet-sweep cadence
     var warnedEmpty = false;             // one-time empty-content (Message Content Intent) notice
     var greetSettleLogged = false;       // one-time "suppressing greetings (just started)" notice
-    var personaName = null;              // D4+: if a pinned note names a character, she answers to THAT name
+    var personaName = null;              // D4+: if a pinned note names a character, it answers to THAT name
     // Pull an optional character name out of an anchored note. Supports a leading "Name:" label,
     // or "you are X" / "you're X" / "be X" / "act as X" / "play X" / "roleplay as X". Returns a
     // trimmed name (<=40 chars, letters/spaces/-/' only) or null. The note text is used as-is for
-    // style; the name only adds an alias + reframes the prompt so she doesn't narrate "Chloe as X".
+    // style; the name only adds an alias + reframes the prompt so it doesn't narrate "Chloe as X".
     function parsePersonaName(text) {
       var t = String(text || '').trim();
       var m = t.match(/^\s*(?:name|character|persona)\s*[:=]\s*([A-Za-z][A-Za-z .'\-]{1,39}?)\s*(?:[.,;!?\n]|$)/i)
@@ -1201,7 +1344,7 @@
     function namePat(a) { return '\\b' + escRe(a) + "(?:['\u2019]s|s['\u2019]?)?\\b"; } // trigger: chloe also fires on chloe's, chloes, chloes' — never inside longer words
     function replyEnabled() { return typeof cfg.respond === 'function' && typeof cfg.send === 'function'; }
     function hasPendingReply() { return Object.keys(reply.queue).length > 0; }
-    function dropReplyLock(ep) { if (ep == null || ep === reply.epoch) reply.replying = false; }   // self-rescue generation guard: a late terminal never clears a newer claim
+    function dropReplyLock(ep) { if (ep == null || ep === reply.epoch) { reply.replying = false; reply.claim = null; } }   // self-rescue generation guard: a late terminal never clears a newer claim; the terminal already cleared the ack itself
     function inGreetSettle(now) { return cfg.greetSettleMs > 0 && startedAt && (now - startedAt) < cfg.greetSettleMs; }
     // The proactive lane (lull filler, favorite check-ins, scheduled beats) reads timestamps that
     // PERSIST across restarts — lastActivity, last-checkin, beat schedules. Right after start those
@@ -1211,11 +1354,37 @@
     function inProactiveSettle(now) { return inGreetSettle(now); }
     function indicateTyping() { if (typeof cfg.typing === 'function') { try { Promise.resolve(cfg.typing(cfg.channelId)).catch(function () {}); } catch (e) {} } }
     // Fast-ack: the Discord side is instant even while the Perchance brain is slow (up to ~60s with
-    // cooldowns). At the moment she COMMITS to a reply/image we react to the triggering message with
+    // cooldowns). At the moment it COMMITS to a reply/image we react to the triggering message with
     // a "working" emoji so the user gets immediate feedback; we clear it when the result lands (or
     // fails). Reactions aren't paced and don't consume the send budget, so the ack is truly instant.
+    // Stale-reaction sweep: every transient working ack (🗣️/🖼️/🔢/⏳/🔒/🔍) is
+    // recorded here when added and removed when cleared, so a watchdog, rescue,
+    // stop or reset can sweep whatever is still live. Command confirmations
+    // (👍/🧺 via ackReact) are INTENTIONALLY untracked — they persist by design.
+    var outstandingAcks = {};   // "messageId\nemoji" -> { messageId, emoji }
+    function ackKey(messageId, emoji) { return messageId + '\n' + emoji; }
+    function unreactBestEffort(messageId, emoji) {
+      if (!messageId || !emoji || typeof cfg.unreact !== 'function') return 0;
+      try { Promise.resolve(cfg.unreact(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
+      return 1;
+    }
+    function sweepLaneClaims(reason) {
+      var n = 0;
+      if (reply.claim) { delete outstandingAcks[ackKey(reply.claim.messageId, reply.claim.emoji)]; n += unreactBestEffort(reply.claim.messageId, reply.claim.emoji); reply.claim = null; }
+      if (paint.claim) { delete outstandingAcks[ackKey(paint.claim.messageId, paint.claim.emoji)]; n += unreactBestEffort(paint.claim.messageId, paint.claim.emoji); paint.claim = null; }
+      if (n) log('[chloe.rescue] ' + reason + ': swept ' + n + ' stuck working-ack reaction(s)');
+      return n;
+    }
+    function clearAllAcks(reason) {
+      var vals = Object.keys(outstandingAcks).map(function (k) { return outstandingAcks[k]; });
+      outstandingAcks = {}; reply.claim = null; paint.claim = null;
+      vals.forEach(function (a) { unreactBestEffort(a.messageId, a.emoji); });
+      if (vals.length) log('[chloe.rescue] ' + reason + ': swept ' + vals.length + ' outstanding ack reaction(s)');
+      return vals.length;
+    }
     function ackWorking(messageId, emoji) {
       if (!cfg.ackReactions || !messageId || typeof cfg.react !== 'function') return;
+      outstandingAcks[ackKey(messageId, emoji)] = { messageId: messageId, emoji: emoji };
       try { Promise.resolve(cfg.react(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
     }
     function ackReact(messageId, emoji) {
@@ -1223,7 +1392,12 @@
       try { Promise.resolve(cfg.react(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
     }
     function clearAck(messageId, emoji) {
-      if (!cfg.ackReactions || !messageId || typeof cfg.unreact !== 'function') return;
+      // Clearing is hygiene, not speech: no ackReactions check (a flag flipped
+      // mid-generation must not orphan the ack) and wiring's unreact is ungated
+      // (a speak-gate flipped mid-generation must not orphan it either).
+      if (!messageId || !emoji) return;
+      delete outstandingAcks[ackKey(messageId, emoji)];
+      if (typeof cfg.unreact !== 'function') return;
       try { Promise.resolve(cfg.unreact(cfg.channelId, messageId, emoji)).catch(function () {}); } catch (e) {}
     }
     // Place-in-line reactions for the image queue ("your place in line, thanks to Perch for being
@@ -1261,13 +1435,13 @@
     // at the transport boundary; the engine just records the preference (English-only cognition).
     // (LANG_NAMES lives at factory scope — shared with the queen via ChloeT0.LANG_NAMES.)
     function getUserLang(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && p.lang) ? p.lang : null; });
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) { return (p && p.lang) ? p.lang : null; });
     }
     function setUserLang(id, lang) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) p = { id: id, name: id, firstSeen: clock.now(), lastSeen: clock.now(), interactionCount: 0, state: 'active', recent: [] };
         if (lang) p.lang = lang; else delete p.lang;
-        return store.set(partKey(id), p).then(function () { return lang || null; });
+        return userStore().set(partKey(id), p).then(function () { return lang || null; });
       });
     }
 
@@ -1284,7 +1458,7 @@
     }
 
     function isAddressed(content) {
-      if (cfg.addressMode === 'always') return true;   // DM channel: every message is to her
+      if (cfg.addressMode === 'always') return true;   // DM channel: every message is to it
       var c = String(content || '');
       var userMentioned = !!(cfg.botUserId && (c.indexOf('<@' + cfg.botUserId + '>') >= 0 || c.indexOf('<@!' + cfg.botUserId + '>') >= 0));
       var roleMentioned = rolePinged(c);
@@ -1294,7 +1468,7 @@
       if (cfg.addressMode === 'name') return !!named;
       return !!(mentioned || named);
     }
-    // Distinguish HOW she was addressed, for response priority: an explicit @-ping outranks her name
+    // Distinguish HOW it was addressed, for response priority: an explicit @-ping outranks its name
     // dropped in casual conversation. In a DM every message is a direct ping-equivalent.
     function addressKind(content) {
       if (cfg.addressMode === 'always') return 'ping';   // DM: treat as a direct address
@@ -1323,15 +1497,15 @@
     function addrNoteOnce(key) { if (addrLogged[key]) return false; addrLogged[key] = true; return true; }
     // Called for every message that reaches the volunteer gate (i.e. NOT treated as addressed).
     // Silent for plain chatter (the judge logs its own decision); loud for the specific ways an
-    // addressing attempt can miss, so the next "she ignored me" debugs itself in one line.
+    // addressing attempt can miss, so the next "it ignored me" debugs itself in one line.
     function addrNote(m) {
       var info = addressInfo(m.content);
       var who = (m.author && (m.author.username || m.author.id)) || 'someone';
       var aid = (m.author && m.author.id) || '?';
-      if (!info.botIdSet && addrNoteOnce('nobotid')) log('[chloe.identity] bot user ID is not set — @-mentions can never match her (Setup tab -> Validate token, then Stop + Start)');
-      if (!info.aliasCount && addrNoteOnce('noalias')) log('[chloe.identity] she has no names configured — written-name addressing can never match (bot name / aliases missing)');
+      if (!info.botIdSet && addrNoteOnce('nobotid')) log('[chloe.identity] bot user ID is not set — @-mentions can never match it (Setup tab -> Validate token, then Stop + Start)');
+      if (!info.aliasCount && addrNoteOnce('noalias')) log('[chloe.identity] it has no names configured — written-name addressing can never match (bot name / aliases missing)');
       if (info.len === 0) {
-        if (addrNoteOnce('empty:' + aid)) log('[chloe.T1] ' + who + ' messaged, but it arrived with NO readable text (empty content) — if they were addressing her, turn on Message Content Intent (Discord Dev Portal -> Bot -> Privileged Gateway Intents), then Stop + Start');
+        if (addrNoteOnce('empty:' + aid)) log('[chloe.T1] ' + who + ' messaged, but it arrived with NO readable text (empty content) — if they were addressing it, turn on Message Content Intent (Discord Dev Portal -> Bot -> Privileged Gateway Intents), then Stop + Start');
         return;
       }
       if (info.hasRoleMention && !info.mentioned) {
@@ -1340,23 +1514,23 @@
         // roles stay silent. Say which role (ids are not personal data) and how to enlist it.
         var hint = info.firstRoleId ? (' (<@&' + info.firstRoleId + '>)') : '';
         var how = (info.mode === 'name')
-          ? ' — but she only answers her written name right now (Behavior -> replies-when is name only)'
+          ? ' — but it only answers its written name right now (Behavior -> replies-when is name only)'
           : (info.summonRoles
-            ? ' — that role is not in her summon list (Behavior -> summon roles holds ' + info.summonRoles + ' id' + (info.summonRoles === 1 ? '' : 's') + ')'
-            : ' — she only answers listed summon roles (Behavior -> summon roles), or @-mention the bot itself (pick the user from autocomplete, not a role of the same name)');
-        if (addrNoteOnce('role:' + aid)) log('[chloe.T1] ' + who + ' mentioned a ROLE' + hint + ', not her personal mention' + how + ' and she will answer');
+            ? ' — that role is not in its summon list (Behavior -> summon roles holds ' + info.summonRoles + ' id' + (info.summonRoles === 1 ? '' : 's') + ')'
+            : ' — it only answers listed summon roles (Behavior -> summon roles), or @-mention the bot itself (pick the user from autocomplete, not a role of the same name)');
+        if (addrNoteOnce('role:' + aid)) log('[chloe.T1] ' + who + ' mentioned a ROLE' + hint + ', not its personal mention' + how + ' and it will answer');
         return;
       }
       if (info.hasMentionSyntax && !info.mentioned) {
-        if (addrNoteOnce('mismatch:' + aid)) log('[chloe.T1] ' + who + ' mentioned someone, but the mention is not hers (she listens for <@' + (cfg.botUserId || '?') + '>) — treating it as normal chatter');
+        if (addrNoteOnce('mismatch:' + aid)) log('[chloe.T1] ' + who + ' mentioned someone, but the mention is not for it (it listens for <@' + (cfg.botUserId || '?') + '>) — treating the message as normal chatter');
         return;
       }
       if (info.named && info.mode === 'mention') {
-        if (addrNoteOnce('modemention:' + aid)) log('[chloe.T1] ' + who + ' said her name, but she only answers direct @-mentions right now (Behavior -> replies-when is @-mention only)');
+        if (addrNoteOnce('modemention:' + aid)) log('[chloe.T1] ' + who + ' said its name, but it only answers direct @-mentions right now (Behavior -> replies-when is @-mention only)');
         return;
       }
       if (info.mentioned && info.mode === 'name') {
-        if (addrNoteOnce('modename:' + aid)) log('[chloe.T1] ' + who + ' @-mentioned her, but she only answers her written name right now (Behavior -> replies-when is name only)');
+        if (addrNoteOnce('modename:' + aid)) log('[chloe.T1] ' + who + ' @-mentioned it, but it only answers its written name right now (Behavior -> replies-when is name only)');
         return;
       }
     }
@@ -1382,9 +1556,9 @@
         .replace(/<a?:\w+:\d+>/g, ' ')   // custom/animated emoji
         .replace(/\s+/g, ' ').trim();
     }
-    // For the TRANSCRIPT she reads (not her output): turn opaque Discord refs into readable names so she
-    // keeps the social cues instead of seeing blanks. <@id>/<@!id> -> @name (from the roster map, her own
-    // name for herself, else @someone); <@&id> -> @role; <#id> -> #channel; emoji -> :name:. nameById is
+    // For the TRANSCRIPT it reads (not its output): turn opaque Discord refs into readable names so it
+    // keeps the social cues instead of seeing blanks. <@id>/<@!id> -> @name (from the roster map, its own
+    // name for itself, else @someone); <@&id> -> @role; <#id> -> #channel; emoji -> :name:. nameById is
     // an { id: name } map the caller builds from the roster (+ the bot). Output still uses scrubDiscordTokens.
     function resolveRefs(c, nameById) {
       nameById = nameById || {};
@@ -1421,7 +1595,7 @@
     // ring + a `lastImage` pointer used to resolve "make it ..." follow-ups.
     function recordImage(authorId, item) {
       if (!cfg.imageMemory) return Promise.resolve();
-      return Promise.resolve(store.get(partKey(authorId))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(authorId))).then(function (p) {
         if (!p) return;   // no partition (ethereal / never ingested) -> keep nothing, by design
         var rec = { prompt: item.prompt, resolution: item.resolution, dm: !!item.dm, at: clock.now() };
         if (item.guidanceScale != null) rec.guidanceScale = item.guidanceScale;
@@ -1432,7 +1606,7 @@
         if (p.images.length > cap) p.images = p.images.slice(-cap);
         p.lastImage = rec;            // fast pointer for "edit the last one"
         p.imageWindowAt = clock.now();   // opens the bare-edit window
-        return store.set(partKey(authorId), p);
+        return userStore().set(partKey(authorId), p);
       });
     }
     // Does this message look like a request to CHANGE the last image (rather than a brand-new one)?
@@ -1562,7 +1736,7 @@
         .replace(/[\s,:;.!?]+$/, '')
         .trim();
       var dm = /\b(dm|dms|privately|in private|direct message)\b/i.test(raw) || /\bin (a|my) dm\b/i.test(raw);
-      if (dm) prompt = prompt.replace(/\b(in (a|my) )?(dm|dms|privately|in private|private|direct message)\b/ig, '').replace(/\s+/g, ' ').trim();
+      if (dm) prompt = prompt.replace(/\b(in (a|my) )?(dm|dms)( me)?\b|\b(privately|in private|private|direct message)\b/ig, '').replace(/\s+/g, ' ').trim();
       if (!prompt || prompt.replace(/[^a-z0-9]/ig, '').length < 2) return null;  // no real description -> would hang
       return { prompt: prompt.slice(0, 400), dm: dm, resolution: pickResolution(prompt) };
     }
@@ -1572,6 +1746,47 @@
     // here and never spend the call. CONSERVATIVE by design: it only returns a hard "skip" when it's
     // confident the answer is ignore — anything genuinely ambiguous still goes to the judge.
     // Returns { skip:true, why } to short-circuit to ignore, or { skip:false } to consult the LLM.
+    // Curated volunteer-reaction allowlist: warm backchannels only, nothing mocking,
+    // nothing that reads as piling on. The judge picks FROM this list (prompt shows it);
+    // anything else decays to ignore. [] disables react-votes entirely.
+    var DEFAULT_JUDGE_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏', '🙏', '👀', '🤔', '💯'];
+    function judgeReactionList() {
+      if (!Array.isArray(cfg.judgeReactions)) return DEFAULT_JUDGE_REACTIONS.slice();
+      var out = [];
+      for (var i = 0; i < cfg.judgeReactions.length && out.length < 12; i++) {
+        var e = String(cfg.judgeReactions[i] || '').trim().slice(0, 32);
+        if (e && out.indexOf(e) < 0) out.push(e);
+      }
+      return out;   // possibly empty: react-votes disabled
+    }
+    // Pure plan for a judge react vote. vote: emoji strings in voted order. cand:
+    // { present:[emoji names already on the message], selfReacted:bool }. allowed:
+    // curated list; max: combo cap. Returns { ok, emojis } or { ok:false, why }.
+    // Guards: own prior reaction blocks the whole vote (no reaction-to-reaction);
+    // already-present emoji are dropped (no dog-piling); off-list votes decay.
+    function judgeReactionPlan(vote, cand, allowed, max) {
+      var seen = {}, wanted = [];
+      (Array.isArray(vote) ? vote : []).forEach(function (raw) {
+        var e = String(raw == null ? '' : raw).trim().slice(0, 32);
+        if (e && !seen[e]) { seen[e] = true; wanted.push(e); }
+      });
+      if (!wanted.length) return { ok: false, why: 'empty vote' };
+      if (cand && cand.selfReacted) return { ok: false, why: 'already reacted' };
+      var present = {}, droppedPiled = 0, droppedOffList = 0, kept = [];
+      ((cand && cand.present) || []).forEach(function (p) { present[String(p)] = true; });
+      for (var i = 0; i < wanted.length; i++) {
+        if ((allowed || []).indexOf(wanted[i]) < 0) { droppedOffList++; continue; }
+        if (present[wanted[i]]) { droppedPiled++; continue; }
+        kept.push(wanted[i]);
+      }
+      var cap = Math.max(1, Math.min(3, Number(max) || 2));
+      kept = kept.slice(0, cap);
+      if (!kept.length) {
+        if (droppedPiled > 0 && !droppedOffList) return { ok: false, why: 'already there (no pile-on)' };
+        return { ok: false, why: 'none allowed' + (droppedPiled ? ' (some already there)' : '') };
+      }
+      return { ok: true, emojis: kept };
+    }
     function volunteerPrefilter(g, ring) {
       var text = String((g && g.content) || '').trim();
       var bare = text.replace(/<a?:\w+:\d+>/g, '').replace(/[\p{Extended_Pictographic}\u200d\ufe0f]/gu, '').trim();
@@ -1589,7 +1804,7 @@
           return { skip: false };   // converse says chime in -> still let the LLM judge make the final call
         } catch (e) { log('[wire:converse] decide threw -> legacy prefilter', (e && e.message) || e); /* fall through */ }
       }
-      // 2. she's mid bot-loop damping — volunteering would feed the loop  (LEGACY path: OFF or converse error)
+      // 2. it's mid bot-loop damping — volunteering would feed the loop  (LEGACY path: OFF or converse error)
       if (botLoopReplyChance() < 0.5) return { skip: true, why: 'bot-loop damping' };
       // 3. a clearly private two-person back-and-forth between OTHER people
       if (isTwoPersonExchange(ring)) return { skip: true, why: 'two-person exchange' };
@@ -1735,7 +1950,7 @@
       };
     }
     // felt line for the per-person context — the TIER, never a raw number (mirrors how personModel surfaces a band).
-    // stranger returns '' (no cue: reserved is her default), warmer tiers license warmer behavior.
+    // stranger returns '' (no cue: reserved is its default), warmer tiers license warmer behavior.
     function bondTierLine(tier, name) {
       var who = name || 'them';
       switch (tier) {
@@ -1768,10 +1983,12 @@
     }
     function ensureIndexed(id) {
       // Use targeted-add if available to avoid clobbering concurrent writes to the index.
-      if (typeof store.addToIndex === 'function') return store.addToIndex(id);
-      return Promise.resolve(store.listIndex()).then(function (ids) {
+      // The roster index lives in the USER pool (global for shared public channels).
+      var ustore = userStore();
+      if (typeof ustore.addToIndex === 'function') return ustore.addToIndex(id);
+      return Promise.resolve(ustore.listIndex()).then(function (ids) {
         ids = ids || [];
-        if (ids.indexOf(id) < 0) { ids.push(id); return store.setIndex(ids); }
+        if (ids.indexOf(id) < 0) { ids.push(id); return ustore.setIndex(ids); }
       });
     }
     // The single state-mutation primitive. Used by both in-channel commands (after a mod-list
@@ -1779,7 +1996,7 @@
    function applyModAction(action, targetId, opts) {
      opts = opts || {};
      if (!targetId) return Promise.resolve({ ok: false, reason: 'no target user' });
-     return Promise.resolve(store.get(partKey(targetId))).then(function (p) {
+     return Promise.resolve(userStore().get(partKey(targetId))).then(function (p) {
        var now = clock.now();
         // A6: before-snapshot so the action is undoable. `existed` matters: undoing an
         // action that CREATED this partition removes the partition entirely.
@@ -1799,7 +2016,7 @@
         // #11: capture what this person was saying, so the mod (or the auto-mod audit trail) has context.
         var context = (p.recent || []).slice(-(cfg.modLogContextLines || 5)).map(function (ln) { return { ts: ln.ts, text: scrubDiscordTokens(ln.content || '') }; });
        return ensureIndexed(targetId).then(function () {
-         return store.set(partKey(targetId), p).then(function () {
+         return userStore().set(partKey(targetId), p).then(function () {
            return appendModLog({ action: action, targetId: targetId, name: p.name || targetId, byModId: opts.byModId || null, reason: opts.reason || null, at: now, state: p.state, context: context }).then(function () {
               var res = { ok: true, value: { action: action, targetId: targetId, state: p.state, until: p.until, ack: ack } };
               if (opts.noUndo) return res;   // A6: inner call from applyStrike / undo — the outer layer owns the entry
@@ -1816,7 +2033,7 @@
    function applyStrike(targetId, opts) {
      opts = opts || {};
      if (!targetId) return Promise.resolve({ ok: false, reason: 'no target user' });
-     return Promise.resolve(store.get(partKey(targetId))).then(function (p) {
+     return Promise.resolve(userStore().get(partKey(targetId))).then(function (p) {
        var now = clock.now();
         // A6: combined entry — the inner applyModAction is suppressed (noUndo) so one
         // strike pops as ONE undo (count + moderation state together).
@@ -1825,7 +2042,7 @@
         var decayMs = cfg.strikeDecayMs || 0, prev = p.strikes || 0;
         if (decayMs > 0 && p.lastStrikeAt) { var forgiven = Math.floor((now - p.lastStrikeAt) / decayMs); if (forgiven > 0) prev = Math.max(0, prev - forgiven); }
         p.strikes = prev + 1; p.lastStrikeAt = now;
-        return store.set(partKey(targetId), p).then(function () {
+        return userStore().set(partKey(targetId), p).then(function () {
           var ladder = (cfg.strikeLadder && cfg.strikeLadder.length) ? cfg.strikeLadder : [{ action: 'ignore' }];
           var step = ladder[Math.min(p.strikes - 1, ladder.length - 1)] || { action: 'ignore' };
           var act = REVERSIBLE_ACTIONS[step.action] ? step.action : 'ignore';   // strikes never permaban (F1)
@@ -1960,6 +2177,14 @@
           return { ack: "ok — i'll remind you in " + a.minutes + 'm: “' + String(a.text).slice(0, 60) + '”' };
         });
       }
+      if (task === 'search') {
+        if (typeof cfg.search !== 'function') return Promise.resolve({ ack: 'search is not available right now' });
+        var sq = String(a.query || '').trim().slice(0, 300);
+        return Promise.resolve(cfg.search(sq)).then(function (res) {
+          if (!res || !res.ok) return { ack: 'no results for \u201c' + sq.slice(0, 80) + '\u201d (' + ((res && res.reason) || 'n/a') + ')' };
+          return { ack: 'here\u2019s what I found for \u201c' + sq.slice(0, 80) + '\u201d:\n' + String(res.value).slice(0, 1500) };
+        });
+      }
       if (task === 'fetch') {
         if (typeof cfg.fetch !== 'function') return Promise.resolve({ ack: 'page reading is not available right now' });
         return Promise.resolve(cfg.fetch(a.url)).then(function (res) {
@@ -2055,7 +2280,7 @@
 
     // ---- bounded ReAct loop (model tool-loop, item 2). After the FIRST cfg.respond, if the reply emitted a
     //      QUERY tool (search), run it, inject the results as ctx.toolResults, and RE-CALL cfg.respond ONCE so
-    //      she answers WITH the data. BOUNDED: exactly one extra round — we return that second reply no matter
+    //      it answers WITH the data. BOUNDED: exactly one extra round — we return that second reply no matter
     //      what it emits, so a 2nd search never triggers a 3rd round (loop-breaker). ACTION-only replies take
     //      NO extra round (item-1 behavior; the terminal dispatch handles them). FAIL-OPEN: any search/re-respond
     //      error returns the ORIGINAL reply, so the reply path degrades to exactly what it would be without tools.
@@ -2104,12 +2329,13 @@
     }
 
     function removeFromIndex(id) {
-      // Use a targeted-remove via store.removeFromIndex so the write only drops the one id
+      // Use a targeted-remove via userStore().removeFromIndex so the write only drops the one id
       // rather than replacing the full array — concurrent ensureIndexed adds won't be lost.
-      if (typeof store.removeFromIndex === 'function') return store.removeFromIndex(id);
-      return Promise.resolve(store.listIndex()).then(function (ids) {
+      var ustore = userStore();
+      if (typeof ustore.removeFromIndex === 'function') return ustore.removeFromIndex(id);
+      return Promise.resolve(ustore.listIndex()).then(function (ids) {
         var next = (ids || []).filter(function (x) { return x !== id; });
-        return store.setIndex(next);
+        return ustore.setIndex(next);
       });
     }
     // Separate, purge-surviving record of what mods DID (not a memory of the user) — spec 5.6/decision #5.
@@ -2143,11 +2369,11 @@
     // active -> quiet: a user who has aged out of the attention window (not under moderation).
     function quietSweep() {
       var now = clock.now();
-      return Promise.resolve(store.listIndex()).then(function (ids) {
+      return Promise.resolve(userStore().listIndex()).then(function (ids) {
         var chain = Promise.resolve(), demoted = 0, archived = 0;
         (ids || []).forEach(function (id) {
           chain = chain.then(function () {
-            return Promise.resolve(store.get(partKey(id))).then(function (p) {
+            return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
               if (!p || p.lifecycle === 'departed') return;
               if (p.state && p.state !== 'active') return;       // moderation rows are not "quiet"
               // Data tiering: a long-cold user is moved to the historical-friends archive so the hot
@@ -2156,7 +2382,7 @@
                 archived++; return archiveUser(id, 'long-absent');
               }
               if ((now - (p.lastSeen || 0)) >= cfg.quietAfterMs && p.lifecycle !== 'quiet') {
-                p.lifecycle = 'quiet'; demoted++; return store.set(partKey(id), p);
+                p.lifecycle = 'quiet'; demoted++; return userStore().set(partKey(id), p);
               }
             });
           });
@@ -2167,8 +2393,8 @@
     // Bounded, prioritized list of users worth a 404 membership check (transport runs the checks).
     function dueForMemberCheck(max) {
       max = max || 5; var now = clock.now();
-      return Promise.resolve(store.listIndex()).then(function (ids) {
-        return Promise.all((ids || []).map(function (id) { return Promise.resolve(store.get(partKey(id))); })).then(function (ps) {
+      return Promise.resolve(userStore().listIndex()).then(function (ids) {
+        return Promise.all((ids || []).map(function (id) { return Promise.resolve(userStore().get(partKey(id))); })).then(function (ps) {
           var cands = [];
           ps.forEach(function (p) {
             if (!p || p.lifecycle === 'departed') return;
@@ -2182,16 +2408,16 @@
       });
     }
     function noteMemberPresent(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) { if (!p) return; p.lastMemberCheckAt = clock.now(); return store.set(partKey(id), p); });
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) { if (!p) return; p.lastMemberCheckAt = clock.now(); return userStore().set(partKey(id), p); });
     }
     // 404-confirmed gone: clear ordinary memory, but KEEP any moderation row (a soft-ban must survive
     // a departure so it still applies if they return). Quiet adjustment only — never announced.
     function markDeparted(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) return { ok: false, reason: 'unknown' };
         p.lifecycle = 'departed'; p.departedAt = clock.now();
         p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null;
-        return store.set(partKey(id), p).then(function () { return { ok: true, value: { id: id, name: p.name } }; });
+        return userStore().set(partKey(id), p).then(function () { return { ok: true, value: { id: id, name: p.name } }; });
       });
     }
     function ingestHistorical(msg) {
@@ -2209,14 +2435,15 @@
     }
     function ingestHistoricalCore(msg) {
       var id = msg.author.id;
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return loadPartition(id).then(function (existing) {
         var seenAt = toEpoch(msg.timestamp);
-        if (!p) p = { id: id, name: msg.author.username, firstSeen: seenAt, lastSeen: seenAt, interactionCount: 0, state: 'active', lifecycle: 'quiet', recent: [] };
+        var p = existing || { id: id, name: msg.author.username, firstSeen: seenAt, lastSeen: seenAt, interactionCount: 0, state: 'active', lifecycle: 'quiet', recent: [] };
         p.name = p.name || msg.author.username;
         p.firstSeen = Math.min(p.firstSeen || seenAt, seenAt);
-        var dupH = false; for (var hi = 0; hi < p.recent.length; hi++) { if (String(p.recent[hi].id) === String(msg.id)) { dupH = true; break; } }
-        if (!dupH && p.recent.length < cfg.recentWindow) p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
-        return ensureIndexed(id).then(function () { return store.set(partKey(id), p); });
+        var dupH = false; for (var hi = 0; hi < (p.recent || []).length; hi++) { if (String(p.recent[hi].id) === String(msg.id)) { dupH = true; break; } }
+        if (!dupH) p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '', ch: cfg.channelId });
+        p.recent = smartTrimRecent(p.recent || [], cfg.recentWindow);
+        return ensureIndexed(id).then(function () { return userStore().set(partKey(id), p); });
       });
     }
     // One bounded, checkpointed page of history per call (ingest only — never greets or replies).
@@ -2249,16 +2476,27 @@
     function purge(targetId, opts) {
       opts = opts || {};
       if (!targetId) return Promise.resolve({ ok: false, reason: 'no target' });
-      return Promise.resolve(store.get(partKey(targetId))).then(function (p) {
+      var ustore = userStore();
+      return Promise.resolve(ustore.get(partKey(targetId))).then(function (p) {
         var name = (p && p.name) || opts.targetName || targetId;
-        return Promise.resolve(store.del(partKey(targetId)))
+        return Promise.resolve(ustore.del(partKey(targetId)))
           .then(function () { return removeFromIndex(targetId); })
+          .then(function () {
+            // shared pool: also clear the pre-upgrade local copy (raw handle — the gated
+            // `store` would silently drop the delete, leaving a GDPR-violating remnant)
+            if (!sharedUsers()) return null;
+            return Promise.resolve(localRaw.del(partKey(targetId))).catch(function () {});
+          })
+          .then(function () {
+            if (!sharedUsers() || typeof localRaw.removeFromIndex !== 'function') return null;
+            return Promise.resolve(localRaw.removeFromIndex(targetId)).catch(function () {});
+          })
           .then(function () { return dropFromArchive(targetId); })   // erasure must include the cold copy, not just the hot one
           .then(function () { return dropEpisodesFor(targetId, name); })   // and episodes they took part in
           .then(function () { return dropGoalsFor(targetId); })   // and any goals we tracked for them
-          .then(function () { return Promise.resolve(store.get(partKey(targetId))); })   // read back
+          .then(function () { return Promise.resolve(ustore.get(partKey(targetId))); })   // read back
           .then(function (after) {
-            return store.listIndex().then(function (ids) {
+            return ustore.listIndex().then(function (ids) {
               var gone = (after == null) && (ids || []).indexOf(targetId) < 0;
               if (!gone) return { ok: false, verified: false, name: name, reason: 'delete did NOT round-trip (partition still present in the store)' };
               return { ok: true, verified: true, name: name, targetId: targetId };
@@ -2289,11 +2527,11 @@
       { verb: 'unblock',   modOnly: true, needsTarget: true, help: 'unblock @u', handler: function (modId, c) {
           if (!c.targetId) return Promise.resolve({ ack: 'unblock needs an @mention of the user' });
           return unblockUser({ id: c.targetId, name: c.targetName })
-            .then(function (r) { return { ack: r.ok ? ('unblocked ' + (c.targetName || c.targetId) + ' \u2014 she can form memory of them again') : ((c.targetName || c.targetId) + ' was not on the blocklist') }; });
+            .then(function (r) { return { ack: r.ok ? ('unblocked ' + (c.targetName || c.targetId) + ' \u2014 it can form memory of them again') : ((c.targetName || c.targetId) + ' was not on the blocklist') }; });
         } },
       { verb: 'warns',     modOnly: true, needsTarget: true, help: 'warns @u', handler: function (modId, c) {
           if (!c.targetId) return Promise.resolve({ ack: 'warns needs an @mention of the user' });
-          return Promise.resolve(store.get(partKey(c.targetId))).then(function (p) {
+          return Promise.resolve(userStore().get(partKey(c.targetId))).then(function (p) {
             if (!p) return { ack: 'I have no record of that user' };
             var n = p.strikes || 0;
             return { ack: (p.name || c.targetId) + ': ' + n + ' strike' + (n === 1 ? '' : 's') + (p.state && p.state !== 'active' ? ' \u2014 currently ' + p.state : '') };
@@ -2327,7 +2565,7 @@
             });
           }
           if (!args) return Promise.resolve({ ack: 'tell me what you\u2019re working on: ' + (cfg.commandPrefix || '!chloe') + ' goal <text>' });
-          return Promise.resolve(store.get(partKey(uid))).then(function (pp) {
+          return Promise.resolve(userStore().get(partKey(uid))).then(function (pp) {
             return addGoal(args, uid, (pp && pp.name) || '', 'command').then(function (g) {
               return { ack: g ? ('got it \u2014 I\u2019ll remember you\u2019re working on that (' + g.id + ')') : 'couldn\u2019t note that' };
             });
@@ -2370,7 +2608,7 @@
         var wio = { get: function (k) { return store.get(k); }, set: function (k, v) { return store.set(k, v); } };
         return ChloeWordle.handleWordle({ uid: String(uid), name: (c && c.authorName) || '', isMod: isMod(uid), prefix: cfg.commandPrefix || '!chloe', now: clock.now(), io: wio, channelId: cfg.channelId }, String((c && c.rawArgs) || '').trim());
       } },
-      { verb: 'policy',    modOnly: false, help: 'policy [allow|ask|deny] (gate her proactive output: beats, check-ins, lull — setting is mods-only)', handler: function (uid, c) {
+      { verb: 'policy',    modOnly: false, help: 'policy [allow|ask|deny] (gate its proactive output: beats, check-ins, lull, thoughts feed, news — setting is mods-only)', handler: function (uid, c) {
         var a = String((c && c.rawArgs) || '').trim().toLowerCase();
         var p = (cfg.actPolicy === 'ask' || cfg.actPolicy === 'deny') ? cfg.actPolicy : 'allow';
         if (!a) {
@@ -2397,13 +2635,13 @@
           }).join('\n') + '\nmods: ' + (cfg.commandPrefix || '!chloe') + ' approve <id>|all [always], or dismiss' };
         });
       } },
-      { verb: 'approve',   modOnly: true, help: 'approve <id>|all [always] (release held output; always = remember it)', handler: function (modId, c) {
+      { verb: 'approve',   modOnly: true, help: 'approve <id>|all [always] (release held output once; always = remember it)', handler: function (modId, c) {
         var parts = String((c && c.rawArgs) || '').trim().split(/\s+/).filter(Boolean);
         var id = parts[0] || 'all';
         var always = parts.slice(1).join(' ').toLowerCase() === 'always';
         return approveAct(id, always, modId).then(function (r) {
           if (!r.approved.length) return { ack: 'nothing held' + (id !== 'all' ? ' with that id' : '') };
-          var out = 'approved ' + r.approved.length + ' (' + r.classes.join(', ') + ') — fires on the next poll';
+          var out = 'approved ' + r.approved.length + ' (' + r.classes.join(', ') + ') — each fires once on the next poll';
           var res = { ack: out };
           if (always && r.grants && r.grants.length) {
             // New grant specs ride the poll summary to wiring, which merges them into the
@@ -2479,7 +2717,7 @@
           return { ack: 'sending you your recent lines — check your DMs.', dmTo: String(uid), dmBody: body };
         });
       } },
-      { verb: 'why',       modOnly: false, help: 'why [N] (why she has / hasn\'t acted: held output + last decisions)', handler: function (uid, c) {
+      { verb: 'why',       modOnly: false, help: 'why [N] (why it has / hasn\'t acted: held output + last decisions)', handler: function (uid, c) {
         var n = Math.max(1, Math.min(10, parseInt(String((c && c.rawArgs) || '').trim(), 10) || 5));
         return actWhy().then(function (w) {
           var lines = ['actuation (policy ' + w.policy + (w.pending.length ? ', ' + w.pending.length + ' held' : ', nothing held') + '):'];
@@ -2529,6 +2767,125 @@
             }, function () { return done({ ack: 'recap failed' }); });
           });
         } },
+      { verb: 'thoughts',  modOnly: false, cooldownMs: 20000, help: 'thoughts (what it makes of the channel lately — its rolling summary)', handler: function (uid, c) {
+          return Promise.resolve(store.get(CHANSUM_KEY)).then(function (cs) {
+            var text = (cs && typeof cs.text === 'string') ? cs.text.trim() : '';
+            if (!text) return { ack: 'nothing on my mind yet — give me a bit of conversation first, then ask again' };
+            var age = (cs.at && clock.now() > cs.at) ? (' (updated ' + humanGap(clock.now() - cs.at) + ' ago)') : '';
+            var v = text + age;
+            return { ack: v, embed: embedFor('Thoughts', v), thoughtCard: 'cmd' };   // one live card: T3 delivery edits the previous reply in place
+          }, function () { return { ack: 'could not reach my memory right now' }; });
+        } },
+      { verb: 'news',      modOnly: true, help: 'news (this channel\'s feed status) / news now (run this channel\'s feeds now)', handler: function (modId, c) {
+          var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
+          function failName(e) { return (e && e.id) + ((e && e.error) ? ' (' + String(e.error).slice(0, 80) + ')' : ''); }
+          if (arg === 'now' || arg === 'run' || arg === 'force') {
+            var nmid = c && c.messageId;
+            if (nmid) ackWorking(nmid, cfg.ackSearchEmoji);   // 🔍 — fetching feeds + composing before answering
+            function doneNews(out) { if (nmid) clearAck(nmid, cfg.ackSearchEmoji); return out; }
+            return processNews(true).then(function (out) {
+              if (out && out.busy) return doneNews({ ack: 'a news run is already in progress — try again in a bit' });
+              if (out && out.blocked) return doneNews({ ack: 'didn\'t run the feeds (' + out.blocked + ') — try again in a bit' });
+              if (out && out.empty) return doneNews({ ack: 'no news feeds target this channel' });
+              if (out && out.noFetch) return doneNews({ ack: 'news fetch is unavailable right now' });
+              var posted = (out && out.feeds) || [], staged = (out && out.queued) || [],
+                  held = (out && out.held) || [], denied = (out && out.denied) || [],
+                  failed = (out && out.failed) || [], nothing = (out && out.nothing) || [],
+                  checked = (out && out.checked) || [];
+              var bits = [];
+              if (posted.length) bits.push('posted rollup' + (posted.length === 1 ? '' : 's') + ' from: ' + posted.join(', '));
+              if (staged.length) bits.push('queued rollup' + (staged.length === 1 ? '' : 's') + ' from: ' + staged.join(', ') + ' — review in Setup → News queue');
+              if (held.length) bits.push('held ' + held.length + ' for approval (' + held.join(', ') + ') — approve with ' + cfg.commandPrefix + ' approve');
+              if (denied.length) bits.push('denied by policy (' + denied.join(', ') + ')');
+              if (failed.length) bits.push('failed: ' + failed.map(failName).join('; '));
+              if (bits.length) {
+                var tail = nothing.length ? ' (' + nothing.length + ' had nothing new)' : '';
+                return doneNews({ ack: bits.join(' + ') + tail });
+              }
+              return doneNews({ ack: 'ran the feeds — nothing new to post (checked ' + (checked.length || nothing.length || 'the') + ')' });
+            }, function () { return doneNews({ ack: 'news run failed' }); });
+          }
+          var feeds = newsFeedsForHere();
+          if (!feeds.length) return Promise.resolve({ ack: 'no news feeds target this channel' });
+          return newsStateGet().then(function (st) {
+            var now = clock.now();
+            var lines = feeds.map(function (f) {
+              var rec = st.byFeed[f.id];
+              if (!rec) { var iv0 = (Number(f.intervalMs) || 3600000); return '• ' + (f.name || f.id) + ' — seeding (first check next poll; next in ' + humanGap(iv0) + ')'; }
+              var gap = Math.max(0, (Number(f.intervalMs) || 3600000) - (now - (rec.lastRun || 0)));
+              var next = 'next check in ' + (gap < 60000 ? 'under a minute' : humanGap(gap));
+              var last = 'never checked';
+              if (rec.lastAt) {
+                var ago = humanGap(Math.max(0, now - rec.lastAt)) + ' ago';
+                var lr = rec.lastResult || '';
+                if (lr === 'posted') last = 'last: posted ' + ago + (rec.lastCount ? ' (' + rec.lastCount + ' items)' : '');
+                else if (lr === 'queued') last = 'last: queued ' + ago;
+                else if (lr === 'held') last = 'last: held for approval ' + ago;
+                else if (lr === 'denied') last = 'last: denied by policy ' + ago;
+                else if (lr === 'failed') last = 'last: FAILED ' + ago + (rec.lastError ? ' (' + rec.lastError + ')' : '');
+                else if (lr === 'nothing') last = 'last: nothing new ' + ago;
+                else last = 'last: checked ' + ago;
+              }
+              return '• ' + (f.name || f.id) + ' — ' + next + '; ' + last;
+            });
+            var qn = (st.queue || []).length;
+            var lr2 = st.lastRun;
+            var runLine = '';
+            if (lr2 && lr2.at) {
+              var parts = [];
+              if ((lr2.posted || []).length) parts.push('posted ' + lr2.posted.length);
+              if ((lr2.queued || []).length) parts.push('queued ' + lr2.queued.length);
+              if ((lr2.held || []).length) parts.push('held ' + lr2.held.length);
+              if ((lr2.denied || []).length) parts.push('denied ' + lr2.denied.length);
+              if ((lr2.failed || []).length) parts.push('failed ' + lr2.failed.length + ' (' + lr2.failed.map(failName).join('; ') + ')');
+              if ((lr2.nothing || []).length) parts.push(lr2.nothing.length + ' nothing-new');
+              runLine = '\nlast run ' + humanGap(Math.max(0, now - lr2.at)) + ' ago' + (lr2.forced ? ' (manual)' : ' (timer)') + ': checked ' + ((lr2.checked || []).length) + (parts.length ? ', ' + parts.join(', ') : '');
+              if (lr2.busy) runLine += ' — a second run stood down (busy)';
+              if (lr2.blocked) runLine += ' — blocked (' + lr2.blocked + ')';
+            }
+            return { ack: clipLines('news feeds here:\n' + lines.join('\n') + runLine + '\nvoice: ' + (cfg.newsPrompt === '' ? 'classic list' : (cfg.newsPrompt == null ? 'default AI voice' : 'custom AI voice')) + '\nreview: ' + (cfg.newsReview ? ('on' + (qn ? ' (' + qn + ' queued)' : ' (queue empty)')) : 'off'), 1900) };
+          }, function () { return { ack: 'could not read feed state' }; });
+        } },
+      { verb: 'timers',    modOnly: true, help: 'timers (when each timer last fired + next due: beats, news, lull, checkins, ai passes)', handler: function () {
+          return actSchedule().then(function (sched) {
+            return newsStateGet().then(function (nst) {
+              return getPendingAct().then(function (pending) {
+                var now = clock.now(), lines = ['timers (this channel):'];
+                (sched.beats || []).forEach(function (b) {
+                  lines.push('- beat "' + b.id + '": ' + (b.lastMs ? ('last fired ' + humanGap(Math.max(0, now - b.lastMs)) + ' ago; ') : 'never fired; ') + (b.dueInMs <= 0 ? 'DUE now' : ('due in ' + humanGap(b.dueInMs))));
+                });
+                if (!(sched.beats || []).length) lines.push('- beats: none configured');
+                var lr = nst.lastRun;
+                var feeds = newsFeedsForHere();
+                if (!feeds.length) lines.push('- news: no feeds target this channel');
+                else feeds.forEach(function (f) {
+                  var rec = (nst.byFeed || {})[f.id] || {};
+                  var gap = Math.max(0, (Number(f.intervalMs) || 3600000) - (now - (rec.lastRun || 0)));
+                  var nx = rec.lastRun ? ('due in ' + (gap < 60000 ? 'under a minute' : humanGap(gap))) : ('seeding (first check next poll; next in ' + humanGap(Number(f.intervalMs) || 3600000) + ')');
+                  var last = 'never checked';
+                  if (rec.lastAt) last = 'last ' + (rec.lastResult || 'checked') + ' ' + humanGap(Math.max(0, now - rec.lastAt)) + ' ago' + (rec.lastError ? ' (' + rec.lastError + ')' : '');
+                  lines.push('- news "' + (f.name || f.id) + '": ' + nx + '; ' + last);
+                });
+                if (lr && lr.at) lines.push('- last news run ' + humanGap(Math.max(0, now - lr.at)) + ' ago' + (lr.forced ? ' (manual)' : ' (timer)') + ': checked ' + ((lr.checked || []).length) + ((lr.posted || []).length ? ', posted ' + lr.posted.length : '') + ((lr.held || []).length ? ', held ' + lr.held.length : '') + ((lr.failed || []).length ? ', failed ' + lr.failed.length : ''));
+                var lull = sched.lull || {};
+                var lullLine = '- lull: silent ' + (lull.silentForMs == null ? 'n/a' : humanGap(lull.silentForMs)) + ', patience ' + humanGap(lull.patienceMs || 0);
+                if (lull.diag && lull.diag.lastAt) lullLine += '; last ' + (lull.diag.lastResult || 'checked') + ' ' + humanGap(Math.max(0, now - lull.diag.lastAt)) + ' ago' + (lull.diag.lastError ? ' (' + lull.diag.lastError + ')' : '');
+                lines.push(lullLine);
+                var ci = sched.checkins || {};
+                var ciLine = '- checkins: ' + (ci.lastMs ? ('last ' + humanGap(Math.max(0, now - ci.lastMs)) + ' ago') : 'never') + ', gap ' + humanGap(ci.gapMs || 0);
+                if (ci.diag && ci.diag.lastAt) ciLine += '; last ' + (ci.diag.lastResult || 'checked') + ' ' + humanGap(Math.max(0, now - ci.diag.lastAt)) + ' ago' + (ci.diag.lastError ? ' (' + ci.diag.lastError + ')' : '');
+                lines.push(ciLine);
+                var ap = sched.aipass || {};
+                ['facts', 'summary', 'reflect', 'episodes', 'consolidate', 'deliberate'].forEach(function (n) {
+                  var r = ap[n] || {};
+                  lines.push('- ai ' + n + ': ' + (r.lastAt ? ('last ' + (r.lastResult || 'fired') + ' ' + humanGap(Math.max(0, now - r.lastAt)) + ' ago' + (r.lastError ? ' (' + r.lastError + ')' : '')) : 'never fired'));
+                });
+                lines.push('- holds pending: ' + (pending || []).length);
+                return { ack: clipLines(lines.join('\n'), 1900) };
+              });
+            });
+          }, function () { return { ack: 'could not read timers right now' }; });
+        } },
       { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText(), embed: statusEmbed() }); } },
       { verb: 'trust',     modOnly: true, help: 'trust on|off  (multi-participant trust hardening: defang forged labels + bots can’t command)', handler: function (modId, c) {
           var a = String((c && c.rawArgs) || '').trim().toLowerCase();
@@ -2551,15 +2908,26 @@
           if (!parsed.ok) return Promise.resolve({ ack: 'job rejected: ' + parsed.reason + '. Allowed: ' + describeJobs().join('; ') });
           return executeJob(parsed.job.task, parsed.job.args, { authorId: modId, authorName: '' });
         } },
-      { verb: 'tools',     modOnly: true, help: 'tools on|off  (let the AI call safe tools from her reply)', handler: function (modId, c) {
+      { verb: 'tools',     modOnly: true, help: 'tools on|off  (let the AI call safe tools from its reply)', handler: function (modId, c) {
           var a = String((c && c.rawArgs) || '').trim().toLowerCase();
           if (a === 'on' || a === 'enable' || a === 'true')  { cfg.toolsEnabled = true;  log('[chloe.tool] model tool-loop ENABLED by mod'); return Promise.resolve({ ack: 'model tool-loop on \u2014 I can now quietly use safe tools (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todos) from my own replies.' }); }
           if (a === 'off' || a === 'disable' || a === 'false') { cfg.toolsEnabled = false; log('[chloe.tool] model tool-loop DISABLED by mod'); return Promise.resolve({ ack: 'model tool-loop off \u2014 tools only run from ' + cfg.commandPrefix + ' do now.' }); }
           return Promise.resolve({ ack: 'model tool-loop is ' + (cfg.toolsEnabled ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' tools on|off (the panel toggle persists it).' });
         } },
-      { verb: 'image',     modOnly: false, help: 'image {json: prompt, resolution, guidanceScale, removeBackground, weights, dm}', handler: function (modId, c) {
+      { verb: 'image',     modOnly: false, help: 'image <words> | image {json: prompt, resolution, guidanceScale, removeBackground, weights, dm}', handler: function (modId, c) {
           if (!imageEnabled()) return Promise.resolve({ ack: 'image generation is not available right now' });
-          var parsed = parseImageJson(c.rawArgs || c.reason || '');
+          var text = String(c.rawArgs || c.reason || '').trim();
+          if (!text) return Promise.resolve({ ack: 'usage: ' + (cfg.commandPrefix || '!chloe') + ' image <words> | ' + (cfg.commandPrefix || '!chloe') + ' image {json: "prompt": "...", ...}' });
+          var parsed = parseImageJson(text);
+          if (!parsed.ok && parsed.reason === 'not valid JSON' && !/^[{[]/.test(text) && /[a-z0-9].*[a-z0-9]/i.test(text)) {
+            // plain words, not attempted JSON: `!chloe image of a cat` — the verb already
+            // named the medium, so prefix it back and let the natural-language parser clean up.
+            var nl = parseImageRequest(text) || parseImageRequest('image ' + text);
+            if (nl && nl.prompt) {
+              var p = String(nl.prompt).replace(/^(?:images?|pictures?|pics?|photos?|drawings?)\s+/i, '');
+              if (p.replace(/[^a-z0-9]/ig, '').length >= 2) parsed = { ok: true, value: { prompt: p.slice(0, 400), dm: nl.dm, resolution: nl.resolution } };
+            }
+          }
           if (!parsed.ok) return Promise.resolve({ ack: 'image request rejected: ' + parsed.reason });
           if (paint.queue.length >= cfg.imageQueueMax) return Promise.resolve({ ack: "i've got a full image queue right now \u2014 try again in a moment" });
           var v = parsed.value, now = clock.now();
@@ -2645,18 +3013,18 @@
             return { ack: 'reactions this room values: ' + top.map(function (r) { return r.label + ' \u00d7' + r.count; }).join(', ') + mc };
           });
         } },
-      { verb: 'good',    modOnly: true,  help: 'good \u2014 tell her that last reply landed (feedback learning)', handler: function (modId, c) {
+      { verb: 'good',    modOnly: true,  help: 'good \u2014 tell it that last reply landed (feedback learning)', handler: function (modId, c) {
           if (!cfg.feedbackLearning) return Promise.resolve({ ack: 'feedback learning is off \u2014 turn it on in the Behavior tab' });
           if (!lastReplyStyle) return Promise.resolve({ ack: 'I haven\u2019t replied here recently, so there\u2019s nothing to rate' });
           return recordFeedback(lastReplyStyle, 1).then(function () { return { ack: 'noted \u2014 glad that one landed', react: '\ud83d\udc4d' }; });
         } },
-      { verb: 'bad',     modOnly: true,  help: 'bad \u2014 tell her that last reply missed (feedback learning)', handler: function (modId, c) {
+      { verb: 'bad',     modOnly: true,  help: 'bad \u2014 tell it that last reply missed (feedback learning)', handler: function (modId, c) {
           if (!cfg.feedbackLearning) return Promise.resolve({ ack: 'feedback learning is off \u2014 turn it on in the Behavior tab' });
           if (!lastReplyStyle) return Promise.resolve({ ack: 'I haven\u2019t replied here recently, so there\u2019s nothing to rate' });
           return recordFeedback(lastReplyStyle, -1).then(function () { return { ack: 'got it \u2014 I\u2019ll keep that in mind', react: '\ud83d\udc4d' }; });
         } },
-      { verb: 'aboutme',  modOnly: false, help: 'aboutme (what she remembers about you)', handler: function (modId, c) {
-          return Promise.resolve(store.get(partKey(modId))).then(function (p) {
+      { verb: 'aboutme',  modOnly: false, help: 'aboutme (what it remembers about you)', handler: function (modId, c) {
+          return Promise.resolve(userStore().get(partKey(modId))).then(function (p) {
             var facts = (p && Array.isArray(p.facts)) ? p.facts : [];
             if (!facts.length) return { ack: "I haven\u2019t picked up anything I\u2019m holding onto about you \u2014 we just haven\u2019t talked enough yet, or fact memory is off." };
             var note = '';
@@ -2678,6 +3046,31 @@
         } },
       { verb: 'time',      modOnly: false, help: 'time \u2014 the current time (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('time') }); } },
       { verb: 'date',      modOnly: false, help: 'date \u2014 today\u2019s date (instant, no AI)', handler: function (modId, c) { return Promise.resolve({ ack: deviceClockAck('date') }); } },
+     { verb: 'search',    modOnly: false, cooldownMs: 5000, help: 'search <query> (web search, instant results)', handler: function (modId, c) {
+          var q = String(c.rawArgs || '').trim().slice(0, 300);
+          if (!q) return Promise.resolve({ ack: 'usage: ' + cfg.commandPrefix + ' search <query> (e.g. ' + cfg.commandPrefix + ' search red pandas)' });
+          if (typeof cfg.search !== 'function') return Promise.resolve({ ack: 'search is not available right now' });
+          return Promise.resolve(cfg.search(q)).then(function (res) {
+            if (!res || !res.ok) return Promise.resolve({ ack: 'no results for \u201c' + q.slice(0, 80) + '\u201d (' + ((res && res.reason) || 'n/a') + ')' });
+            return { ack: 'here\u2019s what I found for \u201c' + q.slice(0, 80) + '\u201d:\n' + String(res.value).slice(0, 1500) };
+          });
+        } },
+      { verb: 'recall',    modOnly: false, cooldownMs: 5000, help: 'recall <words> (search what it remembers from this channel)', handler: function (modId, c) {
+          var q = String(c.rawArgs || '').trim().slice(0, 300);
+          if (!q) return Promise.resolve({ ack: 'usage: ' + cfg.commandPrefix + ' recall <words> (e.g. ' + cfg.commandPrefix + ' recall campfire night)' });
+          if (!cfg.episodicMemory) return Promise.resolve({ ack: 'memory is off right now \u2014 turn episodic memory on and I\u2019ll start keeping track' });
+          return searchEpisodes(q).then(function (res) {
+            if (!res || !res.ok) {
+              if (res && res.reason === 'empty') return { ack: 'nothing stored yet \u2014 I haven\u2019t kept any moments from this channel so far' };
+              return { ack: 'nothing matching \u201c' + q.slice(0, 80) + '\u201d in what I remember from here' };
+            }
+            var now = clock.now();
+            var lines = res.matches.map(function (m) { return '\u2022 \u201c' + String(m.text).slice(0, 120) + '\u201d (' + humanGap(Math.max(0, now - (m.at || now))) + ' ago)'; });
+            var text = 'here\u2019s what I remember about \u201c' + q.slice(0, 80) + '\u201d:\n' + lines.join('\n');
+            if (res.hop) text += '\nand connected to that, \u201c' + String(res.hop).slice(0, 120) + '\u201d';
+            return { ack: clipLines(text, 1500) };
+          });
+        } },
       { verb: 'lang',      modOnly: false, help: 'lang <code> (e.g. fr, es, de) / lang off / lang \u2014 your reply language (mods: lang default <code>|off = this channel\u2019s default)', handler: function (uid, c) {
           var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
           var pfx = cfg.commandPrefix || '!chloe';
@@ -2773,6 +3166,43 @@
       });
       return { cmd: entry.verb, entry: entry, targetId: targetId, durationMs: durationMs, reason: reasonTokens.join(' ').trim(), rawArgs: rawArgs, raw: raw, messageId: null };
     }
+    // B1 text-attachment ingestion (PURE, headless-testable). Discord messages
+    // carry .attachments[] ({filename, size, url, content_type}); nothing else
+    // reads them. Stored memory keeps ORIGINAL content (no facts/mood/automod
+    // pollution); attachment text rides ONLY the in-flight queue content via
+    // contentWithAttach, which is what assembleContext serves as addressedMessage.
+    var ATTACH_EXT_OK = { '.txt': 1, '.md': 1, '.markdown': 1, '.csv': 1, '.json': 1, '.log': 1, '.pdf': 1 };
+    var ATTACH_TYPE_OK = ['text/plain', 'text/markdown', 'text/csv', 'application/json', 'application/pdf'];
+    function attachExt(name) { var m = String(name || '').toLowerCase().match(/\.[a-z0-9]+$/); return m ? m[0] : ''; }
+    function attachIsPdf(a) {
+      var ext = attachExt(a && a.filename);
+      var ct = String((a && (a.content_type || a.contentType)) || '').toLowerCase().split(';')[0].trim();
+      return ext === '.pdf' || ct === 'application/pdf';
+    }
+    function selectAttachable(atts) {
+      if (!Array.isArray(atts)) return [];
+      var out = [], maxFiles = cfg.attachMaxFiles || 2, maxBytes = cfg.attachMaxBytes || 100000;
+      var maxPdfBytes = cfg.attachPdfMaxBytes || 2000000;
+      for (var i = 0; i < atts.length && out.length < maxFiles; i++) {
+        var a = atts[i]; if (!a || !a.url) continue;
+        var ext = attachExt(a.filename);
+        var ct = String(a.content_type || a.contentType || '').toLowerCase().split(';')[0].trim();
+        var size = (typeof a.size === 'number') ? a.size : -1;
+        if (!ATTACH_EXT_OK[ext] && ATTACH_TYPE_OK.indexOf(ct) < 0) { log('[chloe.attach] skip "' + String(a.filename || '?').slice(0, 60) + '" (not an allowed type)'); continue; }
+        var cap = attachIsPdf(a) ? maxPdfBytes : maxBytes;
+        if (size >= 0 && size > cap) { log('[chloe.attach] skip "' + String(a.filename || '?').slice(0, 60) + '" (declared ' + size + ' bytes > cap)'); continue; }
+        out.push({ url: String(a.url), filename: String(a.filename || 'attachment.txt').slice(0, 80), pdf: attachIsPdf(a) });
+      }
+      return out;
+    }
+    function formatAttachBlock(files) {
+      var per = cfg.attachMaxChars || 3000;
+      return files.map(function (f) {
+        var t = String(f.text || '').slice(0, per);
+        return '\n[attached ' + f.filename + ' (' + t.length + ' chars)]:\n' + t;
+      }).join('');
+    }
+    function contentWithAttach(m) { return String((m && m.content) || '') + ((m && m.attachText) ? '\n' + m.attachText : ''); }
     function helpText() {
       var p = cfg.commandPrefix;
       var withHelp = COMMANDS.filter(function (c) { return c.help; });
@@ -2791,15 +3221,29 @@
       if (fields && fields.length) e.fields = fields;
       return e;
     }
+    function helpSectionFields(title, lines) {
+      // Discord caps a field value at 1024 chars (the transport slices past it) — a single
+      // Mods/Anyone field now silently drops its tail (the list long ago outgrew the cap, so
+      // late entries like search/forget/remember never rendered). Split into <=900-char fields;
+      // a short section keeps its bare name, so output is byte-identical while it fits.
+      if (!lines.length) return [{ name: title, value: '\u2014' }];
+      var fields = [], cur = [], len = 0;
+      lines.forEach(function (ln) {
+        if (cur.length && len + 1 + ln.length > 900) { fields.push(cur); cur = []; len = 0; }
+        if (cur.length) len += 1;
+        cur.push(ln); len += ln.length;
+      });
+      if (cur.length) fields.push(cur);
+      return fields.map(function (chunk, i) {
+        return { name: fields.length > 1 ? (title + ' (' + (i + 1) + '/' + fields.length + ')') : title, value: chunk.join('\n') };
+      });
+    }
     function helpEmbed() {
       var p = cfg.commandPrefix;
       var withHelp = COMMANDS.filter(function (c) { return c.help; });
       var mod = withHelp.filter(function (c) { return c.modOnly; }).map(function (c) { return '`' + p + ' ' + c.help + '`'; });
       var any = withHelp.filter(function (c) { return !c.modOnly; }).map(function (c) { return '`' + p + ' ' + c.help + '`'; });
-      return embedFor('Chloe \u2014 commands', null, [
-        { name: 'Mods', value: mod.join('\n') || '\u2014' },
-        { name: 'Anyone', value: any.join('\n') || '\u2014' }
-      ]);
+      return embedFor('Chloe \u2014 commands', null, helpSectionFields('Mods', mod).concat(helpSectionFields('Anyone', any)));
     }
     function statusEmbed() {
       return embedFor('Chloe \u2014 status', null, [
@@ -2851,7 +3295,7 @@
       return Promise.resolve({ ack: 'unknown command "' + c.cmd + '" \u2014 try ' + cfg.commandPrefix + ' help' });
     }
     // T5 user opt-out (GDPR ethereal): anyone may ask Chloe to forget THEM and stop tracking them
-    // in this bucket. This now does three things: (1) erases what she holds, (2) sets the ethereal
+    // in this bucket. This now does three things: (1) erases what it holds, (2) sets the ethereal
     // flag so no new memory forms here until they undo it, (3) stamps a forget-floor so a later
     // `remember me` can never re-learn the erased history. Never lets a moderated user escape a
     // soft-ban/timeout — the moderation row is kept, only ordinary memory is cleared.
@@ -2863,7 +3307,7 @@
       return setEthereal(id, name)
         .then(function () { return setForgetFloor(id); })
         .then(function () { return dropImageMemory(id); })
-        .then(function () { return Promise.resolve(store.get(partKey(id))); })
+        .then(function () { return Promise.resolve(userStore().get(partKey(id))); })
         .then(function (p) {
           var ackMsg;
           function ackSend() { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, ackMsg)) : Promise.resolve(); }
@@ -2874,14 +3318,14 @@
             p.recent = []; p.interactionCount = 0; p.lastGreetedAt = null; p.lifecycle = 'active'; p.trust = 0; p.trustDayEarned = 0;
             p.facts = []; p.insights = []; delete p.images;
             ackMsg = 'okay ' + name + ', I\u2019ve cleared what I remember and I\u2019ll stop keeping notes (any moderation still stands).' + undo;
-            return store.set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(function () { return dropGoalsFor(id); }).then(ackSend);
+            return userStore().set(partKey(id), p).then(function () { return dropEpisodesFor(id, name); }).then(function () { return dropGoalsFor(id); }).then(ackSend);
           }
           ackMsg = 'okay ' + name + ', I\u2019ve forgotten you and I\u2019ll stop keeping notes from here on.' + undo;
           return purge(id, { targetName: name }).then(ackSend);
         });
     }
     // The inverse: lift the ethereal flag so memory may form again from now on. The forget-floor is
-    // deliberately left in place, so she starts fresh rather than re-reading the erased past.
+    // deliberately left in place, so it starts fresh rather than re-reading the erased past.
     function rememberMe(id, name) {
       function ackSend(m) { return typeof cfg.send === 'function' ? Promise.resolve(cfg.send(cfg.channelId, m)) : Promise.resolve(); }
       return clearEthereal(id).then(function (was) {
@@ -2893,10 +3337,10 @@
     // of the field not existing yet — image memory is added on the image surface; this keeps the
     // GDPR erase complete regardless of build order.
     function dropImageMemory(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !p.images) return;
         delete p.images;
-        return store.set(partKey(id), p);
+        return userStore().set(partKey(id), p);
       });
     }
     function greetTierFor(info, p, now) {
@@ -2919,7 +3363,7 @@
       function mayPaint(m) { return !imageEligible || !!imageEligible[m.id]; }
       var authorIds = [];
       incoming.forEach(function (m) { if (authorIds.indexOf(m.author.id) < 0) authorIds.push(m.author.id); });
-      return Promise.all(authorIds.map(function (id) { return Promise.resolve(store.get(partKey(id))); })).then(function (parts) {
+      return Promise.all(authorIds.map(function (id) { return Promise.resolve(userStore().get(partKey(id))); })).then(function (parts) {
         var now = clock.now();
         var stateById = {}, commandAuthors = {};
         authorIds.forEach(function (id, i) { var p = parts[i]; if (p) { applyExpiry(p, now); stateById[id] = p.state || 'active'; } else stateById[id] = 'active'; });
@@ -2953,15 +3397,15 @@
               if (c.cmd === 'forget') {
                 var fa = String(c.rawArgs || '').trim();
                 if (fa && !/^me$/i.test(fa) && cfg.factMemory) {   // "forget <a thing>" drops matching facts, keeps the person
-                  return forgetFact(m.author.id, fa).then(function (n) { ackSrc.push(m.id); acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); });
+                  return forgetFact(m.author.id, fa).then(function (n) { ackSrc.push(m.id); acks.push(n ? ('done \u2014 dropped ' + n + ' thing' + (n === 1 ? '' : 's') + ' I had about you') : ("I wasn\u2019t holding onto anything matching that")); }, function (e) { ackSrc.push(m.id); acks.push('forget hit a snag \u2014 try again in a moment'); log('[chloe.T3] command "forget" failed (' + ((e && e.message) || e) + ') \u2014 batch continues'); });
                 }
-                return forgetMe(m.author.id, m.author.username);  // "forget" / "forget me" wipes the person + goes ethereal
+                return Promise.resolve(forgetMe(m.author.id, m.author.username)).then(null, function (e) { ackSrc.push(m.id); acks.push('forget hit a snag \u2014 try again in a moment'); log('[chloe.T3] command "forget" failed (' + ((e && e.message) || e) + ') \u2014 batch continues'); });  // "forget" / "forget me" wipes the person + goes ethereal
               }
               if (c.cmd === 'remember') {
-                return rememberMe(m.author.id, m.author.username);   // "remember me" lifts ethereal; memory may form again
+                return Promise.resolve(rememberMe(m.author.id, m.author.username)).then(null, function (e) { ackSrc.push(m.id); acks.push('remember hit a snag \u2014 try again in a moment'); log('[chloe.T3] command "remember" failed (' + ((e && e.message) || e) + ') \u2014 batch continues'); });   // "remember me" lifts ethereal; memory may form again
               }
-              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (res.actPolicyTouched) { actPolicyTouched = true; actPolicyVal = res.actPolicy; } if (res.actGrantsTouched) { actGrantsTouched = true; actGrantsVal = res.actGrants; } if (res.modListTouched) { modListTouched = true; modListVal = res.modList; } if (res.beatsTouched) { beatsTouched = true; beatsVal = res.beats; } if (res.autoModRulesTouched) { autoModRulesTouched = true; autoModRulesVal = res.autoModRules; } if (res.procRulesTouched) { procRulesTouched = true; procRulesVal = res.procRules; } if (res.quarantineTouched) { quarantineTouched = true; quarantineVal = res.quarantine; } if (res.dmTo) dmAcks.push({ to: res.dmTo, text: res.dmBody || res.ack }); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });  // open to anyone
-              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (res.actPolicyTouched) { actPolicyTouched = true; actPolicyVal = res.actPolicy; } if (res.actGrantsTouched) { actGrantsTouched = true; actGrantsVal = res.actGrants; } if (res.modListTouched) { modListTouched = true; modListVal = res.modList; } if (res.beatsTouched) { beatsTouched = true; beatsVal = res.beats; } if (res.autoModRulesTouched) { autoModRulesTouched = true; autoModRulesVal = res.autoModRules; } if (res.procRulesTouched) { procRulesTouched = true; procRulesVal = res.procRules; } if (res.quarantineTouched) { quarantineTouched = true; quarantineVal = res.quarantine; } if (res.dmTo) dmAcks.push({ to: res.dmTo, text: res.dmBody || res.ack }); if (canEmbed && res.embed) embeds.push(res.embed); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } });
+              if (c.entry && c.entry.modOnly === false) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (res.actPolicyTouched) { actPolicyTouched = true; actPolicyVal = res.actPolicy; } if (res.actGrantsTouched) { actGrantsTouched = true; actGrantsVal = res.actGrants; } if (res.modListTouched) { modListTouched = true; modListVal = res.modList; } if (res.beatsTouched) { beatsTouched = true; beatsVal = res.beats; } if (res.autoModRulesTouched) { autoModRulesTouched = true; autoModRulesVal = res.autoModRules; } if (res.procRulesTouched) { procRulesTouched = true; procRulesVal = res.procRules; } if (res.quarantineTouched) { quarantineTouched = true; quarantineVal = res.quarantine; } if (res.dmTo) dmAcks.push({ to: res.dmTo, text: res.dmBody || res.ack }); if (canEmbed && res.embed) embeds.push({ em: res.embed, card: res.thoughtCard === 'cmd' ? THOUGHTCARD_CMD : null }); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } }, function (e) { ackSrc.push(m.id); acks.push('that ' + c.cmd + ' hit a snag \u2014 try again in a moment'); log('[chloe.T3] command "' + c.cmd + '" failed (' + ((e && e.message) || e) + ') \u2014 batch continues'); });  // open to anyone
+              if (isMod(m.author.id)) return execCommand(m.author.id, c).then(function (res) { if (res) { if (res.react) ackReact(m.id, res.react); if (res.channelLangTouched) { channelLangTouched = true; channelLangVal = res.channelLang || null; } if (res.actPolicyTouched) { actPolicyTouched = true; actPolicyVal = res.actPolicy; } if (res.actGrantsTouched) { actGrantsTouched = true; actGrantsVal = res.actGrants; } if (res.modListTouched) { modListTouched = true; modListVal = res.modList; } if (res.beatsTouched) { beatsTouched = true; beatsVal = res.beats; } if (res.autoModRulesTouched) { autoModRulesTouched = true; autoModRulesVal = res.autoModRules; } if (res.procRulesTouched) { procRulesTouched = true; procRulesVal = res.procRules; } if (res.quarantineTouched) { quarantineTouched = true; quarantineVal = res.quarantine; } if (res.dmTo) dmAcks.push({ to: res.dmTo, text: res.dmBody || res.ack }); if (canEmbed && res.embed) embeds.push({ em: res.embed, card: res.thoughtCard === 'cmd' ? THOUGHTCARD_CMD : null }); else if (res.ack) { ackSrc.push(m.id); acks.push(res.ack); } } }, function (e) { ackSrc.push(m.id); acks.push('that ' + c.cmd + ' hit a snag \u2014 try again in a moment'); log('[chloe.T3] command "' + c.cmd + '" failed (' + ((e && e.message) || e) + ') \u2014 batch continues'); });
               log('[chloe.T3] ignoring command from non-mod ' + (m.author.username || m.author.id));
               return;
             }
@@ -3074,11 +3518,11 @@
               var gi = touched && touched.greetInfo && touched.greetInfo[m.author.id];
               var newUser = !!(gi && gi.brandNew);
               var pri = replyPriority({ isMod: isMod(m.author.id), kind: addressKind(m.content), isNew: newUser, trusted: !!(gi && gi.trusted) });
-              reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now, priority: pri };
+              reply.queue[m.author.id] = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: contentWithAttach(m), at: now, priority: pri };
               if (greet.pending && greet.pending.authorId === m.author.id) greet.pending = null;  // replying IS the engagement
               addressedName = m.author.username;
             } else if (gateEnabled() && engageMode === 'normal' && !isStartupBatch) {
-              gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: m.content || '', at: now };
+              gate.pending = { messageId: m.id, authorId: m.author.id, authorName: m.author.username, content: contentWithAttach(m), at: now, reactions: summarizeReactions(m) };
               addrNote(m);   // v0.90.14: say WHY it was not treated as addressed (silent for plain chatter)
             }
             });   // end afkChain.then wrapper
@@ -3128,7 +3572,13 @@
               log('[chloe.T3] ran ' + commandCount + ' command(s)' + (embeds.length ? (' (' + embeds.length + ' embed)') : ''));
               var outs = [];
               if (acks.length && typeof cfg.send === 'function') outs.push(Promise.resolve(cfg.send(cfg.channelId, acks.join('\n'), (cfg.replyReference !== false && acks.length === 1 && ackSrc[0]) ? { replyTo: ackSrc[0] } : undefined)));   // a lone ack attaches to its command
-              embeds.forEach(function (em) { outs.push(Promise.resolve(cfg.sendEmbed(cfg.channelId, em))); });
+              embeds.forEach(function (slot) {
+                if (slot && slot.card) {
+                  outs.push(thoughtCardPublish(slot.card, cfg.channelId, 'embed', function () {
+                    return Promise.resolve(cfg.sendEmbed(cfg.channelId, slot.em));
+                  }, slot.em).then(function () {}, function () {}));
+                } else outs.push(Promise.resolve(cfg.sendEmbed(cfg.channelId, slot && slot.em ? slot.em : slot)));
+              });
               return Promise.all(outs.map(function (p) { return p.then(function () {}, function () {}); })).then(function () { return { commands: commandCount, channelLangTouched: channelLangTouched, channelLang: channelLangVal, actPolicyTouched: actPolicyTouched, actPolicy: actPolicyVal, actGrantsTouched: actGrantsTouched, actGrants: actGrantsVal, modListTouched: modListTouched, modList: modListVal, beatsTouched: beatsTouched, beats: beatsVal, autoModRulesTouched: autoModRulesTouched, autoModRules: autoModRulesVal, procRulesTouched: procRulesTouched, procRules: procRulesVal, quarantineTouched: quarantineTouched, quarantine: quarantineVal }; });
             }
             return { commands: commandCount, channelLangTouched: channelLangTouched, channelLang: channelLangVal, actPolicyTouched: actPolicyTouched, actPolicy: actPolicyVal, actGrantsTouched: actGrantsTouched, actGrants: actGrantsVal, modListTouched: modListTouched, modList: modListVal, beatsTouched: beatsTouched, beats: beatsVal, autoModRulesTouched: autoModRulesTouched, autoModRules: autoModRulesVal, procRulesTouched: procRulesTouched, procRules: procRulesVal, quarantineTouched: quarantineTouched, quarantine: quarantineVal };
@@ -3145,15 +3595,15 @@
       if (now - g.at < cfg.greetDebounceMs) return Promise.resolve(null);   // still settling
       if (now - lastActAt < cfg.globalCooldownMs) return Promise.resolve(null);    // light global gap
       greet.pending = null; greet.greeting = true;
-      return Promise.resolve(store.get(partKey(g.authorId))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(g.authorId))).then(function (p) {
         if (!p || isSuppressed(p, now) || (p.lastGreetedAt && (now - p.lastGreetedAt) < cfg.greetCooldownMs)) { greet.greeting = false; return null; }
         return assembleContext(p).then(function (context) {
           var gctx = { kind: g.tier, person: { id: p.id, name: p.name }, interactionCount: p.interactionCount || 0, gapMs: g.gapMs, recent: context };
           indicateTyping();
           return Promise.resolve(cfg.greetFn(gctx)).then(function (res) {
-            if (!res || !res.ok || !res.value) { greet.greeting = false; return null; }
-            // commit-point revalidation: were they moderated while she was composing the hello?
-            return Promise.resolve(store.get(partKey(p.id))).then(function (pp2) {
+            if (!res || !res.ok || !res.value) { greet.greeting = false; log('[chloe.T5] greet brain declined/failed for ' + p.name + ' — staying quiet this round'); return null; }
+            // commit-point revalidation: were they moderated while it was composing the hello?
+            return Promise.resolve(userStore().get(partKey(p.id))).then(function (pp2) {
               if (pp2 && isSuppressed(pp2, clock.now())) {
                 greet.greeting = false;
                 log('[chloe.abandon] greeting not sent — ' + p.name + ' was moderated mid-generation');
@@ -3161,7 +3611,7 @@
               }
             return Promise.resolve(cfg.send(cfg.channelId, hygiene(String(res.value)))).then(function () {
               p.lastGreetedAt = now; lastActAt = now;
-              return store.set(partKey(p.id), p).then(function () {
+              return userStore().set(partKey(p.id), p).then(function () {
                 greet.greeting = false;
                 log('[chloe.T5] greeted ' + p.name + ' (' + g.tier + ')');
                 return { authorId: p.id, tier: g.tier };
@@ -3174,7 +3624,7 @@
     }
 
     // ---- A1/A4: actuation policy + approvals (autonomous output only) --------
-    // Classes: beats | checkins | lull. Grants (cfg.actGrants, ChloeModAudit)
+    // Classes: beats | checkins | lull | thoughts | news. Grants (cfg.actGrants, ChloeModAudit)
     // suppress holds per channel; approve-once flags let one held instance
     // through on the next poll; dismissals snooze the class for 24h.
     function actPolicy() { var p = cfg.actPolicy; return (p === 'ask' || p === 'deny') ? p : 'allow'; }
@@ -3256,13 +3706,13 @@
     // Read-only schedule snapshot: what is due / quiet, and when.
     function actSchedule() {
       var now = clock.now();
-      var out = { beats: [], lull: null, checkins: null };
+      var out = { beats: [], lull: null, checkins: null, aipass: {} };
       return Promise.resolve(store.get(BEATS_KEY)).then(function (st) {
         st = (st && typeof st === 'object' && !Array.isArray(st)) ? st : {};
         (Array.isArray(cfg.beats) ? cfg.beats : []).forEach(function (b) {
           if (!b || !b.id || !b.intervalMs) return;
           var last = Number(st[b.id]) || 0;
-          out.beats.push({ id: String(b.id), dueInMs: last ? Math.max(0, (last + Number(b.intervalMs)) - now) : 0 });
+          out.beats.push({ id: String(b.id), lastMs: last, dueInMs: last ? Math.max(0, (last + Number(b.intervalMs)) - now) : 0 });
         });
         return Promise.resolve(store.get(RHYTHM_KEY));
       }).then(function (rh) {
@@ -3272,6 +3722,15 @@
       }).then(function (ci) {
         ci = (ci && typeof ci === 'object' && !Array.isArray(ci)) ? ci : {};
         out.checkins = { lastMs: Number(ci.__last) || 0, gapMs: cfg.checkinGapMs || 86400000 };
+        return Promise.resolve(store.get(LULLDIAG_KEY));
+      }).then(function (ld) {
+        if (ld && ld.lastAt) out.lull.diag = { lastAt: ld.lastAt, lastResult: ld.lastResult, lastError: ld.lastError };
+        return Promise.resolve(store.get(CHECKINDIAG_KEY));
+      }).then(function (cd) {
+        if (cd && cd.lastAt) out.checkins.diag = { lastAt: cd.lastAt, lastResult: cd.lastResult, lastError: cd.lastError };
+        return Promise.resolve(store.get(AIPASS_KEY));
+      }).then(function (ap) {
+        out.aipass = (ap && typeof ap === 'object' && !Array.isArray(ap)) ? ap : {};
         return out;
       });
     }
@@ -3318,7 +3777,7 @@
     function actWhatIf(policy) {
       var p = String(policy || '').toLowerCase();
       if (p !== 'allow' && p !== 'ask' && p !== 'deny') return Promise.resolve({ ok: false, reason: 'policy must be allow|ask|deny' });
-      var classes = ['beats', 'checkins', 'lull'];
+      var classes = ['beats', 'checkins', 'lull', 'thoughts', 'news'];
       return actSchedule().then(function (sched) {
         var chain = Promise.resolve(), res = {};
         classes.forEach(function (cls) {
@@ -3409,6 +3868,34 @@
      });
    }
 
+    // Follow-up diagnostics (F/K): lull + check-in terminal outcomes and AI-pass
+    // last runs. Record-only: never gates anything, failures swallowed.
+    function noteLullDiag(result, error) {
+      return Promise.resolve(store.set(LULLDIAG_KEY, { lastAt: clock.now(), lastResult: result, lastError: String(error || '').slice(0, 160) })).then(function () {}, function () {});
+    }
+    function noteCheckinDiag(result, error) {
+      return Promise.resolve(store.set(CHECKINDIAG_KEY, { lastAt: clock.now(), lastResult: result, lastError: String(error || '').slice(0, 160) })).then(function () {}, function () {});
+    }
+    function noteAiPass(name, result, error) {
+      return Promise.resolve(store.get(AIPASS_KEY)).then(function (st) {
+        st = (st && typeof st === 'object' && !Array.isArray(st)) ? st : {};
+        st[name] = { lastAt: clock.now(), lastResult: result, lastError: String(error || '').slice(0, 160) };
+        return store.set(AIPASS_KEY, st);
+      }).then(function () {}, function () {});
+    }
+    // One gated AI pass ran: persist a fired/failed stamp for `!chloe timers`.
+    // A due-checked pass that found nothing to do records nothing (schedule
+    // unchanged, timers keeps "never fired") — and failures rethrow so the
+    // poll chain sees exactly what it saw before.
+    function runAiPassTracked(cand) {
+      return Promise.resolve(cand.run()).then(function (r) {
+        if (r == null) return r;
+        return noteAiPass(cand.name, 'fired', '').then(function () { return r; });
+      }, function (e) {
+        return noteAiPass(cand.name, 'failed', (e && e.message) || e).then(function () { throw e; });
+      });
+    }
+
     // ---- A6: undo (revert the last applied autonomous/mod action) ------------------
     // Per-channel stack, bounded. Every entry carries its own inverse; popping applies
     // it through the normal validated paths (never shadow code). Rule R: entries are
@@ -3467,14 +3954,14 @@
       if (!snap.existed || !before) {
         return Promise.resolve(removeFromIndex(String(targetId))).then(function () {
           var k = partKey(String(targetId));
-          return (store.del ? Promise.resolve(store.del(k)) : Promise.resolve(store.set(k, null))).then(function () {
+          return (userStore().del ? Promise.resolve(userStore().del(k)) : Promise.resolve(userStore().set(k, null))).then(function () {
             return appendModLog({ action: 'undo', targetId: String(targetId), name: (meta.name || String(targetId)), byModId: meta.byModId || null, reason: 'undo of ' + (meta.action || 'mod action') + ' (partition created by it — removed)', at: clock.now() }).then(function () {
               return { ok: true, summary: 'undid ' + (meta.action || 'mod action') + ' on ' + (meta.name || String(targetId)) + ' (new record removed)' };
             });
           });
         });
       }
-      return Promise.resolve(store.get(partKey(String(targetId)))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(String(targetId)))).then(function (p) {
         if (!p) p = { id: String(targetId), name: meta.name || String(targetId), firstSeen: clock.now(), lastSeen: clock.now(), interactionCount: 0, state: 'active', recent: [] };
         p.state = before.state || 'active';
         p.until = (before.until == null ? null : before.until);
@@ -3483,7 +3970,7 @@
         if (before.modNote == null) delete p.modNote; else p.modNote = before.modNote;
         p.byModId = meta.byModId || null; p.modAt = clock.now();
         return ensureIndexed(String(targetId)).then(function () {
-          return store.set(partKey(String(targetId)), p).then(function () {
+          return userStore().set(partKey(String(targetId)), p).then(function () {
             return appendModLog({ action: 'undo', targetId: String(targetId), name: p.name || String(targetId), byModId: meta.byModId || null, reason: 'undo of ' + (meta.action || 'mod action'), at: clock.now(), state: p.state }).then(function () {
               return { ok: true, summary: 'undid ' + (meta.action || 'mod action') + ' on ' + (p.name || String(targetId)) + ' (state back to ' + p.state + ')' };
             });
@@ -3517,12 +4004,12 @@
         cfg.modList = ml;
         return Promise.resolve({ tier: 'admin', persist: { modList: ml } });
       }
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) p = { id: id, name: name || id, firstSeen: clock.now(), lastSeen: clock.now(), interactionCount: 0, state: 'active', recent: [] };
         if (tier === 'resident') p.recognized = { by: by || null, at: clock.now() };
         else if (p.recognized) delete p.recognized;
         return ensureIndexed(id).then(function () {
-          return store.set(partKey(id), p).then(function () { return { tier: tier }; });
+          return userStore().set(partKey(id), p).then(function () { return { tier: tier }; });
         });
       });
     }
@@ -3639,7 +4126,7 @@
       var id = String(uid || '');
       if (!id) return Promise.resolve({ tier: 'guest', basis: 'stranger' });
       if (isMod(id)) return Promise.resolve({ tier: 'admin', basis: 'mod list' });
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (p) return { tier: 'resident', basis: p.recognized ? ('recognized by ' + (p.recognized.by || 'a mod')) : 'known by history' };
         if (typeof knownFromOtherSurfaces === 'function') {
           return knownFromOtherSurfaces(id, '').then(function (k) {
@@ -3655,7 +4142,7 @@
       var id = String(targetId || '');
       if (!id) return Promise.resolve({ ok: false, reason: 'no target user' });
       if (isMod(id)) return Promise.resolve({ ok: false, reason: 'already admin' });
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         var now = clock.now();
         if (p) {
           // resident -> admin: mod-list add (engine cfg copy; the caller persists it).
@@ -3673,7 +4160,7 @@
         // guest -> resident: recognition = remembering (partition + flag).
         var np = { id: id, name: targetName || id, firstSeen: now, lastSeen: now, interactionCount: 0, state: 'active', recent: [], recognized: { by: modId || null, at: now } };
         return ensureIndexed(id).then(function () {
-          return store.set(partKey(id), np).then(function () {
+          return userStore().set(partKey(id), np).then(function () {
             var ep2 = opts.noUndo ? Promise.resolve(false) : pushUndoEntry({ kind: 'elevate', targetId: id, name: targetName || id, by: modId || null, summary: 'elevated ' + (targetName || id) + ' to resident', inverse: { from: 'guest', to: 'resident' } });
             return ep2.then(function () {
               return appendModLog({ action: 'elevate', targetId: id, name: targetName || id, byModId: modId || null, reason: 'guest -> resident (recognized)', at: now }).then(function () {
@@ -3691,7 +4178,7 @@
       if (isMod(id)) {
         var ml = (Array.isArray(cfg.modList) ? cfg.modList.slice() : []).filter(function (x) { return x !== id; });
         cfg.modList = ml;
-        return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
           var nm = (p && p.name) || id;
           var ep = opts.noUndo ? Promise.resolve(false) : pushUndoEntry({ kind: 'demote', targetId: id, name: nm, by: modId || null, summary: 'demoted ' + nm + ' to resident', inverse: { from: 'admin', to: 'resident' } });
           return ep.then(function () {
@@ -3701,14 +4188,14 @@
           });
         });
       }
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) return { ok: false, reason: 'stranger already — nothing to demote' };
         // Rule R floor: history-known users re-derive resident — refusing loudly beats a
         // pretend demotion that the next lookup would contradict.
         if (!p.recognized) return { ok: false, reason: 'known by history, not by recognition — clear their data first, recognition can\'t drop below what we remember' };
         delete p.recognized;
         p.byModId = modId || null; p.modAt = clock.now();
-        return Promise.resolve(store.set(partKey(id), p)).then(function () {
+        return Promise.resolve(userStore().set(partKey(id), p)).then(function () {
           var ep2 = opts.noUndo ? Promise.resolve(false) : pushUndoEntry({ kind: 'demote', targetId: id, name: p.name || id, by: modId || null, summary: 'demoted ' + (p.name || id) + ' to stranger', inverse: { from: 'resident', to: 'guest' } });
           return ep2.then(function () {
             return appendModLog({ action: 'demote', targetId: id, name: p.name || id, byModId: modId || null, reason: 'resident -> stranger (recognition withdrawn)', at: clock.now() }).then(function () {
@@ -3722,7 +4209,7 @@
     // passes their own id; nothing here reads anyone else.
     function transcriptFor(uid, maxLines) {
       var n = Math.max(1, Math.min(40, parseInt(maxLines, 10) || 20));
-      return Promise.resolve(store.get(partKey(String(uid || '')))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(String(uid || '')))).then(function (p) {
         var lines = ((p && p.recent) || []).slice(-n).map(function (ln) {
           return scrubDiscordTokens(String((ln && ln.content) || '')).slice(0, 240);
         }).filter(function (t) { return !!t; });
@@ -3808,7 +4295,7 @@
                 lastActAt = clock.now();
                 log('[chloe.beat] fired "' + fired.id + '"');
                 return { beat: fired.id };
-              }, function () { return null; });
+              }, function (e) { log('[chloe.beat] send failed for "' + fired.id + '" (' + ((e && e.message) || e) + ') — schedule consumed, retries next interval'); return null; });
             }
             if (fired.prompt && typeof cfg.beatFn === 'function') {
               // v0.57: beats ride the assembler — mood, time, procmode, channel arc all apply now.
@@ -3817,7 +4304,7 @@
                 return cfg.beatFn(actx);
               }).then(function (res) {
                 return deliver((res && res.ok && res.value) ? hygiene(String(res.value)) : pickBeatText(fired));
-              }, function () { return deliver(pickBeatText(fired)); });
+              }, function (e) { log('[chloe.beat] brain failed for "' + fired.id + '" (' + ((e && e.message) || e) + ') — falling back to canned text'); return deliver(pickBeatText(fired)); });
             }
             return deliver(pickBeatText(fired));
           });
@@ -3828,7 +4315,7 @@
     }
 
     // Lull filler (Neuro-sama PATIENCE pattern): if the room was recently active and has now gone
-    // quiet for `lullPatienceMs`, she may proactively say something to fill the silence. Unlike beats
+    // quiet for `lullPatienceMs`, it may proactively say something to fill the silence. Unlike beats
     // (fixed schedule), this is keyed to actual activity — it fires after a real conversation lulls,
     // not on a clock. Uses the brain (proactive speech needs generation) but is gated hard: only one
     // per lullMinGapMs, only on a real lull, never mid-action, and it respects the global send budget.
@@ -3847,11 +4334,11 @@
         if (silentFor > cfg.lullActiveWithinMs) return null;                     // dead room, not a lull — leave it
         return Promise.resolve(store.get(LULL_KEY)).then(function (last) {
           if (last && (now - last) < cfg.lullMinGapMs) return null;              // already filled recently
-          if (now - lastActAt < cfg.lullMinGapMs) return null;                   // she spoke recently anyway
+          if (now - lastActAt < cfg.lullMinGapMs) return null;                   // it spoke recently anyway
           return actGate('lull').then(function (gate) {
             if (gate !== 'go') {
-              if (gate === 'hold') return holdAct('lull', 'silence filler due').then(function () { return null; });
-              return null;   // deny — schedule untouched, stays due
+              if (gate === 'hold') return holdAct('lull', 'silence filler due').then(function () { return noteLullDiag('held', 'held by policy'); }).then(function () { return null; });
+              return noteLullDiag('denied', 'denied by policy').then(function () { return null; });   // deny — schedule untouched, stays due
             }
           reply.replying = true; reply.startedAt = clock.now();
           var lullEpoch = deferGen; var lullStartedAt = now;
@@ -3861,29 +4348,29 @@
             return cfg.lullFn(ctx);
           }).then(function (r) {
             var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
-            if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
-            // commit-point revalidation: did the room wake up while she was composing?
+            if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return noteLullDiag('nothing', 'brain empty').then(function () { return null; }); }
+            // commit-point revalidation: did the room wake up while it was composing?
             return Promise.resolve(store.get(RHYTHM_KEY)).then(function (rh2) {
               if (lullEpoch !== deferGen || (rh2 && rh2.lastActivity > lullStartedAt)) {
                 reply.replying = false;
                 if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');
-                log('[chloe.abandon] lull filler not sent — ' + (lullEpoch !== deferGen ? 'engine stopped mid-generation' : 'the room woke up on its own (the silence she was filling is over)'));
-                return null;
+                log('[chloe.abandon] lull filler not sent — ' + (lullEpoch !== deferGen ? 'engine stopped mid-generation' : 'the room woke up on its own (the silence it was filling is over)'));
+                return noteLullDiag('nothing', (lullEpoch !== deferGen) ? 'engine stopped' : 'room woke up').then(function () { return null; });
               }
             indicateTyping();
             return Promise.resolve(cfg.send(cfg.channelId, text)).then(function () {
               lastActAt = clock.now(); reply.replying = false; rememberReply(text);
               log('[chloe.lull] filled a ' + Math.round(silentFor / 1000) + 's silence');
-              return clearHolds('lull').then(function () { return store.set(LULL_KEY, clock.now()); }).then(function () { return { lull: text }; });
-            }, function (e) { reply.replying = false; log('[chloe.lull] reply send failed, silence not filled (' + ((e && e.message) || e) + ')'); return null; });
+              return clearHolds('lull').then(function () { return store.set(LULL_KEY, clock.now()); }).then(function () { return noteLullDiag('fired', ''); }).then(function () { return { lull: text }; });
+            }, function (e) { reply.replying = false; log('[chloe.lull] reply send failed, silence not filled (' + ((e && e.message) || e) + ')'); return noteLullDiag('failed', (e && e.message) || e).then(function () { return null; }); });
             });
-          }).catch(function (e) { reply.replying = false; log('[chloe.lull] filler failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+          }).catch(function (e) { reply.replying = false; log('[chloe.lull] filler failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return noteLullDiag('failed', (e && e.message) || e).then(function () { return null; }); });
           });   // actGate('lull')
         });
       });
     }
 
-    // Favorite-user check-in: scan the roster for someone she's interacted with a lot who's been
+    // Favorite-user check-in: scan the roster for someone it's interacted with a lot who's been
     // absent for days, and post a warm "haven't seen you" — @mentioning them (the output gate
     // decides whether that actually pings). Discord-paced: absence in days, throttled per-user (~2wk)
     // and globally (~1/day). Picks the most-missed candidate: highest interaction, longest absent.
@@ -3918,7 +4405,7 @@
             var score = (u.interactionCount || 0) * 1e9 + absent;
             if (!best || score > best.score) best = { id: u.id, name: u.name, absent: absent, interactions: u.interactionCount || 0, summary: factSummary(u), seenAt: (u.lastSeen || 0), count: count, score: score };
           });
-          // Give up on anyone who's ignored every check-in: move them to historical friends so she
+          // Give up on anyone who's ignored every check-in: move them to historical friends so it
           // stops pinging someone who isn't coming back (life happens), and the hot roster stays lean.
           var archChain = Promise.resolve();
           if (cfg.archiveStale) toArchive.forEach(function (t) { archChain = archChain.then(function () { return archiveUser(t.id, 'checkin-exhausted').then(function () { if (ci.byUser) delete ci.byUser[t.id]; }); }); });
@@ -3926,29 +4413,29 @@
             if (!best) return toArchive.length ? store.set(CHECKIN_KEY, ci).then(function () { return null; }) : null;
             return actGate('checkins').then(function (gate) {
               if (gate !== 'go') {
-                if (gate === 'hold') return holdAct('checkins', 'check-in on ' + best.name + ' due').then(function () { return null; });
-                return null;   // deny — schedule untouched, stays due
+                if (gate === 'hold') return holdAct('checkins', 'check-in on ' + best.name + ' due').then(function () { return noteCheckinDiag('held', 'held by policy'); }).then(function () { return null; });
+                return noteCheckinDiag('denied', 'denied by policy').then(function () { return null; });   // deny — schedule untouched, stays due
               }
             reply.replying = true; reply.startedAt = clock.now();
             if (typeof cfg.noteSend === 'function') cfg.noteSend('text');
             // v0.57: check-ins ride the assembler with the ABSENT FRIEND as the addressed person —
-            // her facts, insights, and trust tier arrive via the PERSON band for free.
+            // its facts, insights, and trust tier arrive via the PERSON band for free.
             var ciEpoch = deferGen; var ciStartedAt = clock.now();
             return assembleContext({ authorId: best.id, authorName: best.name, content: '' }).then(function (actx) {
               actx.name = best.name; actx.absentMs = best.absent; actx.interactions = best.interactions; actx.summary = best.summary;
               return cfg.checkinFn(actx);
             }).then(function (r) {
               var text = (r && r.ok) ? hygiene(String(r.value || '').trim()) : '';
-              if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; }
+              if (!text) { reply.replying = false; if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return noteCheckinDiag('nothing', 'brain empty').then(function () { return null; }); }
               var body = '<@' + best.id + '> ' + text;   // the mention only actually pings if the gate allows it
-              // commit-point revalidation: did they come back while she was composing? A
+              // commit-point revalidation: did they come back while it was composing? A
               // “haven't seen you in a while” landing mid-conversation is the worst kind of stale.
-              return Promise.resolve(store.get(partKey(best.id))).then(function (pp2) {
+              return Promise.resolve(userStore().get(partKey(best.id))).then(function (pp2) {
                 if (ciEpoch !== deferGen || (pp2 && pp2.lastSeen > ciStartedAt)) {
                   reply.replying = false;
                   if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text');
-                  log('[chloe.abandon] check-in not sent — ' + (ciEpoch !== deferGen ? 'engine stopped mid-generation' : best.name + ' came back on their own while she was writing it'));
-                  return null;   // no attempt counted, no gaps touched — the premise vanished
+                  log('[chloe.abandon] check-in not sent — ' + (ciEpoch !== deferGen ? 'engine stopped mid-generation' : best.name + ' came back on their own while it was writing it'));
+                  return noteCheckinDiag('nothing', (ciEpoch !== deferGen) ? 'engine stopped' : 'came back').then(function () { return null; });   // no attempt counted, no gaps touched — the premise vanished
                 }
               indicateTyping();
               return Promise.resolve(cfg.send(cfg.channelId, body)).then(function () {
@@ -3956,10 +4443,10 @@
                 ci.__last = clock.now(); ci.byUser = ci.byUser || {};
                 ci.byUser[best.id] = { at: clock.now(), count: best.count + 1, seenAt: best.seenAt };
                 log('[chloe.checkin] checked in on ' + best.name + ' (absent ' + Math.round(best.absent / 86400000) + 'd, attempt ' + (best.count + 1) + '/' + cfg.checkinMaxAttempts + ')');
-                return clearHolds('checkins').then(function () { return store.set(CHECKIN_KEY, ci); }).then(function () { return { checkin: best.name }; });
-              }, function (e) { reply.replying = false; log('[chloe.checkin] send failed, mention not sent (' + ((e && e.message) || e) + ')'); return null; });
+                return clearHolds('checkins').then(function () { return store.set(CHECKIN_KEY, ci); }).then(function () { return noteCheckinDiag('fired', ''); }).then(function () { return { checkin: best.name }; });
+              }, function (e) { reply.replying = false; log('[chloe.checkin] send failed, mention not sent (' + ((e && e.message) || e) + ')'); return noteCheckinDiag('failed', (e && e.message) || e).then(function () { return null; }); });
               });
-            }).catch(function (e) { reply.replying = false; log('[chloe.checkin] check-in failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return null; });
+            }).catch(function (e) { reply.replying = false; log('[chloe.checkin] check-in failed (' + ((e && e.message) || e) + ')'); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); return noteCheckinDiag('failed', (e && e.message) || e).then(function () { return null; }); });
             });   // actGate('checkins')
           });
         });
@@ -3972,27 +4459,149 @@
         var now = clock.now();
         roster = roster.filter(function (u) { return !isSuppressed(u, now); });
         var lines = [];
-        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, text: scrubDiscordTokens(ln.content).slice(0, 240), ts: ln.ts }); }); });   // per-line clip: 40 unclipped 1900-char messages would eat the entire 5000-token request ceiling
+        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { if (ln && ln.ch && ln.ch !== cfg.channelId) return; lines.push({ who: u.name, text: scrubDiscordTokens(ln.content).slice(0, 240), ts: ln.ts }); }); });   // per-line clip: 40 unclipped 1900-char messages would eat the entire 5000-token request ceiling
         lines.sort(function (a, b) { return a.ts - b.ts; });
         if (lines.length > (maxLines || 40)) lines = lines.slice(-(maxLines || 40));
         return lines.map(function (l) { return l.who + ': ' + l.text; });
       });
     }
+    // A bare variant for the rolling rollups (channel summary, episodes): message texts
+    // with NO "Name: " prefix. The rollup prompts want the gist, not message-by-message
+    // attribution — names in the input echo back as "Alice said… Bob said…" style.
+    function recentTranscriptStamped(maxLines) {
+      return getRoster().then(function (roster) {
+        var now = clock.now();
+        roster = roster.filter(function (u) { return !isSuppressed(u, now); });
+        var texts = [];
+        roster.forEach(function (u) { (u.recent || []).forEach(function (ln) { if (ln && ln.ch && ln.ch !== cfg.channelId) return; texts.push({ text: scrubDiscordTokens(ln.content).slice(0, 240), ts: ln.ts }); }); });
+        texts.sort(function (a, b) { return a.ts - b.ts; });
+        if (texts.length > (maxLines || 40)) texts = texts.slice(-(maxLines || 40));
+        return texts;
+      });
+    }
+    function recentTranscriptTexts(maxLines) {
+      return recentTranscriptStamped(maxLines).then(function (stamped) {
+        return stamped.map(function (t) { return t.text; });
+      });
+    }
+    // Freshness of the rollup bucket: how many transcript lines are newer than the last
+    // summary / episode pass. One roster read + two cheap store gets; the poll chain uses
+    // it to load-gate the rollups (empty bucket -> timer doesn't fire; full bucket -> early run).
+    // Baseline is max(persisted marker, paceLastAI run stamp): a pass that ran but wrote
+    // nothing new (e.g. episodes with zero proposals) still counts as "checked", so it can't
+    // re-fire every poll on the same lines. Restart-safe: paceLastAI starts empty, persisted wins.
+    function rollupFreshness() {
+      return Promise.all([
+        Promise.resolve(store.get(CHANSUM_KEY)),
+        Promise.resolve(store.get(EPI_KEY)),
+        recentTranscriptStamped(40),
+        Promise.resolve(store.get(NEWS_KEY)).then(function (ns) { return ns; }, function () { return null; })
+      ]).then(function (got) {
+        var prev = got[0], ring = Array.isArray(got[1]) ? got[1] : [], stamped = got[2];
+        var sumAt = (prev && typeof prev.at === 'number') ? prev.at : 0;
+        if (paceLastAI.summary > sumAt) sumAt = paceLastAI.summary;
+        var epiAt = 0, i;
+        for (i = 0; i < ring.length; i++) { if (ring[i] && typeof ring[i].at === 'number' && ring[i].at > epiAt) epiAt = ring[i].at; }
+        if (paceLastAI.episodes > epiAt) epiAt = paceLastAI.episodes;
+        var freshSum = 0, freshEpi = 0;
+        for (i = 0; i < stamped.length; i++) { if (stamped[i].ts > sumAt) freshSum++; if (stamped[i].ts > epiAt) freshEpi++; }
+        // Redirect freshness: a news post newer than the last summary counts as one
+        // fresh line for the SUMMARY bucket (episodes are user moments — untouched),
+        // so the timer pass that would otherwise stay silent folds the marker in.
+        // One rewrite per post max: storing the summary advances sumAt past it.
+        var sent = (got[3] && Array.isArray(got[3].sent)) ? got[3].sent : [];
+        for (i = 0; i < sent.length; i++) { if (sent[i] && sent[i].at > sumAt) freshSum++; }
+        return { sumAt: sumAt, epiAt: epiAt, freshSum: freshSum, freshEpi: freshEpi };
+      });
+    }
     // Rolling recursive channel summary: fold recent activity into a running ≤W-word summary, feeding
     // the prior summary back in so it accretes the channel's arc rather than restarting. Gated to a
     // cadence (it's an AI call). No send — it's memory, not a message.
+    // Redirect target: the latest own 📰 rollup as ONE bracketed line for the rolling
+    // summary input, so Thoughts knows a roundup went out without ingesting its body.
+    // Full headline text stays out (it already had its channel post); the marker is
+    // small enough to ride the chansum provider into replies as one line of summary.
+    function newsMarkerLine() {
+      return Promise.resolve(store.get(NEWS_KEY)).then(function (ns) {
+        var sent = (ns && Array.isArray(ns.sent)) ? ns.sent : [];
+        var latest = null;
+        sent.forEach(function (s) { if (s && s.at && s.feed && (!latest || s.at > latest.at)) latest = s; });
+        if (!latest || (clock.now() - latest.at) >= 604800000) return null;   // ring prunes at 7d; belt-and-suspenders here
+        return '[I posted a news roundup from "' + String(latest.feed).slice(0, 60) + '" (' + (latest.count || 0) + ' items)]';
+      }, function () { return null; });
+    }
     function processChannelSummary() {
       if (!cfg.channelSummary || typeof cfg.summaryFn !== 'function') return Promise.resolve(null);
-      return recentTranscript(40).then(function (lines) {
-        if (!lines.length) return null;
-        return Promise.resolve(store.get(CHANSUM_KEY)).then(function (prev) {
-          var prior = (prev && typeof prev.text === 'string') ? prev.text : '';
-          return Promise.resolve(cfg.summaryFn({ prior: prior, lines: lines, words: cfg.channelSummaryWords || 60 })).then(function (r) {
-            var text = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
-            if (!text) return null;
-            return store.set(CHANSUM_KEY, { text: text, at: clock.now() }).then(function () { log('[chloe.sum] channel summary updated (' + text.length + ' chars)'); return text; });
+      return recentTranscriptTexts(40).then(function (lines) {
+        return newsMarkerLine().then(function (marker) {
+          if (!lines.length && !marker) return null;   // marker-only runs still count (a news post is activity worth one Thought)
+          var inLines = marker ? lines.concat([marker]) : lines;
+          return Promise.resolve(store.get(CHANSUM_KEY)).then(function (prev) {
+            var prior = (prev && typeof prev.text === 'string') ? prev.text : '';
+            return Promise.resolve(cfg.summaryFn({ prior: prior, lines: inLines, words: cfg.channelSummaryWords || 60 })).then(function (r) {
+              var text = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
+              if (!text) return null;
+              return store.set(CHANSUM_KEY, { text: text, at: clock.now() }).then(function () { log('[chloe.sum] channel summary updated (' + text.length + ' chars)'); return text; });
+            });
           });
         });
+      });
+    }
+    // One live thoughts card per surface: `!chloe thoughts` replies (per source
+    // channel) and thoughts-feed posts (per target channel) EDIT in place instead of
+    // piling up. Pointer keys persist {id, target, at} in the source bucket, so a
+    // restart recovers: a stale pointer (404 on edit/delete) just posts fresh.
+    // Crash order is delete-first/post-second only on the no-edit fallback; the edit
+    // path never duplicates (same id, idempotent), so interruption strands nothing.
+    // Card ops are hygiene like unreact (ungated — they only ever touch the bot's own
+    // recorded card ids); the POST itself stays speak-gated via send/sendTo.
+    var THOUGHTCARD_CMD = 'thoughtcard:cmd';
+    var THOUGHTCARD_FEED = 'thoughtcard:feed';
+    function thoughtCardPublish(key, channelId, kind, postFn, editBody) {
+      return Promise.resolve(store.get(key)).then(function (ptr) {
+        var id = ptr && ptr.id;
+        function record(posted) {
+          var mid = posted && (posted.id || posted.messageId);
+          if (!mid) return posted;   // posted but no id (or gated) — leave pointer; next rotation retries
+          var rec = { id: mid, target: channelId, at: clock.now() };
+          return Promise.resolve(store.set(key, rec)).then(function () { return posted; }, function () { return posted; });
+        }
+        function postFresh() {
+          // Target switch (feed): the old card lives in the previous target channel.
+          var delCh = (ptr && ptr.target && ptr.target !== channelId) ? ptr.target : channelId;
+          var del = (id && typeof cfg.deleteMessage === 'function')
+            ? Promise.resolve(cfg.deleteMessage(delCh, id)).then(function () { return true; }, function () { return false; })
+            : Promise.resolve(false);   // no delete fn (old shell): post-only, pointer still advances
+          return del.then(function () { return Promise.resolve(postFn()); }).then(record);
+        }
+        if (!id) return postFresh();
+        if (ptr.target && ptr.target !== channelId) return postFresh();   // switched target: drop the old card, post in the new one
+        var editFn = (kind === 'embed') ? cfg.editEmbed : cfg.editMessage;
+        if (typeof editFn !== 'function') return postFresh();
+        return Promise.resolve(editFn(channelId, id, editBody)).then(function () {
+          var rec = { id: id, target: channelId, at: clock.now() };
+          return Promise.resolve(store.set(key, rec)).then(function () { return { edited: true, id: id }; }, function () { return { edited: true, id: id }; });
+        }, function () { return postFresh(); });   // 404/gone/perm — stale pointer heals by posting fresh
+      });
+    }
+    // F1 thoughts-feed: post a fresh summary to the configured Discord channel
+    // (per-source-channel target, lang-vertical mirror). Autonomous output, so
+    // policy-gated like beats/lull; the TARGET speak gate is enforced in
+    // cfg.sendTo (wiring). Beats-deliver precedent: no voice-budget claim.
+    // One live card per target: edited in place, never piled up (see above).
+    function postThoughtsFeed(text) {
+      var target = cfg.thoughtsFeedTarget ? String(cfg.thoughtsFeedTarget) : '';
+      if (!text || !target || typeof cfg.sendTo !== 'function') return Promise.resolve(null);
+      if (!/^\d{15,25}$/.test(target)) return Promise.resolve(null);
+      return actGate('thoughts').then(function (gate) {
+        if (gate === 'hold') return holdAct('thoughts', 'fresh channel summary due').then(function () { return { held: true }; });
+        if (gate !== 'go') return { denied: true };   // deny: stays due, panel stays quiet too
+        return thoughtCardPublish(THOUGHTCARD_FEED, target, 'text', function () {
+          return Promise.resolve(cfg.sendTo(target, text));
+        }, text).then(function () {
+          log('[chloe.thoughts] posted fresh summary to ' + target);
+          return { thoughts: target, feed: target };
+        }, function () { return { feed: target }; });
       });
     }
     // Episodic extraction: fold recent activity into 0-2 short episode records. Gated cadence (one
@@ -4077,9 +4686,70 @@
       fresh.relatesTo = best ? { id: best.id, weight: bestW } : null;
     }
 
+    // ---- user-facing episodic search (SPEC-agents `recall`, shipped v46) ----
+    // Tokenization is the single shared helper: the episodes RECALL provider
+    // below delegates its local toks() to this, and !recall scores through it,
+    // so the two paths can never drift apart (DESIGN §7a: lowercase,
+    // punctuation-stripped, tokens >= 3 chars, exact overlap).
+    function episodeQueryTokens(s) {
+      return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
+    }
+    // Keyword scoring for an explicit query: overlap (must be >0) x importance
+    // x decay. Mirrors the provider's keyword-fallback branch exactly: rel is
+    // normalized by query size in semantic mode (so it mixes with FSRS R) and
+    // raw overlap otherwise; decay is FSRS retrievability when the record
+    // carries stability, else the half-life curve. Read-only: never persists.
+    function scoreEpisodesForQuery(queryText, ring, now) {
+      var qset = {}, qsize = 0;
+      episodeQueryTokens(queryText).forEach(function (w) { if (!qset[w]) { qset[w] = true; qsize++; } });
+      if (!qsize) return [];
+      var semantic = !!cfg.semanticRecall, half = cfg.episodeRecencyHalfLifeMs || 604800000;
+      var scored = [];
+      (Array.isArray(ring) ? ring : []).forEach(function (e) {
+        if (!e || typeof e.text !== 'string') return;
+        var eset = {};
+        (e.topics || []).forEach(function (t) { episodeQueryTokens(t).forEach(function (w) { eset[w] = true; }); });
+        episodeQueryTokens(e.text).forEach(function (w) { eset[w] = true; });
+        var overlap = 0;
+        Object.keys(eset).forEach(function (w) { if (qset[w]) overlap++; });
+        if (!overlap) return;
+        var rel = semantic ? (overlap / Math.max(1, qsize)) : overlap;
+        var decay;
+        if (semantic && e.stab != null) decay = fsrsRetrievability(e.stab, now - (e.lastRecallAt || e.at || 0));
+        else decay = Math.pow(0.5, Math.max(0, now - (e.at || 0)) / half);
+        scored.push({ e: e, score: rel * (e.importance || 5) * decay });
+      });
+      scored.sort(function (a, b) { return b.score - a.score; });
+      return scored;
+    }
+    // Explicit recall query: top-3 matches + the top hit's one-hop neighbor.
+    // Read-only on purpose (unlike the provider, which strengthens surfaced
+    // memories): a query must never rewrite memory.
+    function searchEpisodes(queryText) {
+      var q = String(queryText || '').trim().slice(0, 300);
+      if (!q) return Promise.resolve({ ok: false, reason: 'empty' });
+      return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
+        ring = Array.isArray(ring) ? ring : [];
+        if (!ring.length) return { ok: false, reason: 'empty' };
+        var now = clock.now();
+        var scored = scoreEpisodesForQuery(q, ring, now);
+        if (!scored.length) return { ok: false, reason: 'no-match', total: ring.length };
+        var top = scored.slice(0, 3);
+        var pickedIds = {};
+        top.forEach(function (x) { if (x.e.id) pickedIds[x.e.id] = true; });
+        var hop = null;
+        if (cfg.episodeGraph && top.length && top[0].e.relatesTo && top[0].e.relatesTo.id) {
+          var nb = ring.filter(function (e2) { return e2.id === top[0].e.relatesTo.id; })[0];
+          if (nb && !pickedIds[nb.id]) hop = nb.text;
+        }
+        return { ok: true, total: ring.length,
+          matches: top.map(function (x) { return { text: x.e.text, at: x.e.at, participants: x.e.participants || [], topics: x.e.topics || [], importance: x.e.importance || 5, score: x.score }; }),
+          hop: hop };
+      });
+    }
     function processEpisodes() {
       if (!cfg.episodicMemory || typeof cfg.episodeFn !== 'function') return Promise.resolve(null);
-      return recentTranscript(40).then(function (lines) {
+      return recentTranscriptTexts(40).then(function (lines) {
         if (!lines.length) return null;
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           ring = Array.isArray(ring) ? ring : [];
@@ -4126,6 +4796,754 @@
         var removed = before - ring.length;
         if (!removed) return 0;
         return store.set(EPI_KEY, ring).then(function () { log('[chloe.epi] erased ' + removed + ' episode(s) for ' + name); return removed; });
+      });
+    }
+
+    // ---- F2 news sitemap rollups -------------------------------------------------
+    // Hourly-per-feed rollups from news sitemaps (discovered via robots.txt),
+    // posted to the feed's target channel (the engine whose channelId matches).
+    // Deterministic when the voice prompt is cleared: no AI pass consumed. Pure helpers (no store/clock) so they
+    // stay headless-testable; only processNews touches the network + store.
+    // VOICE (user-editable, panel Setup -> News voice): newsPrompt (undefined/null = default
+    // AI voice below; '' = classic deterministic list; other = custom instruction with
+    // {feed} {date} {items} placeholders) + newsPostTemplate (null = default template below).
+    // AI path fail-opens to the classic list; the Links gate still strips URLs at send time.
+    var DEFAULT_NEWS_PROMPT =
+      'You post a short news roundup for the "{feed}" feed in a chat channel, in your own voice.\n' +
+      'Fresh headlines ({date}):\n{items}\n\n' +
+      'Pick the 2-4 stories that matter most and say, for each, why it is worth knowing in one or two sentences. ' +
+      'Skip press-release filler. Keep links exactly as given (plain URLs, one per line under its story). ' +
+      'Respond with ONLY the roundup post text, at most 1500 characters, no preamble.';
+    var DEFAULT_NEWS_TEMPLATE = '📰 {feed} — {date}\n{body}';
+    var NEWS_PROMPT_MAX = 2000, NEWS_TEMPLATE_MAX = 500;
+   var NEWS_KEY = 'news:' + cfg.channelId;   // { byFeed: { id: { lastRun, seen: [urls] } } }
+    // Double-post guard: a news run (fetch chain + AI compose + post) can outlast
+    // the 45s run-lock and a queen handover, so a second engine — or a second
+    // `news now` — can fetch the same fresh items before the first run marks them
+    // seen, and both post. Claim a per-channel in-flight marker BEFORE the first
+    // fetch; concurrent runs see it and stand down. The claim heartbeats per feed
+    // (so only a single feed's worst case must fit the TTL); a stale claim (e.g.
+    // a crashed run) is taken over, never blocking forever.
+    var NEWSRUN_KEY = 'news:run:' + cfg.channelId, NEWSRUN_TTL = 300000;
+    var newsRunLocal = false;   // in-process re-entry guard (same tick, two dispatches)
+    function newsClaimRun() {
+      if (newsRunLocal) return Promise.resolve(false);
+      newsRunLocal = true;   // synchronously: a same-tick second caller sees it before any await resolves
+      var now = clock.now();
+      return Promise.resolve(store.get(NEWSRUN_KEY)).then(function (c) {
+        if (c && c.id && c.id !== runId && (now - (c.at || 0)) < NEWSRUN_TTL) { newsRunLocal = false; return false; }   // a live run elsewhere owns this channel
+        return Promise.resolve(store.set(NEWSRUN_KEY, { id: runId, at: now })).then(function () { return true; }, function () { return true; });   // a dropped claim write (goldfish) must not block the run
+      }, function () { return true; });
+    }
+    function newsHeartbeat() {
+      if (!newsRunLocal) return Promise.resolve(false);
+      return Promise.resolve(store.set(NEWSRUN_KEY, { id: runId, at: clock.now() })).then(function () { return true; }, function () { return false; });
+    }
+    function newsReleaseRun() {
+      newsRunLocal = false;
+      return Promise.resolve(store.get(NEWSRUN_KEY)).then(function (c) {
+        if (c && c.id === runId) return Promise.resolve(store.del(NEWSRUN_KEY)).then(function () {}, function () {});
+      }, function () {});
+    }
+    var NEWS_NAMED_ENTS = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", hellip: '…', mdash: '—', ndash: '–', laquo: '«', raquo: '»', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©', reg: '®', trade: '™', deg: '°', agrave: 'à', aacute: 'á', acirc: 'â', atilde: 'ã', auml: 'ä', aring: 'å', ccedil: 'ç', egrave: 'è', eacute: 'é', ecirc: 'ê', euml: 'ë', igrave: 'ì', iacute: 'í', icirc: 'î', iuml: 'ï', ntilde: 'ñ', ograve: 'ò', oacute: 'ó', ocirc: 'ô', otilde: 'õ', ouml: 'ö', ugrave: 'ù', uacute: 'ú', ucirc: 'û', uuml: 'ü', yacute: 'ý', yuml: 'ÿ' };
+    function newsUnescape(s) {
+      return String(s || '').replace(/&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g, function (m, code) {
+        if (code.charAt(0) === '#') {
+          var n = (code.charAt(1).toLowerCase() === 'x') ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+          if (isFinite(n) && n > 0 && n < 1114112) { try { return (typeof String.fromCodePoint === 'function') ? String.fromCodePoint(n) : String.fromCharCode(n); } catch (e) {} }
+          return m;
+        }
+        var k = code.toLowerCase();
+        return (k in NEWS_NAMED_ENTS) ? NEWS_NAMED_ENTS[k] : m;
+      });
+    }
+    // robots.txt -> sitemap urls (Sitemap: lines; comments/blank lines skipped).
+    function newsParseRobots(text) {
+      var out = [];
+      String(text || '').split(/\r?\n/).forEach(function (ln) {
+        var m = ln.match(/^\s*Sitemap\s*:\s*(\S+)\s*$/i);
+        if (m) out.push(m[1].trim());
+      });
+      return out;
+    }
+    // Prefer a news-flavored sitemap; .gz only as a last resort (no gunzip here).
+    function newsPickSitemap(urls) {
+      urls = (Array.isArray(urls) ? urls : []).filter(function (u) { return /^https?:\/\//i.test(u || ''); });
+      if (!urls.length) return null;
+      var plain = urls.filter(function (u) { return !/\.gz(\?|$)/i.test(u); });
+      var pool = plain.length ? plain : urls;
+      function score(u) {
+        var s = String(u).toLowerCase();
+        if (/google-?news|news-?today|sitemap-news|news\.xml|news_sitemap/.test(s)) return 3;
+        if (/news/.test(s)) return 2;
+        if (/article/.test(s)) return 1;
+        return 0;
+      }
+      pool.sort(function (a, b) { return score(b) - score(a); });
+      return pool[0];
+    }
+    // Sitemap XML -> [{url, title, date, keywords[]}]. Google News tags first,
+    // plain urlset (loc + lastmod) as fallback. Caps scan at ~200 url blocks.
+    function newsParseItems(xml) {
+      var items = [];
+      var blocks = String(xml || '').match(/<url[\s>][\s\S]*?<\/url\s*>/gi) || [];
+      blocks = blocks.slice(0, 200);
+      blocks.forEach(function (b) {
+        var loc = (b.match(/<loc\s*>([\s\S]*?)<\/loc\s*>/i) || [])[1];
+        if (!loc) return;
+        var url = newsUnescape(loc).trim();
+        if (!/^https?:\/\//i.test(url)) return;
+        var title = newsUnescape(((b.match(/<news:title\s*>([\s\S]*?)<\/news:title\s*>/i) || [])[1] || '')).trim().slice(0, 160);
+        var date = (((b.match(/<news:publication_date\s*>([\s\S]*?)<\/news:publication_date\s*>/i) || [])[1] || '').trim() ||
+                    ((b.match(/<lastmod\s*>([\s\S]*?)<\/lastmod\s*>/i) || [])[1] || '').trim()).slice(0, 30);
+        var kwRaw = ((b.match(/<news:keywords\s*>([\s\S]*?)<\/news:keywords\s*>/i) || [])[1] || '');
+        var keywords = newsUnescape(kwRaw).split(',').map(function (k) { return k.trim().toLowerCase(); }).filter(Boolean).slice(0, 12);
+        items.push({ url: url.slice(0, 500), title: title, date: date, keywords: keywords });
+      });
+      return items;
+    }
+    // Direct-feed XML -> [{url, title, date, keywords: []}]. RSS 2.0 <item>
+    // (title/link/pubDate, guid as a URL fallback) + Atom <entry> (title,
+    // <link href>, updated/published). Same shape as newsParseItems, minus
+    // keywords (feeds rarely carry them; the filter falls back to URL path).
+    // CDATA unwrapped per field, entities unescaped, non-http(s) skipped.
+    function newsFieldText(b, tag) {
+      var m = null;
+      try { m = b.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)<\\/' + tag + '\\s*>', 'i')); } catch (e) { m = null; }
+      var inner = (m && m[1]) || '';
+      inner = String(inner).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1');
+      return newsUnescape(inner).trim();
+    }
+    function newsParseFeedItems(xml) {
+      var items = [];
+      var blocks = String(xml || '').match(/<(item|entry)[\s>][\s\S]*?<\/\1\s*>/gi) || [];
+      blocks = blocks.slice(0, 200);
+      blocks.forEach(function (b) {
+        var url = '';
+        var hrefs = [];
+        var hre = /<link[^>]*href\s*=\s*["']([^"']+)["']/gi, hm;
+        while ((hm = hre.exec(b)) && hrefs.length < 10) hrefs.push(newsUnescape(hm[1]).trim());
+        var bare = newsFieldText(b, 'link');
+        if (bare) hrefs.push(bare);
+        var guid = newsFieldText(b, 'guid');
+        for (var i = 0; i < hrefs.length; i++) { if (/^https?:\/\//i.test(hrefs[i])) { url = hrefs[i]; break; } }
+        if (!url && /^https?:\/\//i.test(guid)) url = guid;
+        if (!url) return;
+        var title = newsFieldText(b, 'title').replace(/\s+/g, ' ').slice(0, 160);
+        var date = (newsFieldText(b, 'pubDate') || newsFieldText(b, 'updated') || newsFieldText(b, 'published')).slice(0, 30);
+        items.push({ url: url.slice(0, 500), title: title, date: date, keywords: [] });
+      });
+      return items;
+    }
+    // Drop seen urls, ban-word hits (title+url), category misses. Case-insensitive
+    // substring; categories match keywords + url path segments.
+    function newsFilterItems(items, opts) {
+      opts = opts || {};
+      var seen = {};
+      (opts.seen || []).forEach(function (u) { seen[String(u)] = true; });
+      var bans = (opts.banWords || []).map(function (w) { return String(w).toLowerCase(); }).filter(Boolean);
+      var allow = (opts.allowCats || []).map(function (w) { return String(w).toLowerCase(); }).filter(Boolean);
+      var block = (opts.blockCats || []).map(function (w) { return String(w).toLowerCase(); }).filter(Boolean);
+      return (Array.isArray(items) ? items : []).filter(function (it) {
+        if (!it || !it.url || seen[it.url]) return false;
+        var hay = ((it.title || '') + ' ' + it.url).toLowerCase();
+        for (var i = 0; i < bans.length; i++) { if (bans[i] && hay.indexOf(bans[i]) >= 0) return false; }
+        if (allow.length || block.length) {
+          var path = '';
+          try { path = String(it.url.match(/^https?:\/\/[^\/]+\/(.*)$/i)[1] || '').replace(/[\/_-]+/g, ' ').toLowerCase(); } catch (e) {}
+          var cathay = (it.keywords || []).join(' ') + ' ' + path;
+          for (var j = 0; j < block.length; j++) { if (block[j] && cathay.indexOf(block[j]) >= 0) return false; }
+          if (allow.length) {
+            var hit = false;
+            for (var k = 0; k < allow.length; k++) { if (allow[k] && cathay.indexOf(allow[k]) >= 0) { hit = true; break; } }
+            if (!hit) return false;
+          }
+        }
+        return true;
+      });
+    }
+    function newsFormatRollup(name, items, max) {
+      items = (Array.isArray(items) ? items : []).slice(0, Math.max(1, Math.min(10, max || 5)));
+      if (!items.length) return '';
+      var day = '';
+      try { day = new Date().toISOString().slice(0, 10); } catch (e) {}
+      var lines = ['📰 ' + String(name || 'news').slice(0, 60) + (day ? ' — ' + day : '')];
+      items.forEach(function (it) {
+        lines.push('• ' + (it.title || it.url).slice(0, 140));
+        lines.push(it.url);
+      });
+      return lines.join('\n').slice(0, 1900);
+    }
+    // Classic deterministic body: bullet lines, no header (the header lives in
+    // the post template). Refactored out of newsFormatRollup; byte-identical lines.
+    function newsClassicBody(items, max) {
+      items = (Array.isArray(items) ? items : []).slice(0, Math.max(1, Math.min(10, max || 5)));
+      if (!items.length) return '';
+      var lines = [];
+      items.forEach(function (it) {
+        lines.push('• ' + (it.title || it.url).slice(0, 140));
+        lines.push(it.url);
+      });
+      return lines.join('\n');
+    }
+    function newsToday() {
+      try { return new Date().toISOString().slice(0, 10); } catch (e) { return ''; }
+    }
+    // Post template: {feed} {date} {count} {body} replaced; a template without
+    // {body} gets the body appended (never silently dropped).
+    function newsApplyTemplate(tpl, parts) {
+      parts = parts || {};
+      var body = String(parts.body || '');
+      var t = (tpl == null) ? DEFAULT_NEWS_TEMPLATE : String(tpl);
+      var out = t.split('{feed}').join(String(parts.feed || 'news').slice(0, 60))
+                 .split('{date}').join(String(parts.date || ''))
+                 .split('{count}').join(String(parts.count == null ? '' : parts.count));
+      if (out.indexOf('{body}') < 0) return (out + '\n' + body).slice(0, 1900);
+      return out.split('{body}').join(body).slice(0, 1900);
+    }
+    function newsResolvePrompt() {
+      if (cfg.newsPrompt === '') return '';   // cleared: classic list, no AI
+      var p = (cfg.newsPrompt == null) ? DEFAULT_NEWS_PROMPT : String(cfg.newsPrompt);
+      return p.trim() ? p : '';
+    }
+    function newsResolveTemplate() {
+      if (cfg.newsPostTemplate == null) return DEFAULT_NEWS_TEMPLATE;
+      return String(cfg.newsPostTemplate);
+    }
+    // Full post text: template wrapped around the classic body or the AI voice.
+    // AI fail-opens to classic (missing newsFn, failure, or empty text).
+    function newsComposeText(feed, items, max, dateOverride, tplOverride) {
+      var name = (feed && (feed.name || feed.id)) || 'news';
+      var n = Math.max(1, Math.min(10, (feed && feed.maxItems) || max || 5));
+      var list = (Array.isArray(items) ? items : []).slice(0, n);
+      var day = dateOverride || newsToday();
+      var tpl = (tplOverride === undefined) ? newsResolveTemplate() : tplOverride;
+      var prompt = newsResolvePrompt();
+      function classic() {
+        return newsApplyTemplate(tpl, { feed: name, date: day, count: list.length, body: newsClassicBody(list, n) });
+      }
+      if (!prompt || !list.length || typeof cfg.newsFn !== 'function') return Promise.resolve(classic());
+      var itemText = list.map(function (it) { return '- ' + String(it.title || it.url).slice(0, 140) + ' (' + it.url + ')'; }).join('\n');
+      return Promise.resolve(cfg.newsFn({ feed: name, date: day, items: list, itemText: itemText, prompt: prompt })).then(function (r) {
+        var t = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
+        if (!t) return classic();
+        return newsApplyTemplate(tpl, { feed: name, date: day, count: list.length, body: t.slice(0, 1800) });
+      }, function () { return classic(); });
+    }
+    function newsFeedsForHere() {
+      return (Array.isArray(cfg.newsFeeds) ? cfg.newsFeeds : []).filter(function (f) {
+        return f && f.id && f.site && String(f.channelId || '') === String(cfg.channelId);
+      });
+    }
+    function newsStateGet() {
+      return Promise.resolve(store.get(NEWS_KEY)).then(function (st) {
+        var out = (st && st.byFeed && typeof st.byFeed === 'object') ? st : { byFeed: {} };
+        if (!Array.isArray(out.sent)) out.sent = [];   // redirect ring: recent own 📰 posts (old shapes lack it)
+        if (!Array.isArray(out.queue)) out.queue = [];   // review queue: staged rollups (old shapes lack it)
+        if (out.lastRun != null && (typeof out.lastRun !== 'object' || Array.isArray(out.lastRun))) out.lastRun = null;   // honest-run summary (old shapes lack it)
+        return out;
+      });
+    }
+    // Per-feed diagnostic write: records the last attempt WITHOUT touching the
+    // interval clock (lastRun) unless told to — a hold/deny/failure stays due so
+    // approval (or the next poll) can still fire, but `!chloe news` can show it.
+    function newsDiagRecord(st, feedId, patch, advanceClock) {
+      var rec = (st.byFeed && st.byFeed[feedId]) || { lastRun: 0, seen: [] };
+      if (patch) for (var k in patch) rec[k] = patch[k];
+      rec.lastAt = rec.lastAt || clock.now();
+      if (advanceClock) rec.lastRun = clock.now();
+      st.byFeed[feedId] = rec;
+      return rec;
+    }
+    // Redirect signature: matches an echoed own 📰 post even after the Links gate
+    // strips its URLs at send time (transport rewrites what Discord echoes, so an
+    // exact clip would miss whenever Links is OFF). Normalized both sides.
+    function newsOwnSig(text) {
+      return String(text || '').replace(/https?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    }
+    // Fetch chain: robots -> sitemap (one index level) -> parse + filter — or,
+    // when the site is a direct URL (feed or sitemap, not a bare root), fetch
+    // it as-is (RSS/Atom via newsParseFeedItems, sitemap via newsParseItems).
+    // Resolves {via, items, total} or {error}. Never throws, never touches the store.
+    function newsFetchFeed(feed, seen) {
+      if (typeof cfg.fetchText !== 'function') return Promise.resolve({ error: 'fetch unavailable' });
+      var site = String((feed && feed.site) || '').replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(site)) return Promise.resolve({ error: 'bad site url' });
+      var fid = (feed && feed.id) || site;
+      function fail(why) { log('[chloe.news] feed "' + fid + '" skipped (' + why + ')'); return { error: why }; }
+      function finish(got) {
+        if (got && got.error) return got;
+        if (!got) return fail('sitemap unreachable');
+        var parsed = (got.feed) ? newsParseFeedItems(got.xml) : newsParseItems(got.xml);
+        var items = newsFilterItems(parsed, {
+          seen: seen, banWords: feed.banWords, allowCats: feed.allowCats, blockCats: feed.blockCats
+        });
+        return { via: got.via, items: items, total: parsed.length };
+      }
+      var rootPath = '';
+      try { rootPath = String(site.match(/^https?:\/\/[^\/:?#]+(.*)$/i)[1] || ''); } catch (e) {}
+      if (rootPath && rootPath !== '/') {
+        return Promise.resolve(cfg.fetchText(site)).then(function (r) {
+          if (!r || !r.ok || !r.value) return fail('feed unreachable' + ((r && r.reason) ? ' (' + r.reason + ')' : ''));
+          var isFeed = /<(rss|feed|rdf)[:\s>]/i.test(r.value);
+          var isMap = /<(urlset|sitemapindex)[\s>]/i.test(r.value);
+          if (!isFeed && !isMap) return fail('not a feed (no RSS/Atom/sitemap at this URL)');
+          return finish({ xml: r.value, via: site, feed: isFeed && !isMap });
+        }, function () { return fail('fetch threw'); });
+      }
+      return Promise.resolve(cfg.fetchText(site + '/robots.txt')).then(function (r) {
+        if (!r || !r.ok || !r.value) return fail('robots unreachable' + ((r && r.reason) ? ' (' + r.reason + ')' : ''));
+        var maps = newsParseRobots(r.value);
+        if (!maps.length) return fail('no sitemaps in robots.txt');
+        var first = newsPickSitemap(maps);
+        if (!first) return fail('no usable sitemap');
+        // One index level: if the pick is a sitemapindex, take its best child.
+        return Promise.resolve(cfg.fetchText(first)).then(function (r2) {
+          if (!r2 || !r2.ok || !r2.value) return fail('sitemap unreachable' + ((r2 && r2.reason) ? ' (' + r2.reason + ')' : ''));
+          var child = null;
+          if (/<sitemapindex[\s>]/i.test(r2.value)) {
+            var kids = [];
+            var re = /<sitemap[\s>][\s\S]*?<\/sitemap\s*>/gi, m;
+            while ((m = re.exec(r2.value)) && kids.length < 60) {
+              var kl = (m[0].match(/<loc\s*>([\s\S]*?)<\/loc\s*>/i) || [])[1];
+              if (kl) kids.push(newsUnescape(kl).trim());
+            }
+            child = newsPickSitemap(kids);
+            if (!child) return fail('index has no usable child');
+            return Promise.resolve(cfg.fetchText(child)).then(function (r3) {
+              if (!r3 || !r3.ok || !r3.value) return fail('news sitemap unreachable' + ((r3 && r3.reason) ? ' (' + r3.reason + ')' : ''));
+              return { xml: r3.value, via: child };
+            });
+          }
+          return { xml: r2.value, via: first };
+        }).then(function (got) {
+          return finish(got);
+        });
+      }, function () { return fail('fetch threw'); });
+    }
+    // One due feed -> fetch, filter, compose (AI voice or classic). Returns {feed, text, urls, items},
+    // {text:'',...} when nothing new, or {error} when the fetch/compose failed. Never throws.
+    function newsRunFeed(feed, seen) {
+      return newsFetchFeed(feed, seen).then(function (got) {
+        if (!got || got.error) return { error: (got && got.error) || 'fetch failed' };   // fetch failed — lastRun untouched, retries next poll
+        if (!got.items.length) { log('[chloe.news] feed "' + feed.id + '" — nothing new'); return { feed: feed, text: '', urls: [], items: [] }; }
+        var n = Math.max(1, Math.min(10, feed.maxItems || 5));
+        var picked = got.items.slice(0, n);
+        return newsComposeText(feed, got.items, feed.maxItems).then(function (text) {
+          if (!text) return { error: 'compose failed' };
+          return { feed: feed, text: text, urls: picked.map(function (x) { return x.url; }),
+                   items: picked.map(function (x) { return { title: String(x.title || x.url).slice(0, 160), url: x.url }; }) };
+        });
+      });
+    }
+    // Dry-run for the panel Test button: same fetch chain, empty seen-set, the
+    // feed's own filters applied. Never writes the store, never posts, never marks seen.
+    function testNewsFeed(feed) {
+      feed = feed || {};
+      var site = String(feed.site || '').trim().replace(/\/+$/, '');
+      if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(site)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
+      function strArr(v, cap) {
+        if (v == null) return [];
+        if (!Array.isArray(v)) return null;
+        var out = [];
+        for (var i = 0; i < v.length; i++) {
+          var w = String(v[i] == null ? '' : v[i]).trim().toLowerCase();
+          if (!w) continue;
+          if (w.length > 40) return null;
+          out.push(w);
+        }
+        if (out.length > cap) return null;
+        return out;
+      }
+      var bw = strArr(feed.banWords, 50), ac = strArr(feed.allowCats, 30), bc = strArr(feed.blockCats, 30);
+      if (bw === null || ac === null || bc === null) return Promise.resolve({ ok: false, reason: 'filter words must be ≤40 chars (drop ≤50, topics ≤30)' });
+      return newsFetchFeed({ id: feed.id || site, site: site, banWords: bw, allowCats: ac, blockCats: bc }, []).then(function (r) {
+        if (!r || r.error) return { ok: false, reason: (r && r.error) || 'fetch failed' };
+        return { ok: true, via: r.via, total: r.total, count: r.items.length,
+          sample: r.items.slice(0, 3).map(function (it) { return { title: it.title || it.url, url: it.url }; }) };
+      });
+    }
+    // Immediate single-feed run for the panel Run button: same fetch+filter+
+    // compose chain as the timer lane, but for one caller-supplied feed config
+    // (a saved feed or an unsaved draft — no save required). Seen is keyed by
+    // feed id, so a later Save won't repost these stories; lastRun advances on
+    // posted/queued/nothing (hold/deny/fail stay due, like the timer lane).
+    // Resolves {ok, ran, detail} or {ok:false, reason}. Never throws.
+    function runNewsFeedNow(feed) {
+      feed = feed || {};
+      var id = String(feed.id || '').trim().toLowerCase();
+      var site = String(feed.site || '').trim().replace(/\/+$/, '');
+      var target = String(feed.channelId || '');
+      if (!id || !/^[a-z0-9-]{1,32}$/.test(id)) return Promise.resolve({ ok: false, reason: 'missing feed id' });
+      if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(site)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
+      if (!target) return Promise.resolve({ ok: false, reason: 'assign a Posts-to channel first — Unassigned sources stay dormant' });
+      if (target !== String(cfg.channelId)) return Promise.resolve({ ok: false, reason: 'that feed posts to a different channel' });
+      function strArr(v, cap) {
+        if (v == null) return [];
+        if (!Array.isArray(v)) return null;
+        var out = [];
+        for (var i = 0; i < v.length; i++) {
+          var w = String(v[i] == null ? '' : v[i]).trim().toLowerCase();
+          if (!w) continue;
+          if (w.length > 40) return null;
+          out.push(w);
+        }
+        if (out.length > cap) return null;
+        return out;
+      }
+      var bw = strArr(feed.banWords, 50), ac = strArr(feed.allowCats, 30), bc = strArr(feed.blockCats, 30);
+      if (bw === null || ac === null || bc === null) return Promise.resolve({ ok: false, reason: 'filter words must be ≤40 chars (drop ≤50, topics ≤30)' });
+      var mx = Math.max(1, Math.min(10, Math.round(Number(feed.maxItems) || 5)));
+      var iv = Number(feed.intervalMs);
+      if (!isFinite(iv) || iv < 600000 || iv > 86400000) iv = 3600000;
+      var f = { id: id, name: String(feed.name || id).slice(0, 60), site: site, channelId: target, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc };
+      var now = clock.now();
+      return newsClaimRun().then(function (got) {
+        if (!got) return { ok: false, reason: 'a news run is already in progress — try again in a bit' };
+        function done(r) { return newsReleaseRun().then(function () { return r; }, function () { return r; }); }
+        return newsStateGet().then(function (st) {
+          var rec = (st.byFeed && st.byFeed[id]) || { lastRun: 0, seen: [] };
+          var seen = rec.seen || [];
+          return newsRunFeed(f, seen).then(function (out) {
+            if (!out || out.error) {
+              var why = (out && out.error) || 'fetch failed';
+              newsDiagRecord(st, id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: String(why).slice(0, 160) }, false);
+              return store.set(NEWS_KEY, st).then(function () { return done({ ok: false, reason: why }); });
+            }
+            if (!out.text) {
+              newsDiagRecord(st, id, { lastResult: 'nothing', lastAt: now, lastCount: 0, lastError: '' }, true);
+              return store.set(NEWS_KEY, st).then(function () { return done({ ok: true, ran: 'nothing', detail: 'checked — nothing new' }); });
+            }
+            var n = (out.items || []).length;
+            if (cfg.newsReview) return newsEnqueue(f, out, st, now).then(function (r) {
+              if (r && r.queued) {
+                newsDiagRecord(st, id, { lastResult: 'queued', lastAt: now, lastCount: n, lastError: '' }, false);
+                return store.set(NEWS_KEY, st).then(function () { return done({ ok: true, ran: 'queued', detail: 'queued for review (' + n + ' items) — see Setup → News queue' }); });
+              }
+              newsDiagRecord(st, id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: 'enqueue failed' }, false);
+              return store.set(NEWS_KEY, st).then(function () { return done({ ok: false, reason: 'enqueue failed' }); });
+            });
+            return newsPostComposed(f, out, st, now).then(function (r) {
+              if (r && r.posted) {
+                newsDiagRecord(st, id, { lastResult: 'posted', lastAt: now, lastCount: (out.urls || []).length, lastError: '' }, false);
+                return store.set(NEWS_KEY, st).then(function () { return done({ ok: true, ran: 'posted', detail: 'posted rollup (' + (out.urls || []).length + ' items)' }); });
+              }
+              if (r && r.held) {
+                newsDiagRecord(st, id, { lastResult: 'held', lastAt: now, lastCount: n, lastError: 'held by policy' }, false);
+                return store.set(NEWS_KEY, st).then(function () { return done({ ok: true, ran: 'held', detail: 'held for approval — approve with ' + cfg.commandPrefix + ' approve' }); });
+              }
+              if (r && r.denied) {
+                newsDiagRecord(st, id, { lastResult: 'denied', lastAt: now, lastCount: n, lastError: 'denied by policy' }, false);
+                return store.set(NEWS_KEY, st).then(function () { return done({ ok: true, ran: 'denied', detail: 'denied by policy' }); });
+              }
+              newsDiagRecord(st, id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: 'send failed' }, false);
+              return store.set(NEWS_KEY, st).then(function () { return done({ ok: false, reason: 'send failed' }); });
+            });
+          }).then(function (r) { return newsHeartbeat().then(function () { return r; }); });
+        });
+      });
+    }
+    // Review queue helpers (F2 review mode: cfg.newsReview stages composed
+    // rollups instead of posting). Entries live in NEWS_KEY `queue`, capped at
+    // 10 with >7d pruned on write. A queued entry reserves its urls (seen is
+    // consumed at enqueue), so discard means "skip those stories".
+    var NEWS_QUEUE_MAX = 10, newsQSeq = 0;
+    function newsQid() { newsQSeq++; return 'q' + clock.now().toString(36) + 'n' + newsQSeq.toString(36); }
+    function newsQueuePrune(st, now) {
+      var q = Array.isArray(st.queue) ? st.queue : [];
+      var weekAgo = now - 604800000;
+      q = q.filter(function (e) { return e && e.qid && e.at && e.at >= weekAgo; });
+      while (q.length > NEWS_QUEUE_MAX) q.shift();   // oldest first
+      st.queue = q;
+      return q;
+    }
+    function newsEnqueue(f, out, st, now) {
+      var rec = st.byFeed[f.id] || { lastRun: 0, seen: [] };
+      rec.seen = (rec.seen || []).concat(out.urls);
+      if (rec.seen.length > 200) rec.seen = rec.seen.slice(-200);
+      st.byFeed[f.id] = { lastRun: now, seen: rec.seen };
+      var q = newsQueuePrune(st, now);
+      var entry = { qid: newsQid(), feedId: f.id, name: (f.name || f.id), max: Math.max(1, Math.min(10, f.maxItems || 5)),
+                    target: String(cfg.channelId), at: now, items: out.items || [], text: out.text };
+      q.push(entry);
+      newsQueuePrune(st, now);   // the push may have overflowed the cap (oldest drops, never the new one... unless overfull already — shift order keeps arrival order)
+      return store.set(NEWS_KEY, st).then(function () {
+        log('[chloe.news] queued rollup from "' + (f.name || f.id) + '" (' + (out.items || []).length + ' items) — review in Setup → News queue');
+        return { queued: entry.qid, id: f.id };
+      });
+    }
+    // Shared post tail: policy gate -> send -> sent-ring/marker records.
+    // Resolves {posted, id} / {held} / {denied} / {failed}. Never throws.
+    function newsPostComposed(f, out, st, now) {
+      return actGate('news').then(function (gate) {
+        if (gate === 'hold') return holdAct('news', 'rollup from ' + (f.name || f.id)).then(function () { return { held: true }; });
+        if (gate !== 'go') return { denied: true };   // deny: lastRun untouched, stays due (queue entries stay queued)
+        // go: consume the urls into seen (a hold/deny above never touches seen,
+        // so an approved hold re-fetches the same stories instead of losing them)
+        var rec = st.byFeed[f.id] || { lastRun: 0, seen: [] };
+        var seen = (rec.seen || []).concat(out.urls);
+        if (seen.length > 200) seen = seen.slice(-200);
+        st.byFeed[f.id] = { lastRun: now, seen: seen };
+        return store.set(NEWS_KEY, st).then(function () {
+          return Promise.resolve(cfg.send(cfg.channelId, out.text)).then(function () {
+            log('[chloe.news] posted rollup from "' + (f.name || f.id) + '" (' + out.urls.length + ' items)');
+            // Redirect record: the post itself stays out of chat context (the
+            // ownline capture below skips it unless newsInContext), but its
+            // signature joins the sent ring so Thoughts can note that it went out.
+            var sent = Array.isArray(st.sent) ? st.sent : [];
+            sent.push({ feed: (f.name || f.id), fid: f.id, count: out.urls.length, at: now, sig: newsOwnSig(out.text) });
+            var weekAgo = now - 604800000;
+            sent = sent.filter(function (s) { return s && s.at && s.at >= weekAgo; });
+            while (sent.length > 10) sent.shift();
+            st.sent = sent;
+            return store.set(NEWS_KEY, st).then(function () { return { posted: true, id: f.id }; });
+          }, function () { return { failed: true }; });
+        });
+      });
+    }
+    function newsQueueFind(st, qid) {
+      var q = Array.isArray(st.queue) ? st.queue : [];
+      for (var i = 0; i < q.length; i++) { if (q[i] && q[i].qid === qid) return { entry: q[i], index: i, queue: q }; }
+      return null;
+    }
+    function newsQueueValidItems(items) {
+      if (!Array.isArray(items) || !items.length || items.length > 10) return null;
+      var out = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i] || {};
+        var title = String(it.title == null ? '' : it.title).trim().slice(0, 160);
+        var url = String(it.url == null ? '' : it.url).trim().slice(0, 500);
+        if (!title || !/^https?:\/\//i.test(url)) return null;
+        out.push({ title: title, url: url });
+      }
+      return out;
+    }
+    function listNewsQueue() {
+      return newsStateGet().then(function (st) { return { channel: String(cfg.channelId), queue: newsQueuePrune(st, clock.now()).slice() }; });
+    }
+    // Panel + timers surface: per-feed diagnostics + last-run summary (async store reads; old engines lack it).
+    function newsDiag() {
+      return newsStateGet().then(function (st) {
+        return { channel: String(cfg.channelId), byFeed: st.byFeed || {}, lastRun: st.lastRun || null,
+                 queue: Array.isArray(st.queue) ? st.queue.length : 0 };
+      });
+    }
+    function updateNewsQueue(args) {
+      var qid = String((args && args.qid) || '');
+      if (!qid) return Promise.resolve({ ok: false, reason: 'no queued item' });
+      return newsStateGet().then(function (st) {
+        var hit = newsQueueFind(st, qid);
+        if (!hit) return { ok: false, reason: 'queued item gone' };
+        if (args.items !== undefined) {
+          var items = newsQueueValidItems(args.items);
+          if (!items) return { ok: false, reason: 'items must be 1–10 {title (≤160), url} rows' };
+          hit.entry.items = items;
+        }
+        if (args.text !== undefined) {
+          var t = String(args.text == null ? '' : args.text).slice(0, 1900);
+          if (!t.trim()) return { ok: false, reason: 'text must not be empty' };
+          hit.entry.text = t;
+        }
+        newsQueuePrune(st, clock.now());
+        return store.set(NEWS_KEY, st).then(function () { return { ok: true, value: hit.entry }; });
+      });
+    }
+    function regenNewsQueue(args) {
+      var qid = String((args && args.qid) || '');
+      if (!qid) return Promise.resolve({ ok: false, reason: 'no queued item' });
+      return newsStateGet().then(function (st) {
+        var hit = newsQueueFind(st, qid);
+        if (!hit) return { ok: false, reason: 'queued item gone' };
+        var live = null;
+        (newsFeedsForHere() || []).forEach(function (f) { if (f && f.id === hit.entry.feedId) live = f; });
+        var meta = { name: (live && live.name) || hit.entry.name || hit.entry.feedId,
+                     maxItems: (live && live.maxItems) || hit.entry.max || 5 };
+        return newsComposeText(meta, hit.entry.items, meta.maxItems).then(function (text) {
+          if (!text) return { ok: false, reason: 'compose failed' };
+          hit.entry.text = text;
+          newsQueuePrune(st, clock.now());
+          return store.set(NEWS_KEY, st).then(function () {
+            log('[chloe.news] regenerated queued rollup from "' + meta.name + '"');
+            return { ok: true, value: hit.entry };
+          });
+        });
+      });
+    }
+    function dropNewsQueue(args) {
+      var qid = String((args && args.qid) || '');
+      if (!qid) return Promise.resolve({ ok: false, reason: 'no queued item' });
+      return newsStateGet().then(function (st) {
+        var hit = newsQueueFind(st, qid);
+        if (!hit) return { ok: false, reason: 'queued item gone' };
+        hit.queue.splice(hit.index, 1);
+        return store.set(NEWS_KEY, st).then(function () {
+          log('[chloe.news] discarded queued rollup from "' + (hit.entry.name || hit.entry.feedId) + '" (its stories stay marked seen)');
+          return { ok: true, value: { dropped: qid } };
+        });
+      });
+    }
+    var newsPostingQids = {};   // one in-flight manual post per queued entry (double-click guard)
+    function postNewsQueue(args) {
+      var qid = String((args && args.qid) || '');
+      if (!qid) return Promise.resolve({ ok: false, reason: 'no queued item' });
+      // Double-click guard: two rapid "Post now" presses dispatch twice before the
+      // first send drains the entry — without this, both post. Set synchronously
+      // (before the first await) so the second dispatch on the same tick sees it.
+      if (newsPostingQids[qid]) return Promise.resolve({ ok: false, reason: 'already posting that entry' });
+      newsPostingQids[qid] = true;
+      function donePost(r) { delete newsPostingQids[qid]; return r; }
+      var now = clock.now();
+      return newsStateGet().then(function (st) {
+        var hit = newsQueueFind(st, qid);
+        if (!hit) return { ok: false, reason: 'queued item gone' };
+        if (args.text !== undefined) {
+          var t = String(args.text == null ? '' : args.text).slice(0, 1900);
+          if (!t.trim()) return { ok: false, reason: 'text must not be empty' };
+          hit.entry.text = t;
+        }
+        if (!hit.entry.text || !(hit.entry.items || []).length) return { ok: false, reason: 'nothing to post' };
+        var live = null;
+        (newsFeedsForHere() || []).forEach(function (f) { if (f && f.id === hit.entry.feedId) live = f; });
+        if (!live) return { ok: false, reason: 'its feed no longer posts to this channel' };
+        var out = { text: hit.entry.text, urls: hit.entry.items.map(function (x) { return x.url; }) };
+        return newsPostComposed(live, out, st, now).then(function (r) {
+          if (r && r.posted) {
+            hit.queue.splice(hit.index, 1);
+            return store.set(NEWS_KEY, st).then(function () { return { ok: true, value: { posted: true, qid: qid, feed: live.id } }; });
+          }
+          if (r && r.held) return { ok: false, reason: 'held by policy (stays queued)' };
+          if (r && r.denied) return { ok: false, reason: 'denied by policy (stays queued)' };
+          return { ok: false, reason: 'send failed (stays queued)' };
+        });
+      }).then(function (r) { return donePost(r); }, function (e) { delete newsPostingQids[qid]; throw e; });
+    }
+    // The news lane: for each feed targeting this channel, run when its
+    // interval elapsed (seed-not-fire like beats). No activity gate — a
+    // feed-only channel is quiet by design. Autonomous output: policy-gated.
+    // Review mode stages composed rollups in the queue instead of posting.
+    // Honest reporting: ALWAYS resolves a structured result (never bare null on
+    // a forced run) — {feeds, queued, held, denied, failed, nothing, checked}
+    // plus {busy}/{blocked}/{empty}/{noFetch}/{idle} — and persists per-feed
+    // lastResult/lastError + a global lastRun summary for `!chloe news/timers`.
+    function processNews(force) {
+      var feeds = newsFeedsForHere();
+      var ids = feeds.map(function (f) { return f.id; });
+      if (!feeds.length) return Promise.resolve({ empty: true, checked: [] });
+      if (typeof cfg.fetchText !== 'function') return Promise.resolve({ noFetch: true, checked: ids });
+      if (engageMode === 'locked') return Promise.resolve({ blocked: 'locked down', checked: ids });
+      if (reply.replying) return Promise.resolve({ blocked: 'a reply is in flight', checked: ids });
+      if (paint.painting) return Promise.resolve({ blocked: 'an image is painting', checked: ids });
+      if (inProactiveSettle(clock.now())) return Promise.resolve({ blocked: 'just started (settle)', checked: ids });
+      var now = clock.now();
+      return newsStateGet().then(function (st) {
+        var due = feeds.filter(function (f) {
+          var rec = st.byFeed[f.id] || {};
+          if (force) return true;
+          if (rec.lastRun == null) return false;   // seed, don't fire on first sight
+          return (now - rec.lastRun) >= (Number(f.intervalMs) || 3600000);
+        });
+        // Seed unseen feeds so the interval starts now, never at boot.
+        var seeded = false;
+        feeds.forEach(function (f) { if (!st.byFeed[f.id]) { st.byFeed[f.id] = { lastRun: now, seen: [] }; seeded = true; } });
+        if (!due.length) {
+          if (seeded) return store.set(NEWS_KEY, st).then(function () { return { idle: true, checked: [] }; });
+          return { idle: true, checked: [] };
+        }
+        return newsClaimRun().then(function (got) {
+          if (!got) {
+            log('[chloe.news] a news run is already in flight for this channel — standing down (no double-post)');
+            return { busy: true, checked: ids };
+          }
+          function doneRun(res) {
+            res = res || {};
+            res.checked = due.map(function (f) { return f.id; });
+            st.lastRun = { at: now, forced: !!force,
+              checked: res.checked.slice(),
+              posted: (res.feeds || []).slice(), queued: (res.queued || []).slice(),
+              held: (res.held || []).slice(), denied: (res.denied || []).slice(),
+              failed: (res.failed || []).slice(), nothing: (res.nothing || []).slice(),
+              errors: (res.failed || []).map(function (e) { return (e && e.id) + ': ' + ((e && e.error) || 'failed'); }) };
+            if (res.busy) st.lastRun.busy = true;
+            if (res.blocked) st.lastRun.blocked = res.blocked;
+            return store.set(NEWS_KEY, st).then(function () { return newsReleaseRun().then(function () { return res; }, function () { return res; }); },
+              function () { return newsReleaseRun().then(function () { return res; }, function () { return res; }); });
+          }
+          var chain = Promise.resolve(), fired = [], queued = [], held = [], denied = [], failed = [], nothing = [];
+          due.forEach(function (f) {
+            chain = chain.then(function () {
+              var rec = st.byFeed[f.id] || { lastRun: 0, seen: [] };
+              return newsRunFeed(f, rec.seen).then(function (out) {
+                if (!out || out.error) {   // fetch/compose failed — interval clock untouched, retries next poll
+                  var why = (out && out.error) || 'fetch failed';
+                  log('[chloe.news] feed "' + f.id + '" failed (' + why + ')');
+                  newsDiagRecord(st, f.id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: String(why).slice(0, 160) }, false);
+                  failed.push({ id: f.id, error: why });
+                  return store.set(NEWS_KEY, st);
+                }
+                if (!out.text) {   // nothing new: advance the clock anyway (hourly cadence, not catch-up spam)
+                  log('[chloe.news] feed "' + f.id + '" — nothing new');
+                  newsDiagRecord(st, f.id, { lastResult: 'nothing', lastAt: now, lastCount: 0, lastError: '' }, true);
+                  nothing.push(f.id);
+                  return store.set(NEWS_KEY, st);
+                }
+                if (cfg.newsReview) return newsEnqueue(f, out, st, now).then(function (r) {
+                  if (r && r.queued) {
+                    newsDiagRecord(st, f.id, { lastResult: 'queued', lastAt: now, lastCount: (out.items || []).length, lastError: '' }, false);
+                    queued.push(f.id);
+                  } else {
+                    newsDiagRecord(st, f.id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: 'enqueue failed' }, false);
+                    failed.push({ id: f.id, error: 'enqueue failed' });
+                  }
+                });
+                return newsPostComposed(f, out, st, now).then(function (r) {
+                  if (r && r.posted) {
+                    newsDiagRecord(st, f.id, { lastResult: 'posted', lastAt: now, lastCount: (out.urls || []).length, lastError: '' }, false);
+                    fired.push(f.id);
+                  } else if (r && r.held) {
+                    newsDiagRecord(st, f.id, { lastResult: 'held', lastAt: now, lastCount: (out.urls || []).length, lastError: 'held by policy' }, false);
+                    held.push(f.id);
+                  } else if (r && r.denied) {
+                    newsDiagRecord(st, f.id, { lastResult: 'denied', lastAt: now, lastCount: (out.urls || []).length, lastError: 'denied by policy' }, false);
+                    denied.push(f.id);
+                  } else {
+                    newsDiagRecord(st, f.id, { lastResult: 'failed', lastAt: now, lastCount: 0, lastError: 'send failed' }, false);
+                    failed.push({ id: f.id, error: 'send failed' });
+                  }
+                  return store.set(NEWS_KEY, st);
+                });
+              }).then(function (r) { return newsHeartbeat().then(function () { return r; }); });
+            });
+          });
+          return chain.then(function () {
+            var res = {};
+            if (fired.length) res.feeds = fired;
+            if (queued.length) res.queued = queued;
+            if (held.length) res.held = held;
+            if (denied.length) res.denied = denied;
+            if (failed.length) res.failed = failed;
+            if (nothing.length) res.nothing = nothing;
+            return doneRun(res);
+          },
+            function (e) {
+              log('[chloe.news] run error (' + ((e && e.message) || e) + ')');
+              // keep the outcomes already banked (their store writes persisted);
+              // only feeds with no outcome yet are marked failed
+              var scored = {};
+              fired.concat(queued, held, denied).forEach(function (id) { scored[id] = true; });
+              failed.forEach(function (f) { if (f && f.id) scored[f.id] = true; });
+              (nothing || []).forEach(function (id) { scored[id] = true; });
+              var res = {};
+              if (fired.length) res.feeds = fired;
+              if (queued.length) res.queued = queued;
+              if (held.length) res.held = held;
+              if (denied.length) res.denied = denied;
+              if (nothing.length) res.nothing = nothing;
+              var unprocessed = due.filter(function (f) { return !scored[f.id]; })
+                .map(function (f) { return { id: f.id, error: 'run error' }; });
+              res.failed = failed.concat(unprocessed);
+              return doneRun(res);
+            });
+        });
       });
     }
 
@@ -4177,7 +5595,7 @@
                 if (stale || resolved) { delete p.conflict; changed = true; }
               }
               if (changed) p.facts = out;
-              return changed ? store.set(partKey(p.id), p) : null;
+              return changed ? userStore().set(partKey(p.id), p) : null;
             });
           });
           // stale-episode drop (channel-level, once per sweep)
@@ -4227,11 +5645,11 @@
         if (!consolidatable.length) return null;   // nothing but operator-owned facts -> leave them alone
         var inputs = consolidatable.map(function (f) { return f.text; });
         return Promise.resolve(cfg.consolidateFn({ name: due.name, facts: inputs })).then(function (r) {
-          return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+          return Promise.resolve(userStore().get(partKey(due.id))).then(function (p) {
             if (!p) return null;
             p.consolidatedAt = clock.now();
             var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : null;
-            if (!proposed) return store.set(partKey(p.id), p).then(function () { return null; });   // failed call: timestamp still bumped (don't re-pick immediately)
+            if (!proposed) return userStore().set(partKey(p.id), p).then(function () { return null; });   // failed call: timestamp still bumped (don't re-pick immediately)
             // no-invention guard: keep only proposed facts that trace to an input (normalized substring overlap)
             var inNorms = inputs.map(normFact);
             var clean = [];
@@ -4241,7 +5659,7 @@
               var traces = inNorms.some(function (inn) { return inn === nt || inn.indexOf(nt) >= 0 || nt.indexOf(inn) >= 0; });
               if (traces) clean.push(String(t).slice(0, 200));
             });
-            if (!clean.length) return store.set(partKey(p.id), p).then(function () { return null; });   // nothing validated: leave facts as-is
+            if (!clean.length) return userStore().set(partKey(p.id), p).then(function () { return null; });   // nothing validated: leave facts as-is
             // map cleaned texts back onto fact objects, preserving importance/at of the best-matching input
             var oldFacts = Array.isArray(p.facts) ? p.facts : [];
             var consolidated = clean.map(function (t) {
@@ -4258,7 +5676,7 @@
             }
             var delta = oldFacts.length - newFacts.length;
             p.facts = newFacts;
-            return store.set(partKey(p.id), p).then(function () {
+            return userStore().set(partKey(p.id), p).then(function () {
               if (delta > 0) log('[chloe.sleep] consolidated ' + due.name + '’s memory (' + oldFacts.length + ' → ' + newFacts.length + ' facts)');
               return delta > 0 ? { name: due.name, before: oldFacts.length, after: newFacts.length } : null;
             });
@@ -4284,7 +5702,7 @@
         var priorInsights = (due.insights || []).map(function (x) { return x.text; });
         return Promise.resolve(cfg.reflectFn({ name: due.name, facts: factTexts, insights: priorInsights })).then(function (r) {
           var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
-          return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+          return Promise.resolve(userStore().get(partKey(due.id))).then(function (p) {
             if (!p) return null;
             p.reflectImportanceAccum = 0; p.reflectAt = clock.now();   // reset even on an empty result (don't loop)
             var ins = Array.isArray(p.insights) ? p.insights : [];
@@ -4302,7 +5720,7 @@
             });
             if (ins.length > (cfg.insightsPerUser || 3)) ins = ins.slice(-(cfg.insightsPerUser || 3));
             p.insights = ins;
-            return Promise.all(goalPromises).then(function () { return store.set(partKey(p.id), p); }).then(function () {
+            return Promise.all(goalPromises).then(function () { return userStore().set(partKey(p.id), p); }).then(function () {
               if (added) log('[chloe.reflect] formed ' + added + ' insight(s) about ' + due.name);
               return added ? { name: due.name, added: added } : null;
             });
@@ -4331,14 +5749,14 @@
         var lines = (due.recent || []).map(function (r) { return (r && typeof r === 'object') ? String(r.content || '') : String(r || ''); }).filter(Boolean);
         if (!lines.length) {
           // nothing to learn from right now; still advance the baseline so we don't re-scan immediately
-          return Promise.resolve(store.get(partKey(due.id))).then(function (p) { if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; return store.set(partKey(p.id), p); } });
+          return Promise.resolve(userStore().get(partKey(due.id))).then(function (p) { if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; return userStore().set(partKey(p.id), p); } });
         }
         return Promise.resolve(cfg.factFn({ name: due.name, lines: lines, known: (due.facts || []).map(function (f) { return f.text; }) })).then(function (r) {
           var proposed = (r && r.ok && Array.isArray(r.value)) ? r.value : [];
           return addFacts(due.id, proposed, 'observed').then(function (added) {
-            return Promise.resolve(store.get(partKey(due.id))).then(function (p) {
+            return Promise.resolve(userStore().get(partKey(due.id))).then(function (p) {
               if (p) { p.factsBaseline = p.interactionCount || 0; p.factsAt = now; p.factsRepairedV906 = true; }   // reset the cadence window + close the v0.90.6 repair path
-              return (p ? store.set(partKey(p.id), p) : Promise.resolve()).then(function () {
+              return (p ? userStore().set(partKey(p.id), p) : Promise.resolve()).then(function () {
                 if (added) log('[chloe.facts] learned ' + added + ' fact(s) about ' + due.name);
                 return added ? { facts: added, who: due.name } : null;
               });
@@ -4456,8 +5874,31 @@
     function listBlocked() { return getBlocklist(); }
 
     // ---- partition upsert (the per-user system of record) --------------------------------
-    function ingestOne(msg, ring, indexSet, touched) {
-      // permanent tombstone gate: a blocked author is invisible to ingestion forever
+    // B1: expand text attachments on live-poll messages into m.attachText.
+    // Fail-open per file; old engines (no cfg.fetchAttachmentText) flow text-only.
+    function expandAttachments(incoming) {
+      if (typeof cfg.fetchAttachmentText !== 'function') return Promise.resolve(0);
+      var chain = Promise.resolve(), expanded = 0;
+      incoming.forEach(function (m) {
+        chain = chain.then(function () {
+          var list = selectAttachable(m && m.attachments);
+          if (!list.length) return;
+          var got = [];
+          var fchain = Promise.resolve();
+          list.forEach(function (f) {
+            fchain = fchain.then(function () {
+              return Promise.resolve(cfg.fetchAttachmentText(f)).then(function (r) {
+                if (r && r.ok && r.value) { got.push({ filename: f.filename, text: String(r.value) }); expanded++; }
+                else log('[chloe.attach] unreadable "' + f.filename + '" (' + ((r && r.reason) || 'no fetch') + ') — replying on text alone');
+              }, function () { log('[chloe.attach] unreadable "' + f.filename + '" (fetch threw) — replying on text alone'); });
+            });
+          });
+          return fchain.then(function () { if (got.length) m.attachText = formatAttachBlock(got); });
+        });
+      });
+      return chain.then(function () { return expanded; });
+    }
+    function ingestOne(msg, ring, indexSet, touched) {      // permanent tombstone gate: a blocked author is invisible to ingestion forever
       return Promise.resolve(blockStore().get(BLOCK_KEY)).then(function (bl) {
         if (isBlockedSync(bl, msg.author.id, msg.author.username)) return null;
         // ethereal (GDPR): a forgotten user forms NO memory in this bucket — no partition, no roster,
@@ -4477,15 +5918,13 @@
       });
     }
     function ingestOneCore(msg, ring, indexSet, touched) {
-      return Promise.resolve(store.get(partKey(msg.author.id))).then(function (hot) {
-        // A returning "historical friend" is restored from cold storage so their history survives.
-        // Restore is independent of cfg.archiveStale: that flag controls whether we *create* new
-        // archives, but if a cold copy already exists we must always bring it back (otherwise toggling
-        // archiving off would strand returning users as empty "new" partitions while their cold record
-        // and archive-index entry linger — a split-brain dual-pool state).
-        if (hot) return hot;
-        return restoreFromArchive(msg.author.id);
-      }).then(function (existing) {
+      // A returning "historical friend" is restored from cold storage so their history survives,
+      // and a pre-upgrade per-channel partition is converged into the shared pool on the way
+      // in (see loadPartition). Restore is independent of cfg.archiveStale: that flag controls
+      // whether we *create* new archives, but if a cold copy already exists we must always
+      // bring it back (otherwise toggling archiving off would strand returning users as empty
+      // "new" partitions while their cold record lingers — a split-brain dual-pool state).
+      return loadPartition(msg.author.id).then(function (existing) {
         // If they're not in the hot roster or archive, they could still be known from the mod log or
         // blocklist (a purged or moderated user). Resolve that BEFORE deciding "new" so we never greet
         // or prioritize a previously-seen person as a first-timer. Skip the lookup for the common case
@@ -4522,10 +5961,13 @@
         p.name = msg.author.username || p.name;
         p.lastSeen = Math.max(p.lastSeen || 0, seenAt);
         if (!p.firstSeen) p.firstSeen = seenAt;
-        // rolling window of THIS user's lines (observed facts only; no inferences hardened in)
-        var seenIds = {}; p.recent = p.recent.filter(function (ln) { var k = String(ln.id); if (k === String(msg.id) || seenIds[k]) return false; seenIds[k] = true; return true; });
-        p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '' });
-        if (p.recent.length > cfg.recentWindow) p.recent = p.recent.slice(-cfg.recentWindow);
+        // rolling window of THIS user's lines, shared cross-channel for regular channels
+        // (observed facts only; no inferences hardened in). ch tags each line's home channel
+        // so the reply transcript + rollups can stay channel-local while memory is global.
+        // Eviction is signal-aware (smartTrimRecent), not FIFO: filler goes before substance.
+        var seenIds = {}; p.recent = (p.recent || []).filter(function (ln) { var k = ln && String(ln.id); if (!ln || k === String(msg.id) || seenIds[k]) return false; seenIds[k] = true; return true; });
+        p.recent.push({ id: msg.id, ts: seenAt, content: msg.content || '', ch: cfg.channelId });
+        p.recent = smartTrimRecent(p.recent, cfg.recentWindow);
         lastLineId = msg.id;   // track newest line so `forget-that` (no reply/target) can drop it
 
         // speaker ring: dedup-consecutive distinct author ids, keep last N
@@ -4540,7 +5982,7 @@
         // T5 greeting signal (the tier is decided later, where suppression + commands are known)
         if (touched.greetInfo) touched.greetInfo[msg.author.id] = { brandNew: isNew, prevLastSeen: prevLastSeen, gapMs: prevLastSeen ? (now - prevLastSeen) : null, messageId: msg.id, name: p.name, trusted: !!(cfg.relationshipTrust && (p.trust || 0) >= cfg.trustPriorityTier) };
 
-        return store.set(partKey(msg.author.id), p);
+        return userStore().set(partKey(msg.author.id), p);
       });
     }
 
@@ -4588,7 +6030,7 @@
         var q2 = reply.queue[p.authorId];
         if (q2 && q2.messageId !== p.messageId) return { why: p.authorName + ' re-addressed with a newer message mid-generation — answering THAT instead', chain: true };
         if (engageMode === 'locked' && !isMod(p.authorId)) return { why: 'lockdown engaged mid-generation', lockAck: true };
-        return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp) {
+        return Promise.resolve(userStore().get(partKey(p.authorId))).then(function (pp) {
           if (pp && pp.state && pp.state !== 'active') return { why: 'author was moderated mid-generation' };
           return null;
         });
@@ -4699,7 +6141,7 @@
         // diagnostic: if messages arrive but all have empty content, the Message Content Intent is off
         if (!warnedEmpty && incoming.length) {
           var withText = 0; incoming.forEach(function (m) { if (String(m.content || '').trim()) withText++; });
-          if (withText === 0) { warnedEmpty = true; log('[chloe] NOTE: ingested ' + incoming.length + ' message(s) with EMPTY content. If those messages had text, enable the Message Content Intent (Discord Dev Portal \u2192 Bot \u2192 Privileged Gateway Intents). Without it she can\u2019t read non-mention messages.'); }
+          if (withText === 0) { warnedEmpty = true; log('[chloe] NOTE: ingested ' + incoming.length + ' message(s) with EMPTY content. If those messages had text, enable the Message Content Intent (Discord Dev Portal \u2192 Bot \u2192 Privileged Gateway Intents). Without that intent it can\u2019t read non-mention messages.'); }
         }
         // Startup backlog handling: on the first poll after start with no cursor (cold start / Reset
         // State), `incoming` can be a chunk of HISTORY. We must not replay historical actions from it.
@@ -4720,9 +6162,14 @@
           if (incoming.length > keep.length) log('[chloe.img] startup: image gen limited to the ' + keep.length + ' most-recent message(s) of a ' + incoming.length + '-message backlog');
         }
         startupPending = false;   // only the first poll after start gets the clamp
+        // B1: fetch text-attachment bodies before ingest (speak-gated: with no
+        // reply lane nothing consumes them; read-gate-off already returned).
+        // Stored recent keeps original content; the block rides queue content.
+        var attachP = speakOn ? expandAttachments(incoming) : Promise.resolve(0);
+        return attachP.then(function (attachN) {
         return Promise.all([
           Promise.resolve(store.get(RING_KEY)),
-          Promise.resolve(store.listIndex())
+          Promise.resolve(userStore().listIndex())
         ]).then(function (st) {
           var ring = st[0] || [];
           var indexArr = st[1] || [];
@@ -4734,7 +6181,7 @@
           var chain = Promise.resolve();
           incoming.forEach(function (m) {
             // observation (always, ungated): track bot-vs-human flow for the loop damper. This runs
-            // even for messages she won't reply to — she keeps watching the room either way.
+            // even for messages it won't reply to — it keeps watching the room either way.
             noteAuthorForLoop(!!(m.author && m.author.bot));
             // CAMPAIGN item 1: feed the converse ganglion the SAME stream so its damper + two-person + anti-repeat
             // track from the real poll. Gated by converseEngine so OFF never touches it (byte-identical). Rule-X: a
@@ -4778,23 +6225,42 @@
               var writes = [
                 store.set(RING_KEY, ring),
                 store.set(RHYTHM_KEY, rh),
-                store.setIndex(Object.keys(indexSet))
+                userStore().setIndex(Object.keys(indexSet))
               ];
               if (newCursor && newCursor !== ctx.cursor) writes.push(store.set(CURSOR_KEY, newCursor));
+              writes.push(rescanReactionModes(incoming));   // reacted-history sweep rides the writes (resolves before the summary + text lane)
               if (humanTexts.length) writes.push(updateMood(humanTexts, rh.avgGapMs));
-              if (cfg.feedbackLearning) writes.push(creditContinuation(humans));   // DESIGN-feedback: people who kept talking after her reply
+              if (cfg.feedbackLearning) writes.push(creditContinuation(humans));   // DESIGN-feedback: people who kept talking after its reply
               // conversation memory: record HER OWN messages (the ones Discord echoes back, which we drop
               // from `incoming`) into a per-channel ring, with their real snowflake timestamps, so the
-              // transcript she reads later is two-sided. Each own message is fetched exactly once (the
+              // transcript it reads later is two-sided. Each own message is fetched exactly once (the
               // cursor advances past it), so appending can't double-count.
               if (cfg.conversationMemory && cfg.botUserId) {
                 var ownNew = msgs.filter(function (m) { return m.author && m.author.id === cfg.botUserId && String(m.content || '').trim(); });
                 if (ownNew.length) {
-                  writes.push(Promise.resolve(store.get(OWNLINE_KEY)).then(function (own) {
-                    own = Array.isArray(own) ? own : [];
-                    ownNew.forEach(function (m) { own.push({ text: String(m.content).slice(0, 400), ts: snowflakeTime(m.id) || clock.now() }); });
-                    if (own.length > (cfg.ownLinesMax || 12)) own = own.slice(-(cfg.ownLinesMax || 12));
-                    return store.set(OWNLINE_KEY, own);
+                  // newsInContext false (default): own 📰 rollups stay OUT of the reply
+                  // transcript (up to 1900 chars of headlines+links would eat the context
+                  // budget and get parroted back into chat). They redirect into Thoughts
+                  // instead (newsMarkerLine). Conversational own-replies are unaffected.
+                  // true restores the classic two-sided behavior. Matching is signature-
+                  // based (newsOwnSig) so the Links gate stripping URLs at send time can't
+                  // break it; the sent ring also bounds + expires the match set.
+                  var ownGate = (cfg.newsInContext === true)
+                    ? Promise.resolve(null)
+                    : Promise.resolve(store.get(NEWS_KEY)).then(function (ns) {
+                        var sigs = {};
+                        ((ns && Array.isArray(ns.sent)) ? ns.sent : []).forEach(function (s) { if (s && s.sig) sigs[s.sig] = true; });
+                        return sigs;
+                      }, function () { return null; });
+                  writes.push(ownGate.then(function (sigs) {
+                    var keep = sigs ? ownNew.filter(function (m) { return !sigs[newsOwnSig(m.content)]; }) : ownNew;
+                    if (!keep.length) return null;
+                    return Promise.resolve(store.get(OWNLINE_KEY)).then(function (own) {
+                      own = Array.isArray(own) ? own : [];
+                      keep.forEach(function (m) { own.push({ text: String(m.content).slice(0, 400), ts: snowflakeTime(m.id) || clock.now() }); });
+                      if (own.length > (cfg.ownLinesMax || 12)) own = own.slice(-(cfg.ownLinesMax || 12));
+                      return store.set(OWNLINE_KEY, own);
+                    });
                   }));
                 }
               }
@@ -4811,6 +6277,7 @@
                 };
                 log('[chloe.T0] poll', summary.fetched + ' fetched, ' + summary.ingested +
                   ' ingested, ' + summary.newUsers.length + ' new, cursor=' + summary.cursor);
+                if (attachN) { summary.attachments = attachN; log('[chloe.attach] expanded ' + attachN + ' text file(s) this poll'); }
                 return processCommandsAndSelect(incoming, touched, imageEligible, isStartupBatch).then(function (t3) {
                   if (t3 && t3.commands) summary.commands = t3.commands;
                   if (t3 && t3.channelLangTouched) { summary.channelLangTouched = true; summary.channelLang = t3.channelLang || null; }   // v0.90.21: queen persists (onPoll)
@@ -4848,6 +6315,11 @@
                     return speakOn ? processCheckin() : null;
                   }).then(function (checkin) {
                     if (checkin) summary.checkin = checkin;
+                    // F2 news lane: deterministic (no AI), own cadence per feed — runs
+                    // outside the one-AI-pass ladder above. speakOn: its voice, its
+                    // channel. memOn not required (a rollup is output, not memory).
+                    return speakOn ? processNews(false).then(function (nr) { if (nr && nr.feeds) summary.news = nr.feeds; return null; }) : null;
+                  }).then(function (news) {
                     // AI-cadence floor (pace core): adaptive polling makes "every N polls" a variable
                     // wall-clock time; a fast room would over-run these AI passes. aiPassDue gates each
                     // on its poll cadence AND a minimum wall-clock interval since it last ran.
@@ -4862,14 +6334,23 @@
                     // with its run thunk + a base priority), then let the attention manager pick which
                     // one runs (DESIGN-attention.md). attentionManager OFF -> candidates[0] (this exact
                     // order); ON -> utility-scored, but base dominates so neutral signals == this order.
+                    // Load-gated rollups: the summary/episode timers are backstops — the bucket (transcript
+                    // lines newer than the last rollup) must be non-empty or the timer doesn't fire, and a
+                    // full bucket forces an early pass. First-ever run still waits for the timer.
+                    var sumTimer = cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1);
+                    var epiTimer = cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1);
+                    var full = Math.max(1, cfg.rollupFullLines || 20);
+                    return rollupFreshness().then(function (fr) {
+                    var sumEarly = fr.sumAt > 0 && fr.freshSum >= full;
+                    var epiEarly = fr.epiAt > 0 && fr.freshEpi >= full;
                     var cands = [];
                     if (memOn && cfg.factMemory && aiPassDue('facts', cfg.factEveryPolls > 0 && (pollCount % cfg.factEveryPolls) === 0))
                       cands.push({ name: 'facts', base: 60, run: function () { return processFacts(); } });
-                    if (memOn && cfg.channelSummary && aiPassDue('summary', cfg.channelSummaryEveryPolls > 0 && (pollCount % cfg.channelSummaryEveryPolls) === (cfg.channelSummaryEveryPolls - 1)))
-                      cands.push({ name: 'summary', base: 50, run: function () { return processChannelSummary().then(function (cs) { if (cs) { summary.channelSummary = true; summary._sumText = cs; } return null; }); } });
+                    if (memOn && cfg.channelSummary && fr.freshSum > 0 && aiPassDue('summary', sumTimer || sumEarly))
+                      cands.push({ name: 'summary', base: 50, run: function () { return processChannelSummary().then(function (cs) { if (!cs) return null; summary.channelSummary = true; summary._sumText = cs; return postThoughtsFeed(cs).then(function (posted) { if (posted && posted.thoughts) summary.thoughtsPosted = posted.thoughts; if (posted && posted.feed) summary.thoughtsFeed = posted.feed; return null; }); }); } });
                     if (memOn && cfg.reflection && aiPassDue('reflect', cfg.reflectionEveryPolls > 0 && (pollCount % cfg.reflectionEveryPolls) === (cfg.reflectionEveryPolls - 1)))
                       cands.push({ name: 'reflect', base: 40, run: function () { return processReflection().then(function (ref) { if (ref) summary.reflected = ref.name; return null; }); } });
-                    if (memOn && cfg.episodicMemory && aiPassDue('episodes', cfg.episodeEveryPolls > 0 && (pollCount % cfg.episodeEveryPolls) === (cfg.episodeEveryPolls - 1)))
+                    if (memOn && cfg.episodicMemory && fr.freshEpi > 0 && aiPassDue('episodes', epiTimer || epiEarly))
                       cands.push({ name: 'episodes', base: 30, run: function () { return processEpisodes().then(function (ep) { if (ep) summary.episodes = ep; return null; }); } });
                     if (memOn && cfg.idleConsolidation && cfg.consolidateEveryPolls > 0 && (pollCount % cfg.consolidateEveryPolls) === (cfg.consolidateEveryPolls - 1))
                       cands.push({ name: 'consolidate', base: 20, run: function () { return channelIsIdle().then(function (idle) { if (!idle) return null; return consolidateStructural().then(function () { return consolidateSemantic(); }).then(function (sem) { if (sem) summary.consolidated = sem.name; return null; }); }); } });
@@ -4877,15 +6358,16 @@
                       cands.push({ name: 'deliberate', base: 10, run: function () { return deliberate().then(function (d) { if (d) summary.deliberated = d.type; return null; }); } });
                     if (cands.length) {
                       // gather signals only when the manager is on (otherwise we just take candidates[0])
-                      if (!cfg.attentionManager) { markRan(cands[0].name); return cands[0].run(); }
+                      if (!cfg.attentionManager) { markRan(cands[0].name); return runAiPassTracked(cands[0]); }
                       return attentionSignals().then(function (sig) {
                         var chosen = chooseAttention(cands, sig) || cands[0];
                         markRan(chosen.name);   // only the pass that actually runs resets its cadence floor + staleness
-                        return chosen.run();
+                        return runAiPassTracked(chosen);
                       });
                     }
                     if (memOn && cfg.ownAffect) return affectTick().then(function () { return null; });   // not an AI pass; cheap ignored-check
                     return null;
+                    });
                   }).then(function (facts) {
                     if (facts) summary.facts = facts;
                     return checkPollExpiry();   // unconditional per-poll: lazy poll auto-close (one cheap store read, outside the one-AI-pass ladder)
@@ -4894,7 +6376,7 @@
                     pollCount++;
                     var tail = refreshPace().then(function () { return summary; });   // pace core: refresh the rhythm cache once per poll
                     if (memOn && cfg.workingMemory) { tail = tail.then(function () { return workSync(summary._sumText || null).then(function (w) { if (w && (w.topic || (w.participants && w.participants.length))) summary.workspace = { topic: w.topic, participants: (w.participants || []).length }; return summary; }); }); }
-                    if (memOn && cfg.workingMemory) {   // record her notable actions this poll into the workspace decision ring
+                    if (memOn && cfg.workingMemory) {   // record its notable actions this poll into the workspace decision ring
                       var did = [];
                       if (summary.replied) did.push('replied to ' + summary.replied);
                       if (summary.volunteered) did.push('spoke up unprompted');
@@ -4917,15 +6399,16 @@
                 });
               });
             });
-          });
-        });
-      });
+          });           // end chain.then (ingest sweep)
+        });             // end Promise.all(ring/index).then
+        });             // end attachP.then (B1 attachment expansion)
+      });               // end .then(msgs: fetched batch)
     }
 
     // ---- T1 reply path -------------------------------------------------------------------
     // Called at the end of every poll. Serves the per-author reply queue: a light global gap
-    // keeps her from flooding, while a per-author cooldown keeps one person from monopolizing
-    // her — so a different user is answered promptly even if she just replied to someone else.
+    // keeps it from flooding, while a per-author cooldown keeps one person from monopolizing
+    // it — so a different user is answered promptly even if it just replied to someone else.
     function processReply() {
       // Self-rescue: a brain/send promise that never settles would otherwise hold the single
       // reply lock forever (ack with no reply, then silence). Reclaim it loudly; the queue is
@@ -4935,13 +6418,14 @@
       if (reply.replying && (nowRs - (reply.startedAt || 0)) > (cfg.replyStallMs || 240000)) {
         log('[chloe.T1] self-rescue: reply lock stuck for ' + Math.round((nowRs - (reply.startedAt || 0)) / 1000) + 's — clearing it so the next reply can go through');
         reply.replying = false; reply.epoch++;
+        sweepLaneClaims('reply-lock watchdog');
         if (typeof cfg.releaseSend === 'function') { try { cfg.releaseSend('text'); } catch (eRs) {} }
         try { Promise.resolve(store.del(PENDING_KEY)).catch(function () {}); } catch (eRs2) {}
       }
       if (!replyEnabled() || reply.replying || !hasPendingReply()) return Promise.resolve(null);
       var now = clock.now();
       if (now - lastActAt < cfg.globalCooldownMs) return Promise.resolve(null);   // light per-channel gap
-      // bot-loop damper: in a bot-only ping-pong, decay her chance of replying toward zero so two
+      // bot-loop damper: in a bot-only ping-pong, decay its chance of replying toward zero so two
       // bots don't feed each other forever. A human message reset consecutiveBotTurns to 0 already.
       var chance = botLoopReplyChance();
       if (chance < 1) {
@@ -4957,11 +6441,11 @@
       var p = null;
       Object.keys(reply.queue).forEach(function (id) {
         var e = reply.queue[id];
-        // Cooldown feedback FIRST and independent of debounce: if she answered this person recently,
+        // Cooldown feedback FIRST and independent of debounce: if it answered this person recently,
         // the wait is real (seconds), so tell them now (⏳) rather than leaving confusing silence that
-        // reads as her ignoring or "re-reading" them. Checked before the debounce early-return.
+        // reads as being ignored or "re-read". Checked before the debounce early-return.
         if (now - (lastReplyAt[id] || 0) < cfg.cooldownMs) {            // per-author cooldown
-          if (!e.throttleAcked) { e.throttleAcked = true; ackWorking(e.messageId, cfg.ackThrottleEmoji); scheduleAckClear(e.messageId, cfg.ackThrottleEmoji); }   // ⏳ why she's not answering yet
+          if (!e.throttleAcked) { e.throttleAcked = true; ackWorking(e.messageId, cfg.ackThrottleEmoji); scheduleAckClear(e.messageId, cfg.ackThrottleEmoji); }   // ⏳ why it's not answering yet
           return;
         }
         if (now - e.at < currentDebounce()) return;                     // still bursting (rhythm-relative)
@@ -4987,6 +6471,7 @@
       indicateTyping();
       keepTypingWhile(function () { return reply.replying; });
       if (p.throttleAcked) clearAck(p.messageId, cfg.ackThrottleEmoji);   // your turn came: ⏳ hands over
+      reply.claim = { messageId: p.messageId, emoji: cfg.ackWorkingEmoji };
       ackWorking(p.messageId, cfg.ackWorkingEmoji);   // 🗣️ — generating your reply right now
       // Gap A: persist what we're answering, so a successor can resume if this engine dies mid-
       // generation. Cleared at EVERY terminal below (empty, sent, error).
@@ -5051,7 +6536,7 @@
     // ---- image path ----------------------------------------------------------------------
     // The page owns generation (only it can run text-to-image), so we hand it the prompt and
     // get back a data URL; the userscript posts it as a native attachment. Gated by its own
-    // heavy cooldown (~14s gen) plus the shared global gap. On failure she says so in text
+    // heavy cooldown (~14s gen) plus the shared global gap. On failure it says so in text
     // rather than leaving the request hanging.
     // ---- image lane (threaded) -----------------------------------------------------------
     // Image generation runs on a SEPARATE Perchance broker from text, so it threads with replies:
@@ -5066,6 +6551,7 @@
       if (paint.painting && (nowRsI - (paint.startedAt || 0)) > (cfg.paintStallMs || 300000)) {
         log('[chloe.img] self-rescue: paint lock stuck for ' + Math.round((nowRsI - (paint.startedAt || 0)) / 1000) + 's — clearing it so the next image can go through');
         paint.painting = false;
+        sweepLaneClaims('paint-lock watchdog');
         if (typeof cfg.releaseSend === 'function') { try { cfg.releaseSend('image'); } catch (eRsI) {} }
       }
       if (!imageEnabled() || paint.painting || !paint.queue.length) return null;
@@ -5077,6 +6563,7 @@
       var paintEpoch = deferGen;   // commit-point revalidation: ~14-60s of generation is the longest stale window in the system
       if (typeof cfg.noteSend === 'function') cfg.noteSend('image');      // claim the global image slot at start
       if (p.ackEmoji) { clearAck(p.messageId, p.ackEmoji); p.ackEmoji = null; }   // drop its queue-number
+      paint.claim = { messageId: p.messageId, emoji: cfg.ackImageEmoji };
       ackWorking(p.messageId, cfg.ackImageEmoji);                        // instant "painting…" ack on the request
       keepTypingWhile(function () { return paint.painting; });
       renumberQueue();                                                   // the rest of the line ticks down a place
@@ -5089,7 +6576,7 @@
         .then(function (r) {
           var dataUrl = (r && r.ok) ? String(r.value || '') : '';
           if (dataUrl.indexOf('data:') !== 0) {
-            paint.painting = false; scheduleImageChain(); lastPaintAt = clock.now();
+            paint.painting = false; paint.claim = null; scheduleImageChain(); lastPaintAt = clock.now();
             clearAck(p.messageId, cfg.ackImageEmoji);
             if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
             log('[chloe.img] no image for ' + p.authorName + ': ' + ((r && r.reason) ? r.reason : 'empty result'));
@@ -5097,10 +6584,10 @@
           }
           // revalidate before delivery: were they moderated, the engine stopped, or did another
           // engine take over the channel (freeze/thaw failover) mid-paint? Any of these -> abandon.
-          return Promise.resolve(store.get(partKey(p.authorId))).then(function (pp2) {
+          return Promise.resolve(userStore().get(partKey(p.authorId))).then(function (pp2) {
            return iHoldRunLock().then(function (holdLock) {
             if (paintEpoch !== deferGen || !holdLock || (pp2 && pp2.state && pp2.state !== 'active')) {
-              paint.painting = false; lastPaintAt = clock.now(); scheduleImageChain();
+              paint.painting = false; paint.claim = null; lastPaintAt = clock.now(); scheduleImageChain();
               clearAck(p.messageId, cfg.ackImageEmoji);
               if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image');
               log('[chloe.abandon] image not delivered — ' + (paintEpoch !== deferGen ? 'engine stopped mid-paint' : (!holdLock ? 'another engine owns the channel (failover mid-paint)' : p.authorName + ' was moderated mid-paint')));
@@ -5115,7 +6602,7 @@
             var lead = p.dm ? ('here you go, ' + p.authorName + ' \u2014 ') : ('here you go, ' + p.authorName + '! ');
             var caption = lead + (promptCap ? ('\u201c' + promptCap + '\u201d') : '');
             return Promise.resolve(cfg.sendImage(chId, dataUrl, caption)).then(function () {
-              lastPaintAt = clock.now(); paint.painting = false; scheduleImageChain();          // image clock only — do NOT touch lastActAt
+              lastPaintAt = clock.now(); paint.painting = false; paint.claim = null; scheduleImageChain();          // image clock only — do NOT touch lastActAt
               clearAck(p.messageId, cfg.ackImageEmoji);
               log('[chloe.img] delivered to ' + p.authorName + (p.dm ? ' (dm)' : ''));
               return recordImage(p.authorId, p).then(function () {
@@ -5124,12 +6611,12 @@
                 }
                 return bumpInteraction(p.authorId);
               }).then(function () { return { image: true, to: p.authorId }; });
-            }, function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return null; });
+            }, function (e) { paint.painting = false; paint.claim = null; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] send failed: ' + ((e && e.message) || e)); return Promise.resolve(cfg.send(cfg.channelId, 'sorry ' + p.authorName + ", I made your image but couldn't deliver it just now — say the word and I'll try again.")).then(function () { return null; }, function () { return null; }); });
           });
           });
           });
         })
-        .catch(function (e) { paint.painting = false; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
+        .catch(function (e) { paint.painting = false; paint.claim = null; scheduleImageChain(); clearAck(p.messageId, cfg.ackImageEmoji); if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); log('[chloe.img] paint error: ' + ((e && e.message) || e)); return null; });
       paint.lastJob = job;
       return job;
     }
@@ -5154,20 +6641,58 @@
         gate.pending = null;
         reply.replying = true; reply.startedAt = clock.now();     // reuse the single action lock
         var heldCtx = null;
+        var judgeAllowed = judgeReactionList();
+        var judgeMax = Math.max(1, Math.min(3, Number(cfg.judgeMaxReactions) || 2));
         return assembleContext(g)
-          .then(function (ctx) { heldCtx = ctx; return cfg.judge(ctx); })
+          .then(function (ctx) {
+            heldCtx = ctx;
+            // Depth for the judge: the candidate itself (text, age, author), what's
+            // already on it (pile-on + self guards), and the curated list it picks from.
+            var present = Array.isArray(g.reactions) ? g.reactions : [];
+            heldCtx.candidate = {
+              text: String(g.content || '').slice(0, 300),
+              ageMs: Math.max(0, now - g.at),
+              authorName: g.authorName || '',
+              reactions: present.slice(0, 3),
+              selfReacted: present.some(function (r) { return r && r.me; })
+            };
+            heldCtx.judgeRules = { allowed: judgeAllowed, max: judgeMax };
+            return cfg.judge(ctx);
+          })
           .then(function (j) {
             var v = (j && j.ok && j.value) ? j.value : null;
             var action = (v && (v.action === 'reply' || v.action === 'react')) ? v.action : 'ignore';
             var conf = (v && typeof v.confidence === 'number') ? v.confidence : 0;
-            var emoji = (v && v.emoji) ? String(v.emoji) : '\uD83D\uDC4D';
-            if (action === 'ignore') { reply.replying = false; log('[chloe.T2] judge: ignoring ' + g.authorName + ' — not addressed to her, volunteer declined'); return null; }
+            // Combo votes: `emojis` array wins, bare `emoji` string still works, and an
+            // emoji-less react keeps the old thumbs-up default (all filtered below).
+            var vote = [];
+            if (v) {
+              if (Array.isArray(v.emojis)) vote = v.emojis;
+              else if (v.emoji) vote = [v.emoji];
+              else if (action === 'react') vote = ['\uD83D\uDC4D'];
+            }
+            if (action === 'ignore') { reply.replying = false; log('[chloe.T2] judge: ignoring ' + g.authorName + ' — not addressed to it, volunteer declined'); return null; }
             if (conf < cfg.judgeMinConfidence) { reply.replying = false; log('[chloe.T2] judge: ' + action + ' @ ' + conf + ' < ' + cfg.judgeMinConfidence + ' -> ignore'); return null; }
             if (action === 'react') {
               if (typeof cfg.react !== 'function') { reply.replying = false; return null; }
-              return Promise.resolve(cfg.react(cfg.channelId, g.messageId, emoji)).then(function () {
-                lastActAt = clock.now(); reply.replying = false; log('[chloe.T2] reacted ' + emoji); return { react: emoji };
-              }).catch(function (e) { reply.replying = false; log('[chloe.T2] react error: ' + ((e && e.message) || e)); return null; });
+              var cand = {
+                present: (Array.isArray(g.reactions) ? g.reactions : []).map(function (r) { return r && r.e; }),
+                selfReacted: (Array.isArray(g.reactions) ? g.reactions : []).some(function (r) { return r && r.me; })
+              };
+              var plan = judgeReactionPlan(vote, cand, judgeAllowed, judgeMax);
+              if (!plan.ok) { reply.replying = false; log('[chloe.T2] react declined (' + plan.why + ')'); return null; }
+              var chain = Promise.resolve(), done = [];
+              plan.emojis.forEach(function (em) {
+                chain = chain.then(function () {
+                  return Promise.resolve(cfg.react(cfg.channelId, g.messageId, em)).then(function () { done.push(em); },
+                    function (e) { log('[chloe.T2] react add failed (' + em + ': ' + ((e && e.message) || e) + ')'); });
+                });
+              });
+              return chain.then(function () {
+                lastActAt = clock.now(); reply.replying = false;
+                if (!done.length) { log('[chloe.T2] react votes all failed to add'); return null; }
+                log('[chloe.T2] reacted ' + done.join(' ')); return { react: done.join(' ') };
+              });
             }
             // action === 'reply'
             indicateTyping();
@@ -5186,14 +6711,14 @@
     // Tier C: a shared view rebuilt every time, then discarded. Merges recent lines across
     // partitions (the channel flow) + who is addressing. Never persisted as a blob.
     // Token chunker. The backend's effective context is small, so rather than a flat line cap we
-    // pack the MOST RECENT conversation into a token budget: newest lines first (the exchange she's
+    // pack the MOST RECENT conversation into a token budget: newest lines first (the exchange it's
     // actually replying to always survives), kept in chronological order for the prompt. Estimate is
     // deliberately conservative (~4 chars/token + a little per-line overhead for the speaker label)
     // so we under-fill rather than overflow the window.
     // ---- attention manager (DESIGN-attention.md): utility-scored AI-pass selection ---------------
     // Among the passes DUE this poll, pick which one runs by a utility score instead of fixed order.
     // base = today's standing priority (dominant term, so neutral signals == today's order). Modifiers
-    // are small re-rankers driven by her state; staleness is monotonic so nothing starves. Pure +
+    // are small re-rankers driven by its state; staleness is monotonic so nothing starves. Pure +
     // deterministic; exported for the harness. `candidates`: [{name, base}]; `signals`: see chooseAttention.
     function attentionScore(cand, signals) {
       var s = cand.base;
@@ -5245,14 +6770,14 @@
     // ---- output hygiene (DESIGN-clean.md): scrub model-mechanics noise from a reply -------------
     // Removes artifacts that are never intended output: a leading "Name:" role-bleed prefix, a 3x word
     // stutter, an unbalanced code fence, and a clearly-incomplete dangling tail. Each step is no-op-safe
-    // and NEVER empties a valid reply. Idempotent. opts.names = her name + aliases (only those + generic
+    // and NEVER empties a valid reply. Idempotent. opts.names = its name + aliases (only those + generic
     // speaker labels are stripped, so mid-message colons survive).
     function cleanReply(text, opts) {
       opts = opts || {};
       var s = String(text == null ? '' : text);
       if (!s) return s;
       var original = s;
-      // 1) strip a LEADING role-name prefix ("Name:" / "Name \u2014" / "Name -"), once, only her own
+      // 1) strip a LEADING role-name prefix ("Name:" / "Name \u2014" / "Name -"), once, only its own
       //    names/aliases + known generic labels (not arbitrary capitalized words).
       var labels = [];
       (opts.names || []).forEach(function (n) { if (n) labels.push(String(n)); });
@@ -5282,8 +6807,8 @@
       s = s.replace(/^\s+|\s+$/g, '');
       return s || original;   // absolute guard: never return empty for a non-empty input
     }
-    // ---- self-knowledge (DESIGN-selfknow.md): one grounding line built from her own config ---------
-    // She doesn't otherwise know her prefix / that she's a bot / how she's summoned, yet users ask.
+    // ---- self-knowledge (DESIGN-selfknow.md): one grounding line built from its own config ---------
+    // It doesn't otherwise know its prefix / that it's a bot / how it's summoned, yet users ask.
     // Pure, assembled from live config; omits any clause whose config isn't set; never fabricates.
     function selfKnowledgeText() {
       var name = cfg.botName ? String(cfg.botName) : 'Chloe';
@@ -5295,7 +6820,7 @@
       var emo = (cfg.summonEmoji && cfg.summonEmoji.length) ? cfg.summonEmoji[0] : '';
       if (emo) reach.push('reacting ' + emo + ' to their own message also gets your attention');
       if (reach.length) parts.push('To reach you: ' + reach.join('; ') + '.');
-      // Operational self-state (DESIGN-semantic §5b): so she can answer "how long have you been up?",
+      // Operational self-state (DESIGN-semantic §5b): so it can answer "how long have you been up?",
       // "what version are you?", "what mode are you in?" truthfully instead of guessing. TRUE facts
       // auto-built from runtime state, like the device clock — grounding, never instructions.
       var op = [];
@@ -5562,11 +7087,13 @@
       gather: function (g) {
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           if (!Array.isArray(ring) || !ring.length) return null;
-          // Query tokens (always built — they're the fallback and they're free).
-          // Matching per DESIGN §7a: lowercase, punctuation-stripped, tokens ≥3 chars, exact overlap.
-          function toks(s) {
-            return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(function (w) { return w.length >= 3; });
-          }
+         // Query tokens (always built — they're the fallback and they're free).
+         // Matching per DESIGN §7a: lowercase, punctuation-stripped, tokens ≥3 chars, exact overlap.
+         function toks(s) {
+            // Delegates to the shared episodeQueryTokens() (also used by !recall
+            // scoring): one definition, identical behavior, no drift.
+            return episodeQueryTokens(s);
+         }
           var qWords = [];
           toks(g.p && g.p.content).forEach(function (w) { qWords.push(w); });
           (g.lines || []).slice(-3).forEach(function (l) { toks(l.text).forEach(function (w) { qWords.push(w); }); });
@@ -5610,7 +7137,7 @@
               if (nb && !pickedIds[nb.id]) hop = nb.text;
             }
             // FSRS-lite strengthening: recalling a memory makes it stickier — grow stability and reset its
-            // clock on the episodes we actually surface, so the ones she revisits stay sharp and the rest
+            // clock on the episodes we actually surface, so the ones it revisits stay sharp and the rest
             // fade. Persist the bump (only in semantic mode, where stability exists).
             var strengthen = Promise.resolve();
             if (semantic) {
@@ -5628,8 +7155,8 @@
         });
       } });
 
-    // Contradiction clarify (DESIGN-contradiction): if she's holding a FRESH unresolved conflict about
-    // the person she's addressing, surface it as soft guidance — she MAY gently check which is current,
+    // Contradiction clarify (DESIGN-contradiction): if it's holding a FRESH unresolved conflict about
+    // the person it's addressing, surface it as soft guidance — it MAY gently check which is current,
     // but it's the model's call (descriptive, not a forced question). Goes quiet after the fresh window
     // so it can't nag every reply; the conflict stays recorded (for aboutme) until it resolves or ages out.
     registerProvider({ id: 'contradiction', priority: BANDS.PERSON,
@@ -5693,8 +7220,8 @@
         return Promise.resolve({ text: line, tokens: estimateTokens(line) });
       } });
 
-    // Image awareness: tell the brain what she recently drew for THIS person, so she can reference it
-    // naturally ("that fox I made you") instead of acting like she has no idea. Read-only; the prompts
+    // Image awareness: tell the brain what it recently drew for THIS person, so it can reference it
+    // naturally ("that fox I made you") instead of acting like it has no idea. Read-only; the prompts
     // ride into context only when imageMemory is on and the addressed person has recent generations.
     registerProvider({ id: 'imagesMade', priority: BANDS.PERSON,
       enabled: function (c) { return !!c.imageMemory; },
@@ -5785,7 +7312,7 @@
         // warmth follows the stronger of the two histories (a public regular is a regular in DMs)
         base.interactionCount = Math.max(base.interactionCount || 0, pub.interactionCount || 0);
         if (cfg.relationshipTrust) base.trust = Math.max(base.trust || 0, pub.trust || 0);
-        // image awareness carries over read-only (she can reference a public drawing in a DM); but
+        // image awareness carries over read-only (it can reference a public drawing in a DM); but
         // editing still targets the LOCAL bucket's lastImage, so a DM edit never regenerates a public one.
         if (!base.images && Array.isArray(pub.images)) base.images = pub.images.slice(-2);
         return base;
@@ -5796,8 +7323,8 @@
     function assembleContext(p) {
       return getRoster().then(function (roster) {
         var now = clock.now();
-        roster = roster.filter(function (u) { return !isSuppressed(u, now); });  // T3: suppressed users are invisible to her
-        // conversation memory: a name map so opaque <@id>/<#id> refs in what she reads resolve to
+        roster = roster.filter(function (u) { return !isSuppressed(u, now); });  // T3: suppressed users are invisible to it
+        // conversation memory: a name map so opaque <@id>/<#id> refs in what it reads resolve to
         // readable @names / #channels instead of being stripped to blanks.
         var nameById = {};
         if (cfg.conversationMemory) {
@@ -5809,7 +7336,7 @@
         // prompt-injection defense). Gated by trustHardening so OFF is byte-identical. The real author is still `u.name`.
         var lines = [];
         roster.forEach(function (u) {
-          (u.recent || []).forEach(function (ln) { lines.push({ who: u.name, id: u.id, text: lineText(defangLabel(ln.content)), ts: ln.ts }); });
+          (u.recent || []).forEach(function (ln) { if (ln && ln.ch && ln.ch !== cfg.channelId) return; lines.push({ who: u.name, id: u.id, text: lineText(defangLabel(ln.content)), ts: ln.ts }); });
         });
         return (cfg.conversationMemory ? Promise.resolve(store.get(OWNLINE_KEY)) : Promise.resolve(null)).then(function (own) {
           // fold HER OWN recent messages in by timestamp, so the transcript reads as the real back-and-forth
@@ -5830,7 +7357,7 @@
         return dmPublicMerge(localAddressed, p.authorId).then(function (addressed) {
         // The transcript gets whatever's left of the request budget (default 5000) after everything
         // else is accounted for: fixed prompt scaffolding + the variable parts we send (the addressed
-        // message, her recent-reply anti-repeat list, persona note, standing intent).
+        // message, its recent-reply anti-repeat list, persona note, standing intent).
         var reserve = (cfg.promptOverheadTokens || 0)
           + estimateTokens(scrubDiscordTokens(p.content));
         recentReplies.forEach(function (t) { reserve += estimateTokens(t) + 2; });
@@ -5889,6 +7416,11 @@
     }
     function clearProcMode() { return Promise.resolve(store.del(PROC_KEY)); }
     var procReactSeen = {}; var procReactKeys = [];
+    // A verify failure must not burn the slot: restore the prior count so the
+    // next poll retries (transient 429s otherwise silence it until someone
+    // bumps the count). Empty / non-mod stays stamped by design (count-gated —
+    // a NEW reaction retries; avoids 1 GET/poll per stranger-react).
+    function unmarkProc(key, prior) { if (!prior) { delete procReactSeen[key]; var ix = procReactKeys.indexOf(key); if (ix >= 0) procReactKeys.splice(ix, 1); } else { procReactSeen[key] = prior; } }
     function procCheckReactions(msg) {
       if (!cfg.proceduralModes || !Array.isArray(cfg.procRules) || !cfg.procRules.length) return Promise.resolve(null);
       if (typeof cfg.reactionUsers !== 'function' || !msg || !msg.reactions || !msg.reactions.length) return Promise.resolve(null);
@@ -5909,16 +7441,19 @@
             var modUser = (users || []).filter(function (u) { return u && u.id && isMod(u.id); })[0];
             if (!modUser) return null;                           // modOnly is FIXED in v1: non-mod reactions never trigger
             return activateProcMode(rule, modUser.username || modUser.id).then(function (rec) { if (rec) activated = rec; });
-          }, function (e) { log('[chloe.react] proc reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); return null; });
+          }, function (e) { log('[chloe.react] proc reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); unmarkProc(key, prior); return null; });
         });
       });
       return chain.then(function () { return activated; });
     }
 
     // ---- reaction summon -------------------------------------------------------------------
-    // She elected not to reply; the author flags their own message with one of HER emojis (or a mod
+    // It elected not to reply; the author flags their own message with one of HER emojis (or a mod
     // flags anyone's) and that becomes an explicit address through the NORMAL reply pipeline.
     var summonSeen = {}; var summonKeys = [];
+    // A verify failure must NOT burn the message: unmark so the next poll
+    // retries (transient 429s/perm blips otherwise silence it forever).
+    function unmarkSummon(key) { delete summonSeen[key]; var ix = summonKeys.indexOf(key); if (ix >= 0) summonKeys.splice(ix, 1); }
     function summonCheckReactions(msg) {
       if (!cfg.reactionSummon || typeof cfg.reactionUsers !== 'function') return Promise.resolve(null);
       if (!msg || !msg.author || msg.author.id === cfg.botUserId || msg.author.bot) return Promise.resolve(null);
@@ -5935,19 +7470,49 @@
       return Promise.resolve(cfg.reactionUsers(msg.id, hit.emoji.name)).then(function (users) {
         var byAuthor = (users || []).some(function (u) { return u && u.id === msg.author.id; });
         var byMod = (users || []).some(function (u) { return u && u.id && isMod(u.id); });
-        if (!byAuthor && !byMod) return null;   // someone ELSE's reaction on your message is not your summon
+        if (!byAuthor && !byMod) { unmarkSummon(key); return null; }   // someone ELSE's reaction on your message is not your summon (retryable: reactors may change)
         if (engageMode === 'locked' && !byMod) {   // lockdown holds unless a mod is doing the summoning
           ackWorking(msg.id, cfg.ackLockdownEmoji); scheduleAckClear(msg.id, cfg.ackLockdownEmoji);
           return null;
         }
-        return Promise.resolve(store.get(partKey(msg.author.id))).then(function (pp) {
+        return Promise.resolve(userStore().get(partKey(msg.author.id))).then(function (pp) {
           if (pp && pp.state && pp.state !== 'active') return null;   // quiet moderation stays quiet — no reply, no tell
-          reply.queue[msg.author.id] = { messageId: msg.id, authorId: msg.author.id, authorName: msg.author.username, content: msg.content || '', at: clock.now(), priority: replyPriority({ isMod: isMod(msg.author.id), kind: 'ping', isNew: false }) };
+          reply.queue[msg.author.id] = { messageId: msg.id, authorId: msg.author.id, authorName: msg.author.username, content: contentWithAttach(msg), at: clock.now(), priority: replyPriority({ isMod: isMod(msg.author.id), kind: 'ping', isNew: false }) };
           log('[chloe.summon] ' + (byAuthor ? msg.author.username : 'a mod') + ' summoned a reply via ' + hit.emoji.name);
           scheduleTextChain();   // answer at generation speed, not poll speed
           return msg.author.id;
         });
-      }, function (e) { log('[chloe.react] summon reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); return null; });
+      }, function (e) { log('[chloe.react] summon reaction-users failed for ' + msg.id + ': ' + ((e && e.message) || e)); unmarkSummon(key); return null; });
+    }
+
+    // ---- reaction-mode rescan ------------------------------------------------------
+    // Ingest only sees messages newer than the cursor, so a summon emoji added to
+    // an already-ingested message would otherwise never be examined (normal human
+    // timing: react seconds/minutes after the message lands). Once per poll, sweep
+    // the newest window via the existing recentFetch seam and run the two
+    // reaction-mode checks over messages this poll hasn't ingested (ingested ones
+    // already ran the full reaction chain; summonSeen/procReactSeen dedups the rest;
+    // tally/feedback/affect lanes are untouched so nothing double-processes).
+    // Queued summons ride the SAME poll's text lane; proc activations land before
+    // the text lane too so the mode applies to this poll's replies. Self-gating:
+    // no-op unless a mode + recentFetch exist. One fetch serves both checks.
+    function rescanReactionModes(ingested) {
+      if ((!cfg.reactionSummon && (!cfg.proceduralModes || !Array.isArray(cfg.procRules) || !cfg.procRules.length)) || typeof cfg.recentFetch !== 'function') return Promise.resolve(0);
+      return Promise.resolve(cfg.recentFetch(30)).then(function (msgs) {
+        msgs = Array.isArray(msgs) ? msgs : [];
+        var seen = {};
+        (Array.isArray(ingested) ? ingested : []).forEach(function (m) { if (m && m.id) seen[m.id] = true; });
+        var fresh = msgs.filter(function (m) { return m && m.id && !seen[m.id]; });
+        var chain = Promise.resolve(), nSum = 0, nProc = 0;
+        fresh.forEach(function (m) {
+          chain = chain.then(function () { return procCheckReactions(m); }).then(function (r) { if (r) nProc++; });
+          chain = chain.then(function () { return summonCheckReactions(m); }).then(function (r) { if (r) nSum++; });
+        });
+        return chain.then(function () {
+          if (nSum) log('[chloe.summon] rescan queued ' + nSum + ' summon(s) from reacted history');
+          return nSum + nProc;
+        });
+      }, function () { return 0; });   // recent fetch failed: modes keep working on the ingest path
     }
 
     // ---- reaction polls ----------------------------------------------------------------------
@@ -5980,7 +7545,7 @@
           return Promise.resolve(cfg.fetchMessage(rec.messageId)).then(function (msg) {
             var counts = rec.options.map(function (o, i) {
               var r = ((msg && msg.reactions) || []).filter(function (x) { return x && x.emoji && x.emoji.name === POLL_NUMS[i]; })[0];
-              var c = r ? (r.count || 0) - (r.me ? 1 : 0) : 0;   // subtract her own seed
+              var c = r ? (r.count || 0) - (r.me ? 1 : 0) : 0;   // subtract its own seed
               return { option: o, votes: Math.max(0, c) };
             });
             counts.sort(function (a, b) { return b.votes - a.votes; });
@@ -6018,14 +7583,14 @@
           if (!idle) return false;                                  // idle gate
           return affectLoad().then(function (a) {
             return (a && (a.curiosity || 0) >= (cfg.deliberateCuriosityFloor || 0.62)) ||   // curiosity gate
-              dueSelfIntent('revisit').then(function (it) { return !!it; });   // ...OR a revisit she scheduled for herself is due (she follows through even if curiosity has settled)
+              dueSelfIntent('revisit').then(function (it) { return !!it; });   // ...OR a revisit it scheduled for itself is due (it follows through even if curiosity has settled)
           });
         });
       });
     }
     // Pick a seed from the workspace by mode (falls back to partitions when working memory is off).
     function deliberateSeed() {
-      // A self-scheduled revisit takes precedence: she comes back to a subject she earlier found worth
+      // A self-scheduled revisit takes precedence: it comes back to a subject it earlier found worth
       // re-thinking. Consume it (one-shot) and re-approach it fresh, flagged so it won't re-schedule itself.
       return dueSelfIntent('revisit').then(function (it) {
         if (it) return consumeSelfIntent(it.id).then(function () {
@@ -6073,8 +7638,8 @@
                   return deliberateWriteBack(seed, type, text).then(function (stored) {
                     log('[chloe.think] concluded: ' + String(text).slice(0, 80));
                     // self-scheduled future cognition: if this was a SPONTANEOUS conclusion worth keeping
-                    // (not itself a revisit), schedule a single later revisit of the subject — she'll come
-                    // back to it on her own. Revisit-triggered deliberations don't re-schedule (no loop).
+                    // (not itself a revisit), schedule a single later revisit of the subject — it'll come
+                    // back to it on its own. Revisit-triggered deliberations don't re-schedule (no loop).
                     var sched = (stored && !seed.fromRevisit && cfg.deferredIntents && seed.subject)
                       ? scheduleSelfIntent('revisit', cfg.selfIntentRevisitMs || 21600000, { subject: seed.subject })
                       : Promise.resolve(null);
@@ -6097,7 +7662,7 @@
         return addGoal(t, seed.who, seed.subject, 'deliberate').then(function () { return true; });
       }
       if (type === 'insight' && seed.who) {
-        return Promise.resolve(store.get(partKey(seed.who))).then(function (p) {
+        return Promise.resolve(userStore().get(partKey(seed.who))).then(function (p) {
           if (!p) return false;
           var ins = Array.isArray(p.insights) ? p.insights : [];
           var nk = normFact(t);
@@ -6105,10 +7670,10 @@
           ins.push({ id: 'd' + clock.now().toString(36), text: t, at: clock.now(), source: 'deliberate' });
           if (ins.length > (cfg.insightsPerUser || 3)) ins = ins.slice(-(cfg.insightsPerUser || 3));
           p.insights = ins;
-          return store.set(partKey(p.id), p).then(function () { return true; });
+          return userStore().set(partKey(p.id), p).then(function () { return true; });
         });
       }
-      // default: record it as an episode (a thought she had), if episodic memory is on
+      // default: record it as an episode (a thought it had), if episodic memory is on
       if (cfg.episodicMemory) {
         return Promise.resolve(store.get(EPI_KEY)).then(function (ring) {
           ring = Array.isArray(ring) ? ring : [];
@@ -6137,7 +7702,7 @@
       });
     }
     function workSave(w) { w.at = clock.now(); return store.set(WORK_KEY, w).then(function () { return w; }); }
-    // Record one notable action she just took (reply / decline / greet / poll / volunteer). Local-only.
+    // Record one notable action it just took (reply / decline / greet / poll / volunteer). Local-only.
     function noteDecision(text) {
       if (!cfg.workingMemory || !text) return Promise.resolve(null);
       return workLoad().then(function (w) {
@@ -6151,7 +7716,7 @@
       return getSpeakerRing().then(function (ring) {
         var ids = []; (ring || []).slice(-(cfg.workParticipantsMax || 5) * 2).forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); });
         ids = ids.slice(-(cfg.workParticipantsMax || 5));
-        return Promise.all(ids.map(function (id) { return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && p.name) || null; }); }))
+        return Promise.all(ids.map(function (id) { return Promise.resolve(userStore().get(partKey(id))).then(function (p) { return (p && p.name) || null; }); }))
           .then(function (names) { return names.filter(Boolean); });
       });
     }
@@ -6231,7 +7796,7 @@
         return store.set(AFFECT_KEY, a).then(function () { return a; });
       });
     }
-    // Engagement tracking: did anyone keep talking after her last reply?
+    // Engagement tracking: did anyone keep talking after its last reply?
     var affectReply = { at: 0, settled: true };
     function affectOnHerReply() { if (cfg.ownAffect) { affectReply.at = clock.now(); affectReply.settled = false; } }
     function affectOnUserMessage() {
@@ -6276,7 +7841,7 @@
       return true;
     }
     function addTrust(id, amount) {
-      return Promise.resolve(store.get(partKey(id))).then(function (pp) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (pp) {
         if (!pp) return false;
         var changed = applyTrust(pp, amount, clock.now());
         // item 3: a POSITIVE reaction is a 'reward' for the bond (the one negative-free signal we can read cleanly;
@@ -6284,7 +7849,7 @@
         var bondChanged = false;
         if (cfg.bondLadder && amount > 0) { try { var bb = makeBond({ state: pp.bond }); var br = bb.update({ kind: 'reward', now: clock.now() }); pp.bond = bb.serialize(); bondChanged = true; if (br.promoted) log('[wire:bond] ' + (pp.name || id) + ' -> ' + br.tier + ' (reward, ' + br.value + ')'); } catch (e) { log('[wire:bond] reward update threw', (e && e.message) || e); } }
         if (!changed && !bondChanged) return false;
-        return store.set(partKey(id), pp).then(function () { return true; });
+        return userStore().set(partKey(id), pp).then(function () { return true; });
       });
     }
     function bumpInteraction(id) {
@@ -6293,20 +7858,46 @@
       // concurrent ingestOneCore write could be overwritten. bumpInteraction ONLY touches its own
       // fields (interactionCount, lastChloeReplyTo, trust) — it never clobbers recent/lastSeen/name.
       affectOnHerReply();   // open the engagement window (own affect) — fire-and-forget, before the read
-      return Promise.resolve(store.get(partKey(id))).then(function (pp) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (pp) {
         if (!pp) return;
         pp.interactionCount = (pp.interactionCount || 0) + 1;
         pp.lastChloeReplyTo = clock.now();
         applyTrust(pp, cfg.trustReplyGain || 1, clock.now());
         if (cfg.bondLadder) { try { var bb = makeBond({ state: pp.bond }); var br = bb.update({ kind: 'conversation', now: clock.now() }); pp.bond = bb.serialize(); if (br.promoted) log('[wire:bond] ' + (pp.name || id) + ' -> ' + br.tier + ' (' + br.value + ')'); } catch (e) { log('[wire:bond] conversation update threw', (e && e.message) || e); } }   // item 3: a reply exchange grows the bond (additive; interactionCount/trust untouched)
-        return store.set(partKey(id), pp);
+        return userStore().set(partKey(id), pp);
       });
     }
 
     // ---- roster read ---------------------------------------------------------------------
     function getRoster() {
-      return Promise.resolve(store.listIndex()).then(function (ids) {
-        return Promise.all((ids || []).map(function (id) { return Promise.resolve(store.get(partKey(id))); }));
+      var ustore = userStore();
+      // Converge pre-upgrade per-channel partitions on read: union the legacy local
+      // index, migrate anything missing globally, then read the shared pool. After the
+      // first poll converges everything, `extra` is empty and this is one extra index read.
+      function withMigration() {
+        if (!sharedUsers()) return Promise.resolve(null);
+        return Promise.resolve(localRaw.listIndex()).then(function (lids) {
+          return Promise.resolve(ustore.listIndex()).then(function (gids) {
+            gids = gids || [];
+            var extra = (lids || []).filter(function (id) { return gids.indexOf(id) < 0; });
+            if (!extra.length) return gids;
+            var chain = Promise.resolve();
+            extra.forEach(function (id) {
+              chain = chain.then(function () {
+                return Promise.resolve(localRaw.get(partKey(id))).then(function (legacy) {
+                  if (!legacy) return;
+                  return Promise.resolve(mergeLegacyPartition(legacy)).catch(function () {});
+                });
+              });
+            });
+            return chain.then(function () { return ustore.listIndex(); });
+          });
+        });
+      }
+      return withMigration().then(function () {
+        return Promise.resolve(ustore.listIndex()).then(function (ids) {
+          return Promise.all((ids || []).map(function (id) { return Promise.resolve(ustore.get(partKey(id))); }));
+        });
       }).then(function (parts) {
         // A7: tier rides each row (zero extra reads — the partition IS the resident
         // evidence; admin comes from the mod list). Guests never appear in the roster.
@@ -6322,15 +7913,39 @@
     // ---- archive ("historical friends") -----------------------------------------------------
     // Cold records leave the hot store so the main roster stays fast. Per-user keys; an index is kept
     // only for pruning/inspection and is never read on the message hot path.
-    function getArchiveIndex() { return Promise.resolve(store.get(ARCH_INDEX_KEY)).then(function (a) { return Array.isArray(a) ? a : []; }); }
+    function getArchiveIndex() {
+      var ustore = userStore();
+      return Promise.resolve(ustore.get(archIndexKey())).then(function (a) {
+        var out = Array.isArray(a) ? a.slice() : [];
+        if (!sharedUsers()) return out;
+        return Promise.resolve(ustore.get(legacyArchIndexKey())).then(function (b) {
+          (Array.isArray(b) ? b : []).forEach(function (id) { if (out.indexOf(id) < 0) out.push(id); });
+          return Promise.resolve(localRaw.get(legacyArchIndexKey())).then(function (c) {
+            (Array.isArray(c) ? c : []).forEach(function (id) { if (out.indexOf(id) < 0) out.push(id); });
+            return out;
+          }, function () { return out; });
+        }, function () { return out; });
+      });
+    }
     // Completely remove a user's cold archive record (data + index entry). Used by purge/block so an
     // erasure is total — otherwise an archived user who is blocked keeps their cold copy, and the
     // novelty check would still report them "known from archive" after they were supposedly forgotten.
     function dropFromArchive(id) {
       var sid = String(id || '');
-      return Promise.resolve(store.del(archKey(sid)))
-        .then(function () { return getArchiveIndex(); })
-        .then(function (idx) { var i = idx.indexOf(sid); if (i >= 0) { idx.splice(i, 1); return store.set(ARCH_INDEX_KEY, idx); } });
+      var ustore = userStore();
+      function stripIndex(getter, setter) {
+        return Promise.resolve(getter()).then(function (idx) {
+          if (!Array.isArray(idx) || idx.indexOf(sid) < 0) return;
+          idx.splice(idx.indexOf(sid), 1);
+          return Promise.resolve(setter(idx)).catch(function () {});
+        }).catch(function () {});
+      }
+      return Promise.resolve(ustore.del(archKey(sid))).catch(function () {})
+        .then(function () { return Promise.resolve(ustore.del(legacyArchKey(sid))).catch(function () {}); })
+        .then(function () { return Promise.resolve(localRaw.del(legacyArchKey(sid))).catch(function () {}); })
+        .then(function () { return stripIndex(function () { return ustore.get(archIndexKey()); }, function (idx) { return ustore.set(archIndexKey(), idx); }); })
+        .then(function () { return stripIndex(function () { return ustore.get(legacyArchIndexKey()); }, function (idx) { return ustore.set(legacyArchIndexKey(), idx); }); })
+        .then(function () { return stripIndex(function () { return localRaw.get(legacyArchIndexKey()); }, function (idx) { return localRaw.set(legacyArchIndexKey(), idx); }); });
     }
     // Before calling anyone "new", check the surfaces a known person can hide in even when they're
     // absent from the hot roster: the cold archive ("historical friends"), the mod log (someone we
@@ -6361,20 +7976,22 @@
       });
     }
     function archiveUser(id, reason) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      var ustore = userStore();
+      return Promise.resolve(ustore.get(partKey(id))).then(function (p) {
         if (!p) return { ok: false, reason: 'unknown' };
         p.archivedAt = clock.now(); p.archivedReason = reason || 'stale';
-        return Promise.resolve(store.set(archKey(id), p))
-          .then(function () { return store.del(partKey(id)); })
+        return Promise.resolve(ustore.set(archKey(id), p))
+          .then(function () { return ustore.del(partKey(id)); })
           .then(function () { return removeFromIndex(id); })
-          .then(function () { return getArchiveIndex(); })
+          .then(function () { return ustore.get(archIndexKey()); })
           .then(function (idx) {
+            idx = Array.isArray(idx) ? idx : [];
             if (idx.indexOf(id) < 0) idx.push(id);
             if (idx.length > cfg.archiveMaxKept) {   // prune the oldest archived ids (cold-cold)
               var drop = idx.splice(0, idx.length - cfg.archiveMaxKept);
-              return Promise.all(drop.map(function (d) { return Promise.resolve(store.del(archKey(d))); })).then(function () { return store.set(ARCH_INDEX_KEY, idx); });
+              return Promise.all(drop.map(function (d) { return Promise.resolve(ustore.del(archKey(d))); })).then(function () { return ustore.set(archIndexKey(), idx); });
             }
-            return store.set(ARCH_INDEX_KEY, idx);
+            return ustore.set(archIndexKey(), idx);
           })
           .then(function () { log('[chloe.archive] moved ' + (p.name || id) + ' to historical friends (' + (reason || 'stale') + ')'); return { ok: true, name: p.name || id }; });
       });
@@ -6382,20 +7999,28 @@
     // Restore a returning friend from cold storage so their history (interaction count, summary,
     // first-seen) is preserved rather than starting from zero. Returns the restored partition or null.
     function restoreFromArchive(id) {
-      return Promise.resolve(store.get(archKey(id))).then(function (p) {
-        if (!p) return null;
+      var ustore = userStore();
+      function commit(p) {
         delete p.archivedAt; delete p.archivedReason;
         // Durability: commit the hot copy and re-index FIRST, then delete the cold copy. The reverse
         // order (the previous behavior) destroyed the only copy before the hot write landed, so a
         // throw or a closed tab mid-restore lost the user's entire history. Worst case now is a
         // harmless duplicate (cold + hot) that the next sweep reconciles — never data loss.
-        return Promise.resolve(store.set(partKey(id), p))
+        return Promise.resolve(ustore.set(partKey(id), p))
           .then(function () { return ensureIndexed(id); })
-          .then(function () { return store.del(archKey(id)); })
-          .then(function () { return getArchiveIndex(); })
-          .then(function (idx) { var i = idx.indexOf(id); if (i >= 0) { idx.splice(i, 1); return store.set(ARCH_INDEX_KEY, idx); } })
+          .then(function () { return dropFromArchive(id); })   // clears live + legacy cold copies
           .then(function () { return clearCheckinRecord(id); })   // fresh start: they came back
           .then(function () { log('[chloe.archive] restored ' + (p.name || id) + ' from historical friends'); return p; });
+      }
+      return Promise.resolve(ustore.get(archKey(id))).then(function (p) {
+        if (p) return commit(p);
+        // legacy per-channel cold copies (pre-upgrade): own channel's key, in either bucket
+        return Promise.resolve(ustore.get(legacyArchKey(id))).then(function (p2) {
+          if (p2) return commit(p2);
+          return Promise.resolve(localRaw.get(legacyArchKey(id))).then(function (p3) {
+            return p3 ? commit(p3) : null;
+          }, function () { return null; });
+        }, function () { return null; });
       });
     }
     function clearCheckinRecord(id) {
@@ -6536,13 +8161,13 @@
       return null;
     }
     function getFacts(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) { return (p && Array.isArray(p.facts)) ? p.facts : []; });
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) { return (p && Array.isArray(p.facts)) ? p.facts : []; });
     }
     // Merge newly-proposed fact strings into a user's store. Dedupes against existing (normalized),
     // caps to factsPerUser (newest kept). Returns the count actually added.
     function addFacts(id, proposed, source) {
       if (!proposed || !proposed.length) return Promise.resolve(0);
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) return 0;
         var facts = Array.isArray(p.facts) ? p.facts : [];
         var seen = {}; facts.forEach(function (f) { seen[normFact(f.text)] = true; });
@@ -6556,7 +8181,7 @@
           if (!key || seen[key]) return;          // empty or duplicate
           // contradiction flag (DESIGN-contradiction): if this new fact clearly flips polarity on a
           // held one, KEEP BOTH (don't let consolidation silently drop the older side) and record the
-          // conflict so she can gently clarify. Only for facts that matter (importance floor).
+          // conflict so it can gently clarify. Only for facts that matter (importance floor).
           if (cfg.contradictionAware && imp >= (cfg.contradictionImportanceFloor || 5)) {
             var clash = detectContradiction(text, facts);
             if (clash) { p.conflict = { a: clash, b: text, at: clock.now() }; log('[chloe.fact] noted a conflict for ' + (p.name || p.id) + ': "' + String(clash).slice(0, 40) + '" vs "' + String(text).slice(0, 40) + '"'); }
@@ -6568,23 +8193,23 @@
         p.facts = facts; p.factsAt = clock.now();
         // reflection fuel: accumulate the importance of what we learned (Step 3 reads this threshold)
         p.reflectImportanceAccum = (p.reflectImportanceAccum || 0) + impAdded;
-        return store.set(partKey(id), p).then(function () { return added; });
+        return userStore().set(partKey(id), p).then(function () { return added; });
       });
     }
     function forgetFact(id, match) {
       var m = normFact(match);
       if (!m) return Promise.resolve(0);
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !Array.isArray(p.facts)) return 0;
         var before = p.facts.length;
         p.facts = p.facts.filter(function (f) { return normFact(f.text).indexOf(m) < 0; });
         var removed = before - p.facts.length;
         if (!removed) return 0;
-        return store.set(partKey(id), p).then(function () { return removed; });
+        return userStore().set(partKey(id), p).then(function () { return removed; });
       });
     }
 
-    // ---- context moderation: excise a message from her working memory (DESIGN-excise.md) ----------
+    // ---- context moderation: excise a message from its working memory (DESIGN-excise.md) ----------
     // Remove the line with this message id from whichever user's `recent` window holds it. This is the
     // ONLY place a message is stored by message-id; the speaker ring holds author ids (untouched), and
     // any fact/episode already distilled from it is a separate artifact (excise composes with the
@@ -6601,7 +8226,7 @@
             var before = p.recent.length;
             p.recent = p.recent.filter(function (ln) { return String(ln.id) !== target; });
             var n = before - p.recent.length;
-            if (n) { removed += n; fromUser = fromUser || p.name || p.id; return store.set(partKey(p.id), p); }
+            if (n) { removed += n; fromUser = fromUser || p.name || p.id; return userStore().set(partKey(p.id), p); }
           });
         });
         return chain.then(function () {
@@ -6613,11 +8238,11 @@
     // Drop the last n lines from one user's recent window ("delete that last thing they said").
     function exciseLastFromUser(userId, n) {
       var k = Math.max(1, Math.round(Number(n) || 1));
-      return Promise.resolve(store.get(partKey(userId))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(userId))).then(function (p) {
         if (!p || !Array.isArray(p.recent) || !p.recent.length) return { removed: 0, fromUser: null };
         var cut = Math.min(k, p.recent.length);
         p.recent = p.recent.slice(0, p.recent.length - cut);
-        return store.set(partKey(userId), p).then(function () {
+        return userStore().set(partKey(userId), p).then(function () {
           log('[chloe.excise] removed ' + cut + ' recent line(s) from ' + (p.name || userId));
           return { removed: cut, fromUser: p.name || userId };
         });
@@ -6636,7 +8261,7 @@
     }
     // Read one person's editable memory (facts + insights), migrating ids on first read.
     function getMemory(id) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p) return null;
         var changed = migrateMemoryIds(p);
         var out = {
@@ -6644,12 +8269,12 @@
           facts: (p.facts || []).map(function (f) { return { id: f.id, text: f.text, importance: (typeof f.importance === 'number' ? f.importance : (cfg.factImportanceDefault || 5)), source: f.source || 'observed', at: f.at || 0 }; }),
           insights: (p.insights || []).map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; })
         };
-        return (changed ? store.set(partKey(id), p) : Promise.resolve()).then(function () { return out; });
+        return (changed ? userStore().set(partKey(id), p) : Promise.resolve()).then(function () { return out; });
       });
     }
     // Update one fact by id (text and/or importance). Re-dedupes against the others; re-clamps imp.
     function editFact(id, factId, patch) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !Array.isArray(p.facts)) return null;
         migrateMemoryIds(p);
         var target = null; p.facts.forEach(function (f) { if (f.id === factId) target = f; });
@@ -6666,17 +8291,17 @@
         if (patch && patch.importance != null) target.importance = Math.max(1, Math.min(10, Math.round(Number(patch.importance)) || (cfg.factImportanceDefault || 5)));
         if (patch && patch.text != null && target.text) target.source = 'operator';   // a hand-edit makes it operator-owned
         p.factsAt = clock.now();
-        return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+        return userStore().set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
       });
     }
     function deleteFact(id, factId) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !Array.isArray(p.facts)) return null;
         var before = p.facts.length;
         p.facts = p.facts.filter(function (f) { f.id || (f.id = mintFactId()); return f.id !== factId; });
         if (p.facts.length === before) return { facts: p.facts.map(pubFact) };
         p.factsAt = clock.now();
-        return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+        return userStore().set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
       });
     }
     // Operator-authored fact: creates the partition row if the person isn't known yet.
@@ -6684,7 +8309,7 @@
       var t = String(text || '').trim().slice(0, cfg.factTextMax || 240);
       if (!t) return Promise.resolve(null);
       return ensureIndexed(id).then(function () {
-        return Promise.resolve(store.get(partKey(id))).then(function (p) {
+        return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
           if (!p) { p = { id: id, name: name || null, facts: [], lastSeen: clock.now(), interactionCount: 0 }; }
           if (!Array.isArray(p.facts)) p.facts = [];
           migrateMemoryIds(p);
@@ -6698,12 +8323,12 @@
             if (victim >= 0) p.facts.splice(victim, 1); else p.facts = p.facts.slice(-cfg.factsPerUser);
           }
           p.factsAt = clock.now();
-          return store.set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
+          return userStore().set(partKey(id), p).then(function () { return { facts: p.facts.map(pubFact) }; });
         });
       });
     }
     function editInsight(id, insId, text) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !Array.isArray(p.insights)) return null;
         migrateMemoryIds(p);
         var t = String(text || '').trim().slice(0, cfg.factTextMax || 240);
@@ -6711,19 +8336,19 @@
         if (!tgt) return null;
         if (!t) { p.insights = p.insights.filter(function (x) { return x.id !== insId; }); }
         else { tgt.text = t; }
-        return store.set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
+        return userStore().set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
       });
     }
     function deleteInsight(id, insId) {
-      return Promise.resolve(store.get(partKey(id))).then(function (p) {
+      return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         if (!p || !Array.isArray(p.insights)) return null;
         p.insights.forEach(function (x) { x.id || (x.id = mintFactId()); });
         p.insights = p.insights.filter(function (x) { return x.id !== insId; });
-        return store.set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
+        return userStore().set(partKey(id), p).then(function () { return { insights: p.insights.map(function (x) { return { id: x.id, text: x.text, at: x.at || 0 }; }) }; });
       });
     }
     function pubFact(f) { return { id: f.id, text: f.text, importance: (typeof f.importance === 'number' ? f.importance : (cfg.factImportanceDefault || 5)), source: f.source || 'observed', at: f.at || 0 }; }
-    // A compact one-line synthesis of what she knows about someone — this is what populates the
+    // A compact one-line synthesis of what it knows about someone — this is what populates the
     // (previously empty) `summary` that already rides into response + check-in context.
     function factSummary(p) {
       if (!p) return '';
@@ -6776,7 +8401,7 @@
     function currentDebounce() {
       if (!paceReady()) return cfg.debounceMs;
       var d = (paceCache.avgGapMs || 0) * (cfg.paceDebounceWgap || 0.5) + (paceCache.gapVarMs || 0) * (cfg.paceDebounceWdev || 1.0);
-      // Clamp to [floor, ceil]. The configured debounceMs is the CEILING (pace may make her settle
+      // Clamp to [floor, ceil]. The configured debounceMs is the CEILING (pace may make it settle
       // faster than the fixed value, never slower) — so an explicitly tiny debounce stays tiny.
       var ceil = cfg.debounceMs;
       var floor = Math.min(cfg.debounceFloorMs || 800, ceil);
@@ -6797,7 +8422,7 @@
     function computeNextDelay(prev, summary) {
       if (!cfg.adaptivePolling) return cfg.pollIntervalMs;
       prev = prev || cfg.pollIntervalMs;
-      // ADDRESSED-PRIORITY OVERRIDE: a pending reply/greet/gate/paint means she's been @-mentioned or
+      // ADDRESSED-PRIORITY OVERRIDE: a pending reply/greet/gate/paint means it's been @-mentioned or
       // replied to (or owes a delivery) — being addressed always beats passive ingest, snap to floor.
       var addressed = hasPendingReply() || paint.queue.length || paint.painting || gate.pending || greet.pending;
       if (addressed) return cfg.pollFloorMs;
@@ -6837,7 +8462,7 @@
       resumePendingReply().catch(function () {});   // Gap A: pick up a predecessor's lost reply (verified, resume-once)
       log('[chloe.T0] started; ' + (cfg.adaptivePolling ? ('adaptive polling ' + cfg.pollFloorMs + '\u2013' + cfg.pollCeilMs + 'ms') : ('polling every ' + cfg.pollIntervalMs + 'ms')));
       if (!cfg.botUserId && !cfg.botName) {
-        log('[chloe] WARNING: no bot identity yet — click Validate. Until then she can\u2019t tell she\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
+        log('[chloe] WARNING: no bot identity yet — click Validate. Until then it can\u2019t tell when it\u2019s being @-mentioned or named, so EVERY message routes to the volunteer gate (and is likely ignored).');
       } else {
         var summonTxt = (cfg.botRoleIds && cfg.botRoleIds.length) ? (' or summon-role <@&' + cfg.botRoleIds.join('>/<@&') + '>') : '';
         log('[chloe] identity (bridge v' + (cfg.bridgeVersion || '?') + '): ' + (cfg.botName || '?') + ' (' + (cfg.botUserId || 'no id') + '); answers to: ' + nameAliases().join(', ') + ' or @-mention' + summonTxt + '; replies-when=' + cfg.addressMode);
@@ -6862,7 +8487,7 @@
       };
       tick();
     }
-    function stop() { running = false; deferGen++; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait)
+    function stop() { try { clearAllAcks('engine stopped'); } catch (eS) {} running = false; deferGen++; if (timer) clearTimeout(timer); timer = null; releaseRunLock(); log('[chloe.T0] stopped'); }   // releasing lets a clean successor claim instantly (no TTL wait); the sweep covers acks orphaned by the deferGen bump + discarded queues
     function isRunning() { return running; }
 
     // Live config patch: update specific cfg keys in-place on a running engine WITHOUT a full
@@ -6888,7 +8513,7 @@
       'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'trustHardening', 'bondLadder', 'replyReference', 'backfill', 'hamRadio',
       'chanSpeak', 'chanRead', 'chanRemember',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
-      'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount',
+      'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount', 'newsFeeds', 'newsPrompt', 'newsPostTemplate', 'newsInContext', 'newsReview', 'thoughtsFeedTarget',
       'actPolicy', 'actGrants',
       'timezoneOffsetMins', 'timeAware', 'engageMode', 'channelLang', 'botAliases', 'botRoleIds', 'botLoopGrace',
       'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
@@ -6902,16 +8527,48 @@
     // message, it just lets the next poll retry it.
     function stuckInfo() {
       var nowS = clock.now();
-      return { replying: !!reply.replying, replyAgeMs: reply.replying ? Math.max(0, nowS - (reply.startedAt || 0)) : 0, painting: !!paint.painting, paintAgeMs: paint.painting ? Math.max(0, nowS - (paint.startedAt || 0)) : 0, queuedAuthors: Object.keys(reply.queue).length, paintQueued: paint.queue.length, epoch: reply.epoch };
+      return { replying: !!reply.replying, replyAgeMs: reply.replying ? Math.max(0, nowS - (reply.startedAt || 0)) : 0, painting: !!paint.painting, paintAgeMs: paint.painting ? Math.max(0, nowS - (paint.startedAt || 0)) : 0, queuedAuthors: Object.keys(reply.queue).length, paintQueued: paint.queue.length, epoch: reply.epoch, acksOutstanding: Object.keys(outstandingAcks).length };
+    }
+    // Rescue card sweep: delete the recorded live thought cards (cmd reply card +
+    // feed post), best-effort and fail-open like unreact. The pointer clears only
+    // on a successful delete, so a failed delete retries via the next publish's
+    // delete-old-then-post path instead of orphaning the card.
+    function sweepThoughtCards(reason) {
+      var keys = [THOUGHTCARD_CMD, THOUGHTCARD_FEED];
+      if (typeof cfg.deleteMessage !== 'function') return Promise.resolve(0);
+      var jobs = keys.map(function (k) {
+        return Promise.resolve(store.get(k)).then(function (ptr) {
+          if (!ptr || !ptr.id) return 0;
+          var ch = ptr.target || cfg.channelId;
+          return Promise.resolve(cfg.deleteMessage(ch, ptr.id)).then(function () {
+            try { Promise.resolve(store.del(k)).catch(function () {}); } catch (eD) {}
+            return 1;
+          }, function () { return 0; });   // gone/perm/network: keep the pointer, next publish retries
+        }, function () { return 0; });
+      });
+      return Promise.all(jobs).then(function (ns) {
+        var n = 0; ns.forEach(function (x) { n += x; });
+        if (n) log('[chloe.rescue] ' + reason + ': cleared ' + n + ' thought card(s)');
+        return n;
+      }, function () { return 0; });
     }
     function rescueStuck(reason) {
       var before = stuckInfo();
       if (reply.replying) { reply.replying = false; reply.epoch++; try { if (typeof cfg.releaseSend === 'function') cfg.releaseSend('text'); } catch (eR) {} }
       if (paint.painting) { paint.painting = false; try { if (typeof cfg.releaseSend === 'function') cfg.releaseSend('image'); } catch (eR2) {} }
-      try { Promise.resolve(store.del(PENDING_KEY)).catch(function () {}); } catch (eR3) {}
-      log('[chloe.rescue] ' + (reason || 'manual rescue') + ': cleared reply/paint locks (had reply=' + before.replying + ' paint=' + before.painting + '); ' + before.queuedAuthors + ' author(s) still queued, retrying');
+      var swept = clearAllAcks(reason || 'manual rescue');   // full transient sweep (lane claims + throttle/search/lockdown/queue acks), not just the two in-flight lanes
+      try { Promise.resolve(store.del(PENDING_KEY)).catch(function () {}); } catch (eR3) {}   // watchdog parity: a rescued generation must not resurrect later
+      var why = reason || 'manual rescue';
+      log('[chloe.rescue] ' + why + ': cleared reply/paint locks (had reply=' + before.replying + ' paint=' + before.painting + ') + swept ' + swept + ' stuck ack(s); ' + before.queuedAuthors + ' author(s) still queued, retrying');
       scheduleTextChain(); scheduleImageChain();
-      return { ok: true, value: { clearedReply: before.replying, clearedPaint: before.painting } };
+      // Card deletes are async (store read + DELETE); the locks/acks above are
+      // already swept synchronously, so existing sync callers observe those
+      // immediately and the promise only adds the card count.
+      return Promise.resolve(sweepThoughtCards(why)).then(function (cards) {
+        return { ok: true, value: { clearedReply: before.replying, clearedPaint: before.painting, sweptAcks: swept, sweptCards: cards } };
+      }, function () {
+        return { ok: true, value: { clearedReply: before.replying, clearedPaint: before.painting, sweptAcks: swept, sweptCards: 0 } };
+      });
     }
     return {
       pollOnce: pollOnce,
@@ -6948,7 +8605,15 @@
       timeContext: timeContext,
       updateMood: updateMood, moodDescriptor: moodDescriptor, moodSignals: moodSignals,
       processChannelSummary: processChannelSummary, recentTranscript: recentTranscript,
-      processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
+     processReflection: processReflection, processEpisodes: processEpisodes, dropEpisodesFor: dropEpisodesFor,
+      scoreEpisodesForQuery: scoreEpisodesForQuery, searchEpisodes: searchEpisodes, episodeQueryTokens: episodeQueryTokens,
+      processNews: processNews, testNewsFeed: testNewsFeed, postThoughtsFeed: postThoughtsFeed, thoughtCardPublish: thoughtCardPublish,
+      runNewsFeedNow: runNewsFeedNow,
+      listNewsQueue: listNewsQueue, newsDiag: newsDiag, updateNewsQueue: updateNewsQueue, regenNewsQueue: regenNewsQueue, postNewsQueue: postNewsQueue, dropNewsQueue: dropNewsQueue,
+      newsParseRobots: newsParseRobots, newsPickSitemap: newsPickSitemap, newsParseItems: newsParseItems, newsParseFeedItems: newsParseFeedItems,
+      newsFilterItems: newsFilterItems, newsFormatRollup: newsFormatRollup, recentTranscriptTexts: recentTranscriptTexts,
+      newsClassicBody: newsClassicBody, newsApplyTemplate: newsApplyTemplate, newsComposeText: newsComposeText,
+      newsOwnSig: newsOwnSig, newsMarkerLine: newsMarkerLine,
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
       seedCharacterMemories: seedCharacterMemories, clearCharacterMemories: clearCharacterMemories,
@@ -6959,7 +8624,7 @@
       currentDebounce: currentDebounce, silenceZ: silenceZ, paceIsQuiet: paceIsQuiet, paceReady: paceReady, refreshPace: refreshPace, computeNextDelay: computeNextDelay,
       affectLoad: affectLoad, affectNudge: affectNudge, affectTick: affectTick, affectOnUserMessage: affectOnUserMessage, affectOnContent: affectOnContent,
       procCheckReactions: procCheckReactions, getProcMode: getProcMode, clearProcMode: clearProcMode, activateProcMode: activateProcMode,
-      rescueStuck: rescueStuck, stuckInfo: stuckInfo,
+      rescueStuck: rescueStuck, stuckInfo: stuckInfo, clearAllAcks: clearAllAcks,
       resumePendingReply: resumePendingReply, summonCheckReactions: summonCheckReactions, pollCreate: pollCreate, pollClose: pollClose, checkPollExpiry: checkPollExpiry,
       BANDS: BANDS, registerProvider: registerProvider, gatherInjections: gatherInjections,
       archiveUser: archiveUser, restoreFromArchive: restoreFromArchive, getArchiveIndex: getArchiveIndex, quietSweep: quietSweep,

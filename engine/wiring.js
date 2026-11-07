@@ -31,6 +31,11 @@ function __chloeWire(Shell) {
     traceRing.push(e); if (traceRing.length > TRACE_MAX) traceRing = traceRing.slice(-TRACE_MAX);
     return e;
   }
+  // `log(m)` shim: engine-side code says log(...); wiring's ring says
+  // trace(tag, msg). Without this, every wiring fetch/search log call throws
+  // ReferenceError (found headless by the B1 attachment E2E — webSearch/
+  // webFetch carried the same latent bug since v0.90.19, never called before).
+  function log(m) { return trace('wire', String(m == null ? '' : m)); }
   // Error ring (v0.90.11): failures ALSO land here (50 slots) so diag.errors can show them
   // without the noise of the 60-slot trace ring. Engine error-tier logs arrive via the log
   // wrapper in buildEngine; userscript failures call traceErr directly; hot paths use warnOnce.
@@ -114,7 +119,7 @@ function __chloeWire(Shell) {
   }
   var store = makeStore('');
   function primaryChannel() { return String(cfgGet('channelId', '') || '').trim(); }
-  // DM sessions: once Chloe opens a DM channel (she gets the channel id back), that channel is
+  // DM sessions: once Chloe opens a DM channel (it gets the channel id back), that channel is
   // pollable like any other — Discord lets a bot read messages in a DM it's part of. We can't
   // DISCOVER a cold inbound DM (no Gateway), but any DM Chloe opens becomes two-way. Stored as
   // { dmChannelId: { user, name, openedAt } }.
@@ -209,7 +214,7 @@ function __chloeWire(Shell) {
       return fn.apply(null, arguments);
     };
   }
-  // Goldfish store: drops every write except the operational keys (cursor must advance or she
+  // Goldfish store: drops every write except the operational keys (cursor must advance or it
   // re-reads forever; run-lock + pending-reply keep the queen handover safe). Reads pass through,
   // so each poll sees a fresh, unremembered room.
   function gateStore(st, chId) {
@@ -278,7 +283,7 @@ function __chloeWire(Shell) {
   // What Chloe is allowed to put in an outgoing message. PINGS use Discord's own input-sanitation
   // (the allowed_mentions object — the platform itself decides what resolves to a real ping);
   // EMOJI / LINKS / CHANNEL-LINKS have no such API for your own messages, so Chloe scrubs them
-  // from her content before posting. Each gate is independently mod-toggleable. Safe defaults:
+  // from its content before posting. Each gate is independently mod-toggleable. Safe defaults:
   // emoji on (harmless, expressive); pings / @everyone / links / channel-links off.
   function gate(k, d) { return !!cfgGet('gate:' + k, d); }
   function allowedMentions() {
@@ -605,6 +610,354 @@ function __chloeWire(Shell) {
       } catch (e) { clearTimeout(fto); console.error('[wire:fetch] threw', e); fdone({ ok: false, reason: String((e && e.message) || e) }); }
     });
   }
+  // F2 feed validation (pure — shared by setNewsFeeds + import firewall).
+  // Returns {ok, feeds} or {ok:false, reason}. Never throws.
+  function validateNewsFeeds(raw, knownChannels) {
+    if (!Array.isArray(raw)) return { ok: false, reason: 'feeds must be an array' };
+    if (raw.length > 20) return { ok: false, reason: 'at most 20 feeds' };
+    var chans = null;
+    if (Array.isArray(knownChannels)) { chans = {}; knownChannels.forEach(function (c) { chans[String(c)] = true; }); }
+    function words(arr, cap, what) {
+      if (arr == null) return [];
+      if (!Array.isArray(arr)) return null;
+      var out = [];
+      for (var i = 0; i < arr.length; i++) {
+        var w = String(arr[i] == null ? '' : arr[i]).trim().toLowerCase();
+        if (!w) continue;
+        if (w.length > 40) return null;
+        out.push(w);
+      }
+      if (out.length > cap) return null;
+      return out;
+    }
+    var clean = [], seen = {};
+    for (var i = 0; i < raw.length; i++) {
+      var f = raw[i];
+      if (!f || typeof f !== 'object' || Array.isArray(f)) return { ok: false, reason: 'feed #' + i + ' must be an object' };
+      var id = String(f.id || '').trim().toLowerCase();
+      if (!/^[a-z0-9-]{1,32}$/.test(id)) return { ok: false, reason: 'feed #' + i + ': id must be [a-z0-9-] (max 32)' };
+      if (seen[id]) return { ok: false, reason: 'duplicate feed id "' + id + '"' };
+      seen[id] = true;
+      var site = String(f.site || '').trim().replace(/\/+$/, '');
+      if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/.test(site)) return { ok: false, reason: 'feed "' + id + '": site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' };
+      var ch = String(f.channelId || '').trim();
+      if (ch && !/^\d{15,25}$/.test(ch)) return { ok: false, reason: 'feed "' + id + '": channelId must be a channel id (or empty: dormant, posts nowhere)' };
+      if (ch && chans && !chans[ch]) return { ok: false, reason: 'feed "' + id + '": unknown channel ' + ch };
+      var iv = (f.intervalMs == null) ? 3600000 : Number(f.intervalMs);
+      if (!isFinite(iv)) return { ok: false, reason: 'feed "' + id + '": bad intervalMs' };
+      iv = Math.max(600000, Math.min(86400000, Math.round(iv)));
+      var mx = (f.maxItems == null) ? 5 : Number(f.maxItems);
+      if (!isFinite(mx)) return { ok: false, reason: 'feed "' + id + '": bad maxItems' };
+      mx = Math.max(1, Math.min(10, Math.round(mx)));
+      var bw = words(f.banWords, 50); if (bw === null) return { ok: false, reason: 'feed "' + id + '": banWords must be ≤50 strings (≤40 chars)' };
+      var ac = words(f.allowCats, 30); if (ac === null) return { ok: false, reason: 'feed "' + id + '": allowCats must be ≤30 strings (≤40 chars)' };
+      var bc = words(f.blockCats, 30); if (bc === null) return { ok: false, reason: 'feed "' + id + '": blockCats must be ≤30 strings (≤40 chars)' };
+      clean.push({ id: id, name: String(f.name || id).slice(0, 60), site: site, channelId: ch, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc });
+    }
+    return { ok: true, feeds: clean };
+  }
+  // F2 news fetch: GM GET as text, fail-open {ok:false}. Host allowlist is
+  // CONFIG-DERIVED ONLY (never user input): feed site hosts + hosts harvested
+  // from <loc>/Sitemap lines of docs already fetched through this function
+  // (chain-of-trust rooted at a configured feed). Session-local.
+  var newsDiscoveredHosts = {};
+  function newsSiteHosts() {
+    var out = {};
+    (cfgGet('newsFeeds', []) || []).forEach(function (f) {
+      if (!f || !f.site) return;
+      var m = String(f.site).match(/^https?:\/\/([^\/:?#]+)/i);
+      if (m) out[m[1].toLowerCase()] = true;
+    });
+    return out;
+  }
+  function newsHostOk(host) {
+    host = String(host || '').toLowerCase();
+    return !!(newsSiteHosts()[host] || newsDiscoveredHosts[host]);
+  }
+  function newsHarvestHosts(text) {
+    var re = /<loc\s*>([\s\S]*?)<\/loc\s*>/gi, m;
+    var re2 = /^\s*Sitemap\s*:\s*(\S+)\s*$/gim, m2;
+    var re3 = /<link[^>]*href\s*=\s*["']([^"']+)["']/gi, m3;   // Atom/RSS feed links
+    var re4 = /<link\s*>([\s\S]*?)<\/link\s*>/gi, m4;           // bare RSS <link>url</link>
+    function add(u) { var h = String(u || '').match(/^https?:\/\/([^\/:?#]+)/i); if (h) newsDiscoveredHosts[h[1].toLowerCase()] = true; }
+    while ((m = re.exec(String(text || ''))) && Object.keys(newsDiscoveredHosts).length < 200) add(m[1]);
+    while ((m2 = re2.exec(String(text || ''))) && Object.keys(newsDiscoveredHosts).length < 200) add(m2[1]);
+    while ((m3 = re3.exec(String(text || ''))) && Object.keys(newsDiscoveredHosts).length < 200) add(m3[1]);
+    while ((m4 = re4.exec(String(text || ''))) && Object.keys(newsDiscoveredHosts).length < 200) add(m4[1]);
+  }
+  function fetchText(url) {
+    var u = String(url == null ? '' : url).trim().slice(0, 1000);
+    var host = '';
+    try { host = String(u.match(/^https?:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
+    if (!/^https?:\/\//i.test(u)) return Promise.resolve({ ok: false, reason: 'http(s) only' });
+    if (/\.(gz|zip|tgz|br)(\?|$)/i.test(u)) return Promise.resolve({ ok: false, reason: 'compressed sitemap skipped' });
+    if (!newsHostOk(host)) { trace('news', 'fetch blocked (off-allowlist host): ' + host); return Promise.resolve({ ok: false, reason: 'host not allowed' }); }
+    return new Promise(function (resolve) {
+      var settled = false;
+      function done(v) { if (settled) return; settled = true; resolve(v); }
+      var fto = setTimeout(function () { trace('news', 'fetch timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); }, 12000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: u, headers: { 'User-Agent': UA }, anonymous: true,
+          onload: function (r) {
+            clearTimeout(fto);
+            try {
+              if (r.status < 200 || r.status >= 300) { trace('news', 'HTTP ' + r.status + ' -> fail-open'); return done({ ok: false, reason: 'HTTP ' + r.status }); }
+              var t = String(r.responseText || '');
+              if (!t) { trace('news', 'empty -> fail-open'); return done({ ok: false, reason: 'empty' }); }
+              trace('news', 'fetched "' + u.slice(0, 80) + '" -> ' + t.length + ' chars');
+              newsHarvestHosts(t);
+              done({ ok: true, value: t.slice(0, 500000) });
+            } catch (e) { trace('news', 'read failed -> fail-open'); done({ ok: false, reason: 'read failed' }); }
+          },
+          onerror: function () { clearTimeout(fto); trace('news', 'network error -> fail-open'); done({ ok: false, reason: 'network error' }); },
+          ontimeout: function () { clearTimeout(fto); trace('news', 'timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); } });
+      } catch (e) { clearTimeout(fto); trace('news', 'threw -> fail-open'); done({ ok: false, reason: String((e && e.message) || e) }); }
+    });
+  }
+  // B2 PDF text extraction (zero-dependency, in-wiring: no pdf.js vendoring, no
+  // text endpoint — private documents never leave the browser). Input accepts
+  // Uint8Array | ArrayBuffer | latin-1 string (GM managers differ on
+  // responseType support). Best-effort by design: WinAnsi/UTF-16BE literals,
+  // FlateDecode via DecompressionStream (uncompressed streams still parse
+  // when the API is absent), global ToUnicode bfchar/bfrange for the common
+  // single-font subset-embedded case. Encrypted / image-only / non-PDF bytes
+  // all fail OPEN with a PII-free reason (never content).
+  function pdfExtractText(input) {
+    function toBytes(x) {
+      if (!x) return null;
+      if (typeof x === 'string') { var bb = new Uint8Array(x.length); for (var i = 0; i < x.length; i++) bb[i] = x.charCodeAt(i) & 255; return bb; }
+      if (typeof Uint8Array !== 'undefined' && x instanceof Uint8Array) return x;
+      if (typeof ArrayBuffer !== 'undefined' && x instanceof ArrayBuffer) return new Uint8Array(x);
+      if (x && typeof x.length === 'number' && x.buffer instanceof ArrayBuffer) { try { return new Uint8Array(x.buffer, x.byteOffset || 0, x.length); } catch (e) {} }
+      return null;
+    }
+    var bytes = toBytes(input);
+    if (!bytes || !bytes.length) return Promise.resolve({ ok: false, reason: 'empty file' });
+    function latin(u8, s, e) { var o = ''; for (var i = s; i < e; i++) o += String.fromCharCode(u8[i]); return o; }
+    if (latin(bytes, 0, Math.min(8, bytes.length)).indexOf('%PDF-') !== 0) return Promise.resolve({ ok: false, reason: 'not a pdf' });
+    var src = latin(bytes, 0, bytes.length);
+    if (/\/Encrypt[\s\[/]/.test(src)) return Promise.resolve({ ok: false, reason: 'encrypted pdf' });
+    // Global ToUnicode harvest (bfchar + bfrange; single map, best-effort).
+    var uniMap = {}, uniCount = 0;
+    function hexVal(h) { try { return parseInt(h, 16); } catch (e) { return NaN; } }
+    function dstToStr(dst) {
+      var clean = String(dst || '').replace(/\s+/g, '').replace(/^<|>$/g, '');
+      if (clean.length >= 4 && clean.slice(0, 4).toUpperCase() === 'FEFF') {
+        var o = ''; for (var i = 4; i + 3 < clean.length + 1; i += 4) o += String.fromCharCode(hexVal(clean.slice(i, i + 4)));
+        return o;
+      }
+      if (clean.length <= 4) return String.fromCharCode(hexVal(clean) || 0);
+      var o2 = ''; for (var j = 0; j + 3 < clean.length + 1; j += 4) o2 += String.fromCharCode(hexVal(clean.slice(j, j + 4)));
+      return o2;
+    }
+    var cm, cr;
+    var bfRe = /beginbfchar([\s\S]*?)endbfchar/g;
+    while ((cm = bfRe.exec(src))) {
+      var lr = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F\s]+)>/g, lm;
+      while ((lm = lr.exec(cm[1]))) { var sc = hexVal(lm[1]); if (!isNaN(sc)) { uniMap[sc] = dstToStr(lm[2]); uniCount++; } }
+    }
+    var brRe = /beginbfrange([\s\S]*?)endbfrange/g;
+    while ((cr = brRe.exec(src))) {
+      var rr = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<([0-9a-fA-F\s]+)>|\[([^\]]*)\])/g, rm;
+      while ((rm = rr.exec(cr[1]))) {
+        var lo = hexVal(rm[1]), hi = hexVal(rm[2]);
+        if (isNaN(lo) || isNaN(hi) || hi - lo > 5000) continue;
+        if (rm[4]) {
+          var base = (function (d) { var c = String(d).replace(/\s+/g, '').replace(/^<|>$/g, ''); return c.length > 4 ? NaN : hexVal(c); })(rm[4]);
+          if (isNaN(base)) continue;
+          for (var c = lo; c <= hi; c++) { uniMap[c] = String.fromCharCode(base + (c - lo)); uniCount++; }
+        } else if (rm[5]) {
+          var arr = [], ar = /<([0-9a-fA-F\s]+)>/g, am;
+          while ((am = ar.exec(rm[5]))) arr.push(dstToStr(am[1]));
+          for (var k = 0; k < arr.length && lo + k <= hi; k++) { uniMap[lo + k] = arr[k]; uniCount++; }
+        }
+      }
+    }
+    // Stream harvest: exact /Length slice when sane, else endstream search.
+    var jobs = [], sre = /stream\r?\n/g, sm;
+    while ((sm = sre.exec(src))) {
+      var st = sm.index + sm[0].length;
+      var dict = src.slice(Math.max(0, sm.index - 800), sm.index);
+      var flate = /\/FlateDecode/.test(dict);
+      var end = -1, lm2 = /\/Length\s+(\d+)/.exec(dict);
+      if (lm2) { var ln = parseInt(lm2[1], 10); if (ln > 0 && ln < 10000000 && st + ln <= bytes.length) end = st + ln; }
+      if (end < 0) { end = src.indexOf('endstream', st); if (end < 0) break; }
+      jobs.push({ flate: flate, raw: bytes.subarray(st, Math.min(end, bytes.length)) });
+      sre.lastIndex = end + 9;   // step past the endstream marker itself ('endstream' contains 'stream')
+    }
+    function inflate(u8) {
+      if (typeof DecompressionStream === 'undefined') return Promise.resolve(null);
+      try {
+        var ds = new DecompressionStream('deflate');
+        var wr = ds.writable.getWriter();
+        var rd = ds.readable.getReader();
+        var chunks = [];
+        function pump() { return rd.read().then(function (r) { if (r.done) return chunks; chunks.push(r.value); return pump(); }); }
+        var draining = pump();   // drain FIRST: close() can't resolve until the readable side is consumed
+        return Promise.resolve(wr.write(u8)).then(function () { return wr.close(); }).then(function () { return draining; }).then(function (ch) {
+          var n = 0, i; for (i = 0; i < ch.length; i++) n += ch[i].length;
+          var out = new Uint8Array(n), p = 0;
+          for (i = 0; i < ch.length; i++) { out.set(ch[i], p); p += ch[i].length; }
+          return out;
+        }, function () { return null; });
+      } catch (e) { return Promise.resolve(null); }
+    }
+    function unescapeLit(s) {
+      return s.replace(/\\(\\|\(|\)|n|r|t|b|f|\r\n|\r|\n|[0-7]{1,3})/g, function (m, g) {
+        if (g === 'n') return '\n'; if (g === 'r') return '\r'; if (g === 't') return '\t';
+        if (g === 'b') return '\b'; if (g === 'f') return '\f';
+        if (g === '\\' || g === '(' || g === ')') return g;
+        if (/^[0-7]/.test(g)) return String.fromCharCode(parseInt(g, 8) & 255);
+        return '';
+      });
+    }
+    function litToText(inner) {
+      var t = unescapeLit(inner);
+      if (t.length >= 2 && t.charCodeAt(0) === 254 && t.charCodeAt(1) === 255) {
+        var o = ''; for (var i = 2; i + 1 < t.length; i += 2) o += String.fromCharCode((t.charCodeAt(i) << 8) | t.charCodeAt(i + 1));
+        return o;
+      }
+      return t;
+    }
+    function hexToText(hex) {
+      var clean = String(hex || '').replace(/\s+/g, '');
+      if (!clean.length) return '';
+      if (clean.length >= 4 && clean.slice(0, 4).toUpperCase() === 'FEFF') {
+        var o = ''; for (var i = 4; i + 3 < clean.length + 1; i += 4) { var v = hexVal(clean.slice(i, i + 4)); if (!isNaN(v)) o += String.fromCharCode(v); }
+        return o;
+      }
+      if (uniCount) {
+        var o2 = '', p = 0;
+        while (p < clean.length) {
+          var two = (p + 3 < clean.length + 1) ? hexVal(clean.slice(p, p + 4)) : NaN;
+          if (!isNaN(two) && Object.prototype.hasOwnProperty.call(uniMap, two)) { o2 += uniMap[two]; p += 4; continue; }
+          var one = (p + 1 < clean.length + 1) ? hexVal(clean.slice(p, p + 2)) : NaN;
+          if (!isNaN(one) && Object.prototype.hasOwnProperty.call(uniMap, one)) { o2 += uniMap[one]; p += 2; continue; }
+          o2 += String.fromCharCode(isNaN(one) ? 0 : one); p += 2;
+        }
+        return o2;
+      }
+      var o3 = ''; for (var j = 0; j + 1 < clean.length + 1; j += 2) { var b = hexVal(clean.slice(j, j + 2)); o3 += String.fromCharCode(isNaN(b) ? 0 : b); }
+      return o3;
+    }
+    function contentText(content) {
+      var parts = [], bm, btRe = /BT([\s\S]*?)ET/g;
+      var scope = [];
+      while ((bm = btRe.exec(content))) scope.push(bm[1]);
+      if (!scope.length && /Tj|TJ|'|"/.test(content)) scope = [content];
+      scope.forEach(function (blk) {
+        var tj = /(\((?:\\.|[^\\()])*\)|<[0-9a-fA-F\s]+>)\s*(Tj|'|")/g, tm;
+        while ((tm = tj.exec(blk))) {
+          var tok = tm[1];
+          parts.push(tok.charAt(0) === '(' ? litToText(tok.slice(1, -1)) : hexToText(tok.slice(1, -1)));
+        }
+        var ta = /\[((?:\([^()\\]*(?:\\.[^()\\]*)*\)|<[0-9a-fA-F\s]+>|-?\d+(?:\.\d+)?|\s)*)\]TJ/g, am2;
+        while ((am2 = ta.exec(blk))) {
+          var inner = am2[1], im = /(\([^()\\]*(?:\\.[^()\\]*)*\)|<[0-9a-fA-F\s]+>)/g, im2;
+          while ((im2 = im.exec(inner))) {
+            var t2 = im2[1];
+            parts.push(t2.charAt(0) === '(' ? litToText(t2.slice(1, -1)) : hexToText(t2.slice(1, -1)));
+          }
+        }
+      });
+      return parts.join('');
+    }
+    var chain = Promise.resolve(), texts = [];
+    jobs.forEach(function (j) {
+      chain = chain.then(function () {
+        if (!j.flate) { var t = contentText(latin(j.raw, 0, j.raw.length)); if (t) texts.push(t); return; }
+        return inflate(j.raw).then(function (dec) {
+          if (!dec) return;
+          var t2 = contentText(latin(dec, 0, dec.length));
+          if (t2) texts.push(t2);
+        });
+      });
+    });
+    return chain.then(function () {
+      var joined = texts.join('\n').replace(/[ \t\x0b\f\r]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim();
+      if (!joined) return { ok: false, reason: 'no text in pdf' };
+      return { ok: true, value: joined };
+    });
+  }
+  // B2 PDF fetch: same allowlist + no-auth + fail-open contract as the text
+  // path, but arraybuffer (latin-1 fallback) + 15s + 3MB raw cap, then
+  // pdfExtractText. PII-free logs: filename + chars/reason, never content.
+  function fetchAttachmentPdf(job) {
+    var u = String((job && job.url) == null ? '' : job.url).trim().slice(0, 500);
+    var name = String((job && job.filename) == null ? 'attachment.pdf' : job.filename).slice(0, 80);
+    var host = '';
+    try { host = String(u.match(/^https:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
+    if (!/^https:\/\//i.test(u) || !ATTACH_HOSTS[host]) return Promise.resolve({ ok: false, reason: 'attachment host not allowed' });
+    return new Promise(function (resolve) {
+      var settled = false;
+      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var ato = setTimeout(function () { log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); }, 15000);
+      function byteLen(x) {
+        if (!x) return 0;
+        if (typeof x === 'string') return x.length;
+        if (typeof ArrayBuffer !== 'undefined' && x instanceof ArrayBuffer) return x.byteLength;
+        if (typeof x.length === 'number') return x.length;
+        return 0;
+      }
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: u, anonymous: true, responseType: 'arraybuffer',
+          onload: function (r) {
+            clearTimeout(ato);
+            try {
+              if (r.status < 200 || r.status >= 300) { log('[wire:attach] HTTP ' + r.status + ' "' + name + '" -> fail-open'); return adone({ ok: false, reason: 'HTTP ' + r.status }); }
+              var body = (r && ('response' in r) && r.response) ? r.response : r.responseText;
+              if (!body || !byteLen(body)) { log('[wire:attach] empty "' + name + '" -> fail-open'); return adone({ ok: false, reason: 'empty file' }); }
+              if (byteLen(body) > 3000000) { log('[wire:attach] "' + name + '" (' + byteLen(body) + ' bytes > 3MB raw cap) -> fail-open'); return adone({ ok: false, reason: 'pdf too large' }); }
+              pdfExtractText(body).then(function (t) {
+                if (t && t.ok && t.value) {
+                  var txt = String(t.value).slice(0, 6000);
+                  log('[wire:attach] ok "' + name + '" (pdf) -> ' + txt.length + ' chars');
+                  adone({ ok: true, value: txt });
+                } else { log('[wire:attach] unreadable pdf "' + name + '" (' + ((t && t.reason) || 'no text') + ') -> fail-open'); adone({ ok: false, reason: (t && t.reason) || 'no text' }); }
+              }, function () { log('[wire:attach] pdf parse threw "' + name + '" -> fail-open'); adone({ ok: false, reason: 'parse failed' }); });
+            } catch (e) { log('[wire:attach] read failed "' + name + '" -> fail-open'); adone({ ok: false, reason: 'read failed' }); }
+          },
+          onerror: function () { clearTimeout(ato); log('[wire:attach] network error "' + name + '" -> fail-open'); adone({ ok: false, reason: 'network error' }); },
+          ontimeout: function () { clearTimeout(ato); log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); } });
+      } catch (e) { clearTimeout(ato); adone({ ok: false, reason: String((e && e.message) || e) }); }
+    });
+  }
+  // B1 text-attachment ingestion + B2 PDF routing. Host allowlist is EXACT
+  // (forged attachment URLs are the red-team vector); NEVER sends the bot
+  // Authorization header (CDN URLs are public); fail-open {ok:false}.
+  // PII-free logs: filename + chars/reason, never content.
+  var ATTACH_HOSTS = { 'cdn.discordapp.com': 1, 'media.discordapp.net': 1 };
+  function fetchAttachmentText(job) {
+    var u = String((job && job.url) == null ? '' : job.url).trim().slice(0, 500);
+    var name = String((job && job.filename) == null ? 'attachment.txt' : job.filename).slice(0, 80);
+    var host = '';
+    try { host = String(u.match(/^https:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
+    if (!/^https:\/\//i.test(u) || !ATTACH_HOSTS[host]) return Promise.resolve({ ok: false, reason: 'attachment host not allowed' });
+    var fn = String((job && job.filename) == null ? '' : job.filename).toLowerCase();
+    var ct = String((job && (job.content_type || job.contentType)) == null ? '' : (job.content_type || job.contentType)).toLowerCase().split(';')[0].trim();
+    if ((job && job.pdf) || /\.pdf$/.test(fn) || ct === 'application/pdf') return fetchAttachmentPdf(job);   // B2: binary body needs the pdf path, not responseText
+    return new Promise(function (resolve) {
+      var settled = false;
+      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var ato = setTimeout(function () { log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); }, 10000);
+      try {
+        GM_xmlhttpRequest({ method: 'GET', url: u, anonymous: true,
+          onload: function (r) {
+            clearTimeout(ato);
+            try {
+              if (r.status < 200 || r.status >= 300) { log('[wire:attach] HTTP ' + r.status + ' "' + name + '" -> fail-open'); return adone({ ok: false, reason: 'HTTP ' + r.status }); }
+              var t = String(r.responseText || '');
+              if (!t) { log('[wire:attach] empty "' + name + '" -> fail-open'); return adone({ ok: false, reason: 'empty file' }); }
+              t = t.slice(0, 6000);
+              log('[wire:attach] ok "' + name + '" -> ' + t.length + ' chars');
+              adone({ ok: true, value: t });
+            } catch (e) { log('[wire:attach] read failed "' + name + '" -> fail-open'); adone({ ok: false, reason: 'read failed' }); }
+          },
+          onerror: function () { clearTimeout(ato); log('[wire:attach] network error "' + name + '" -> fail-open'); adone({ ok: false, reason: 'network error' }); },
+          ontimeout: function () { clearTimeout(ato); log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); } });
+      } catch (e) { clearTimeout(ato); adone({ ok: false, reason: String((e && e.message) || e) }); }
+    });
+  }
   // Translate inbound messages from a non-English-preference author into English for the engine. Only
   // touches messages whose author has a set lang != 'en'; everyone else passes through untouched and
   // free. Failure (per translate()) leaves the original text. Replaces content in place.
@@ -640,7 +993,7 @@ function __chloeWire(Shell) {
     sendMessage: function (channelId, text, opts) {
       var body = { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() };
       if (opts && opts.replyTo) {
-        // Native reply threading: visually attaches her answer to the message it answers.
+        // Native reply threading: visually attaches its answer to the message it answers.
         // fail_if_not_exists:false -> if the target was deleted, the send still goes through plain.
         body.message_reference = { message_id: String(opts.replyTo), fail_if_not_exists: false };
         body.allowed_mentions = Object.assign({}, body.allowed_mentions, { replied_user: false });   // never ping via the reply itself
@@ -668,6 +1021,16 @@ function __chloeWire(Shell) {
     },
     editMessage: function (channelId, messageId, text) {
       return requestJSON('PATCH', '/channels/' + channelId + '/messages/' + messageId, { json: true, body: { content: gateContent(text).slice(0, 1900), allowed_mentions: allowedMentions() } });
+    },
+    editEmbed: function (channelId, messageId, embed) {   // thoughts-card rotation: same gates as sendEmbed
+      var g = Object.assign({}, embed);
+      if (g.title) g.title = gateContent(String(g.title)).slice(0, 256);
+      if (g.description) g.description = gateContent(String(g.description)).slice(0, 4000);
+      if (Array.isArray(g.fields)) g.fields = g.fields.map(function (f) { return Object.assign({}, f, { name: gateContent(String(f.name || '')).slice(0, 256), value: gateContent(String(f.value || '')).slice(0, 1024) }); });
+      return requestJSON('PATCH', '/channels/' + channelId + '/messages/' + messageId, { json: true, body: { embeds: [g], allowed_mentions: allowedMentions() } });
+    },
+    deleteMessage: function (channelId, messageId) {   // thoughts-card rotation fallback (204 on success)
+      return requestJSON('DELETE', '/channels/' + channelId + '/messages/' + messageId, {});
     },
     pinMessage: function (channelId, messageId) {
       return requestJSON('PUT', '/channels/' + channelId + '/pins/' + messageId, {});   // needs Manage Messages; 204 on success
@@ -984,6 +1347,7 @@ function __chloeWire(Shell) {
     if (!channelId) return null;
     var eng = ChloeT0.createEngine({
       transport: transport, store: gateStore(makeStore(prefixFor(channelId)), channelId), globalStore: makeStore(''),
+      localStore: makeStore(prefixFor(channelId)),
       config: {
         channelId: channelId,
         bridgeVersion: VERSION,
@@ -991,9 +1355,10 @@ function __chloeWire(Shell) {
         botUserId: cfgGet('botUserId', ''),
         botName: cfgGet('botName', ''),
         botAliases: cfgGet('botAliases', []),
-        botRoleIds: cfgGet('botRoleIds', []),   // v0.90.17: role ids whose <@&id> ping summons her (Behavior -> summon roles)
+        botRoleIds: cfgGet('botRoleIds', []),   // v0.90.17: role ids whose <@&id> ping summons it (Behavior -> summon roles)
         addressMode: isDMChannel(channelId) ? 'always' : cfgGet('addressMode', 'both'),
         volunteer: !!cfgGet('volunteer', false),
+        judgeReactions: cfgGet('judgeReactions', null),   // null = engine default dozen; [] = react-votes disabled
         greet: !!cfgGet('greet', true),
         backfill: !!cfgGet('backfill', false),
         image: !!cfgGet('image', false),
@@ -1016,6 +1381,12 @@ function __chloeWire(Shell) {
         strikeDecayMs: cfgGet('strikeDecayMs', 86400000),
         engageMode: cfgGet('engageMode:' + channelId, cfgGet('engageMode', 'normal')),
         channelLang: cfgGet('channelLang:' + channelId, null),   // v0.90.21: per-channel reply default (null = English)
+        thoughtsFeedTarget: cfgGet('thoughtsFeed:' + channelId, null),   // F1: post fresh summaries to this Discord channel (null = panel feed only)
+        newsFeeds: cfgGet('newsFeeds', []),   // F2: hourly sitemap rollups targeting this channel (filtered by engine)
+        newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
+        newsInContext: !!cfgGet('newsInContext', false),   // F2 redirect: false (default) = own 📰 rollups stay out of the reply transcript, marker folds into Thoughts instead
+        newsReview: !!cfgGet('newsReview', false),   // F2 review queue: false (default) = composed rollups post immediately; true = they stage in the news queue instead
+        newsFn: function (ctx) { return brainCall('newsRollup', ctx); },
         chanSpeak: chanGate(channelId, 'speak'), chanRead: chanGate(channelId, 'read'), chanRemember: chanGate(channelId, 'remember'),
         beats: cfgGet('beats', []),
         beatMinGapMs: cfgGet('beatMinGapMs', 600000),   // global min gap between beats (mirrors the lull-timing precedent; engine default 10 min)
@@ -1083,10 +1454,16 @@ function __chloeWire(Shell) {
         recapFn: function (ctx) { return brainCall('recap', ctx); },
         search: function (q) { return webSearch(q); },   // model tool-loop item 2: the QUERY tool (outer scope owns the network; the engine stays pure)
         fetch: function (url) { return webFetch(url); },   // v0.90.19 second QUERY tool (same fail-open contract)
+        fetchAttachmentText: function (job) { return fetchAttachmentText(job); },   // B1: Discord CDN text-file fetch (host-allowlisted, no auth, fail-open)
+        attachMaxFiles: cfgGet('attachMaxFiles', 2), attachMaxChars: cfgGet('attachMaxChars', 3000), attachMaxBytes: cfgGet('attachMaxBytes', 100000),
+        attachPdfMaxBytes: cfgGet('attachPdfMaxBytes', 2000000),
         almanac: function (job) { return almanacLookup(job); },   // v0.90.20 third QUERY tool
         typing: gateSpeak(channelId, 'typing', function (cid) { return transport.startTyping(cid); }),
         react: gateSpeak(channelId, 'react', function (cid, mid, emoji) { return transport.addReaction(cid, mid, emoji); }),
-        unreact: gateSpeak(channelId, 'unreact', function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); }),
+        // unreact is DELIBERATELY ungated: removing our own ack is hygiene, not speech — a speak-gate
+        // flipped mid-generation (or an ack toggle flipped mid-flight) must never orphan the reaction,
+        // and rescue/stop/reset sweeps must work in every gate state.
+        unreact: function (cid, mid, emoji) { return transport.removeReaction(cid, mid, emoji); },
         ackReactions: cfgGet('ackReactions', true),
         singleParagraph: cfgGet('singleParagraph', false),
         toolsEnabled: !!cfgGet('toolsEnabled', false),
@@ -1097,7 +1474,7 @@ function __chloeWire(Shell) {
         serverMemberCount: cfgGet('serverMemberCount', 0),
         reactionAutoHighlight: cfgGet('reactionAutoHighlight', true),
         recentFetch: function (n) { return transport.getRecentMessages(channelId, n); },
-        reactionUsers: function (messageId, emoji) { return transport.getReactions(channelId, messageId, emoji); },   // bounded (limit 10): her messages + positive set only
+        reactionUsers: function (messageId, emoji) { return transport.getReactions(channelId, messageId, emoji); },   // bounded (limit 10): its messages + positive set only
         fetchMessage: function (messageId) { return transport.getMessage(channelId, messageId); },
         reactionSummon: cfgGet('reactionSummon', false),
         defer: function (fn, ms) { return setTimeout(fn, ms); },   // completion-driven dispatch + typing keep-alive (DESIGN-roundtrip.md)
@@ -1140,8 +1517,24 @@ function __chloeWire(Shell) {
         botLoopFloor: cfgGet('botLoopFloor', 0.05),
         botLoopHardStop: cfgGet('botLoopHardStop', 12),
         sendEmbed: gateSpeak(channelId, 'sendEmbed', function (cid, embed) { return transport.sendEmbed(cid, embed); }),
+        // Thoughts-card rotation (hygiene like unreact — ungated; only ever targets the
+        // bot's own recorded card ids). The POST half stays speak-gated via send/sendTo.
+        editMessage: function (cid, mid, text) { return transport.editMessage(cid, mid, text); },
+        editEmbed: function (cid, mid, embed) { return transport.editEmbed(cid, mid, embed); },
+        deleteMessage: function (cid, mid) { return transport.deleteMessage(cid, mid); },
+        sendTo: function (cid, text, opts) {   // F1: cross-channel post (thoughts feed) — gated on the TARGET channel, not the source
+          var t = String(cid || '').trim();
+          if (!/^\d{15,25}$/.test(t)) return Promise.resolve({ ok: false, reason: 'bad target channel' });
+          if (!chanGate(t, 'speak')) {
+            var now = Date.now();
+            if (now - speakGateLastLog > 300000) { speakGateLastLog = now; console.log('[chloe] channel ' + t + ': speak gate is off — dropped sendTo'); }
+            return Promise.resolve({ id: null, gated: true });
+          }
+          return transport.sendMessage(t, text, opts);
+        },
+        fetchText: fetchText,   // F2: config-allowlisted sitemap fetch (fail-open, never rejects)
         onPoll: function (summary) {
-          lastPoll = summary; pushEvent('poll', summary);
+          lastPoll = summary; if (summary && typeof summary === 'object') summary.channelId = channelId; pushEvent('poll', summary);
           if (summary && summary.gated) {
             if (!gatedLogged[channelId]) { gatedLogged[channelId] = true; trace('poll', 'channel ' + channelId + ' read gate is off — skipping polls (no fetch, no replies, no memory)'); }
           } else if (gatedLogged[channelId]) gatedLogged[channelId] = false;
@@ -1313,7 +1706,7 @@ function __chloeWire(Shell) {
     return {
       version: VERSION, hasToken: hasToken(),
       channelId: cfgGet('channelId', ''), botUserId: cfgGet('botUserId', ''), botName: cfgGet('botName', ''),
-      botRoleIds: cfgGet('botRoleIds', []), addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false),
+      botRoleIds: cfgGet('botRoleIds', []), addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false), judgeReactions: cfgGet('judgeReactions', null),
       greet: !!cfgGet('greet', true), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
       dmReplies: !!cfgGet('dmReplies', true),
       publicChannels: [primaryChannel()].concat(cfgGet('channels', []) || []).filter(Boolean),
@@ -1365,7 +1758,7 @@ function __chloeWire(Shell) {
       relationshipTrust: !!cfgGet('relationshipTrust', true),
       ownAffect: !!cfgGet('ownAffect', true),
       proceduralModes: !!cfgGet('proceduralModes', true), procRules: cfgGet('procRules', []),
-      hamRadio: !!cfgGet('hamRadio', false),
+      hamRadio: !!cfgGet('hamRadio', true),   // ON by default; an explicit stored false still wins (fresh users have no bot id yet, so the band stays quiet until they validate)
       reactionSummon: !!cfgGet('reactionSummon', false),
       brain: brainMeter.snapshot(),
       image: !!cfgGet('image', false),
@@ -1377,6 +1770,11 @@ function __chloeWire(Shell) {
       channelLang: cfgGet('channelLang:' + primaryChannel(), null),
       channels: channelList(),
       channelLangs: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('channelLang:' + c, null); }); return m; })(),
+      thoughtsFeeds: (function () { var m = {}; channelList().forEach(function (c) { var t = cfgGet('thoughtsFeed:' + c, null); if (t) m[c] = t; }); return m; })(),
+      newsFeeds: cfgGet('newsFeeds', []),
+      newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
+      newsInContext: !!cfgGet('newsInContext', false),
+      newsReview: !!cfgGet('newsReview', false),
       engageModes: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('engageMode:' + c, cfgGet('engageMode', 'normal')); }); return m; })(),
       chanGates: (function () { var m = {}; channelList().forEach(function (c) { m[c] = chanGatesFor(c); }); return m; })(),
       games: (function () { var m = {}; channelList().forEach(function (c) { m[c] = gameStatusFor(c); }); return m; })(),
@@ -1437,7 +1835,9 @@ function __chloeWire(Shell) {
     ['config.setReflection', 'reflection', 'patch'], ['config.setEpisodicMemory', 'episodicMemory', 'patch'],
     ['config.setRelationshipTrust', 'relationshipTrust', 'patch'], ['config.setOwnAffect', 'ownAffect', 'patch'],
     ['config.setProceduralModes', 'proceduralModes', 'patch'], ['config.setReactionSummon', 'reactionSummon', 'patch'],
-    ['config.setHamRadio', 'hamRadio', 'patch']
+    ['config.setHamRadio', 'hamRadio', 'patch'],
+    ['config.setNewsInContext', 'newsInContext', 'patch'],
+    ['config.setNewsReview', 'newsReview', 'patch']
   ];
   function dispatchFlagToggle(cmd, args) {
     for (var i = 0; i < FLAG_TOGGLES.length; i++) {
@@ -1467,7 +1867,7 @@ function __chloeWire(Shell) {
         cfgSet('commandPrefixes', clean); patchEngines({ commandPrefixes: clean });
         return Promise.resolve({ ok: true, value: { commandPrefixes: clean } });
       }
-      case 'config.setSummonRoles': {   // v0.90.17: role ids whose <@&id> ping summons her (a role ping carries no name, so only listed ids match)
+      case 'config.setSummonRoles': {   // v0.90.17: role ids whose <@&id> ping summons it (a role ping carries no name, so only listed ids match)
         var rl = (args && args.roleIds);
         if (!Array.isArray(rl)) return Promise.resolve({ ok: false, reason: 'roleIds must be an array' });
         var cleanR = [];
@@ -1478,6 +1878,19 @@ function __chloeWire(Shell) {
         }
         cfgSet('botRoleIds', cleanR); patchEngines({ botRoleIds: cleanR });   // LIVE_PATCHABLE: applies without restart
         return Promise.resolve({ ok: true, value: { botRoleIds: cleanR } });
+      }
+      case 'config.setJudgeReactions': {   // curated volunteer-reaction allowlist ([] = react-votes disabled, text-only)
+        var jr = (args && args.reactions);
+        if (!Array.isArray(jr)) return Promise.resolve({ ok: false, reason: 'reactions must be an array' });
+        var cleanJ = [];
+        for (var ji = 0; ji < jr.length && cleanJ.length < 12; ji++) {
+          var jem = String(jr[ji] || '').trim().slice(0, 32);
+          if (!jem || cleanJ.indexOf(jem) >= 0) continue;
+          if (!/[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(jem) && !/[\u2600-\u27BF\u2B00-\u2BFF\uFE0F]/.test(jem) && !/^<a?:\w+:\d+>$/.test(jem)) continue;   // real emoji (surrogate pair / dingbat / symbol) or custom Discord emoji only
+          cleanJ.push(jem);
+        }
+        cfgSet('judgeReactions', cleanJ); patchEngines({ judgeReactions: cleanJ });
+        return Promise.resolve({ ok: true, value: { judgeReactions: cleanJ } });
       }
       case 'config.setLullTiming': {   // Reach out card: silence-filler pace (Discord time — clamps keep it sane, client caps are bypassable)
         var lullP = Math.round(Number(args && args.patienceMs) || 86400000);
@@ -1532,7 +1945,7 @@ function __chloeWire(Shell) {
         if (cfgGet('noticePinned', false) && !force) return Promise.resolve({ ok: true, value: { already: true } });
         var nch = chKeyOf(args);
         if (!nch) return Promise.resolve({ ok: false, reason: 'no channel set' });
-        var ntext = (args && args.text) ? String(args.text) : 'Heads up: Chloe is a roleplay bot character, not a real person. She reads this channel and remembers regulars so she can chat in character. Mods can adjust or pause her at any time.';
+        var ntext = (args && args.text) ? String(args.text) : 'Heads up: Chloe is a roleplay bot character, not a real person. It reads this channel and remembers regulars so it can chat in character. Mods can adjust or pause it at any time.';
         return transport.sendMessage(nch, ntext).then(function (m) {
           var mid = m && m.id;
           if (!mid) return { ok: false, reason: 'no message id returned' };
@@ -1656,6 +2069,118 @@ function __chloeWire(Shell) {
         // language into every channel (the setEngageMode broadcast flaw, deliberately not repeated).
         var __e1 = engines[chL]; if (__e1 && typeof __e1.updateConfig === 'function') { try { __e1.updateConfig({ channelLang: rawL }); } catch (e1) {} }
         return Promise.resolve({ ok: true, value: { lang: rawL, channelId: chL } });
+      }
+      case 'config.setThoughtsFeed': {   // F1: per-source-channel summary target (lang-vertical mirror; empty clears)
+        var chT = chKeyOf(args);
+        if (!chT) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var tgt = String((args && args.target) || '').trim();
+        if (tgt && !/^\d{15,25}$/.test(tgt)) return Promise.resolve({ ok: false, reason: 'target must be a channel id' });
+        if (tgt && channelList().indexOf(tgt) < 0) return Promise.resolve({ ok: false, reason: 'unknown channel ' + tgt });
+        if (tgt) cfgSet('thoughtsFeed:' + chT, tgt);
+        else GM_deleteValue(NS + 'cfg:thoughtsFeed:' + chT);
+        var __et = engines[chT]; if (__et && typeof __et.updateConfig === 'function') { try { __et.updateConfig({ thoughtsFeedTarget: tgt || null }); } catch (eT) {} }
+        return Promise.resolve({ ok: true, value: { target: tgt || null, channelId: chT } });
+      }
+      case 'config.setNewsVoice': {   // F2 voice: user-editable rollup prompt + post template (null clears to default; '' prompt = classic list)
+        var vp = (args && ('prompt' in args)) ? args.prompt : undefined;
+        var vt = (args && ('template' in args)) ? args.template : undefined;
+        if (vp !== undefined && vp !== null) { vp = String(vp); if (!vp.trim()) vp = ''; if (vp.length > 2000) return Promise.resolve({ ok: false, reason: 'prompt must be ≤2000 chars' }); }
+        else if (vp !== undefined) vp = null;
+        if (vt !== undefined && vt !== null) { vt = String(vt); if (vt.length > 500) return Promise.resolve({ ok: false, reason: 'template must be ≤500 chars' }); }
+        else if (vt !== undefined) vt = null;
+        if (vp !== undefined) cfgSet('newsPrompt', vp);
+        if (vt !== undefined) cfgSet('newsPostTemplate', vt);
+        patchEngines({ newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null) });
+        return Promise.resolve({ ok: true, value: { prompt: cfgGet('newsPrompt', null), template: cfgGet('newsPostTemplate', null) } });
+      }
+      case 'config.setNewsFeeds': {   // F2: hourly sitemap rollup feeds (global array; engines filter by channelId)
+        var chk = validateNewsFeeds(args && args.feeds, channelList());
+        if (!chk.ok) return Promise.resolve({ ok: false, reason: chk.reason });
+        newsDiscoveredHosts = {};   // site set may have changed — rebuild the chain from scratch
+        cfgSet('newsFeeds', chk.feeds);
+        patchEngines({ newsFeeds: chk.feeds });
+        return Promise.resolve({ ok: true, value: { count: chk.feeds.length, feeds: chk.feeds } });
+      }
+      case 'config.listNewsQueue': {   // review-queue contents across engines (async store reads; old engines lack the fns)
+        var lq = {};
+        var lJobs = [];
+        eachEngine(function (e, c) {
+          if (!e || typeof e.listNewsQueue !== 'function') return;
+          lJobs.push(Promise.resolve(e.listNewsQueue()).then(function (r) {
+            try { lq[String((r && r.channel) || c)] = (r && r.queue) || []; } catch (eL) {}
+          }, function () {}));
+        });
+        return Promise.all(lJobs).then(function () { return { ok: true, value: { queues: lq, review: !!cfgGet('newsReview', false) } }; });
+      }
+      case 'config.newsDiag': {   // per-feed last-result + last-run summary across engines (async store reads; old engines lack the fn)
+        var nd = {};
+        var nJobs = [];
+        eachEngine(function (e, c) {
+          if (!e || typeof e.newsDiag !== 'function') return;
+          nJobs.push(Promise.resolve(e.newsDiag()).then(function (r) {
+            try { nd[String((r && r.channel) || c)] = { byFeed: (r && r.byFeed) || {}, lastRun: (r && r.lastRun) || null, queue: (r && r.queue) || 0 }; } catch (eL) {}
+          }, function () {}));
+        });
+        return Promise.all(nJobs).then(function () { return { ok: true, value: { diag: nd } }; });
+      }
+      case 'config.updateNewsQueue': case 'config.regenNewsQueue': case 'config.postNewsQueue': case 'config.dropNewsQueue': {
+        var qCh = chKeyOf({ channelId: (args && args.channelId) || '' });
+        if (!qCh) return Promise.resolve({ ok: false, reason: 'no channel set' });
+        var qe = engines[qCh] || buildEngine(qCh);
+        if (!qe) return Promise.resolve({ ok: false, reason: 'no engine for that channel' });
+        var qFn = { 'config.updateNewsQueue': 'updateNewsQueue', 'config.regenNewsQueue': 'regenNewsQueue', 'config.postNewsQueue': 'postNewsQueue', 'config.dropNewsQueue': 'dropNewsQueue' }[cmd];
+        if (typeof qe[qFn] !== 'function') return Promise.resolve({ ok: false, reason: 'queue needs a current engine' });
+        var qArgs = { qid: (args && args.qid) || '' };
+        if (args.items !== undefined) qArgs.items = args.items;
+        if (args.text !== undefined) qArgs.text = typeof args.text === 'string' ? args.text.slice(0, 1900) : args.text;
+        return Promise.resolve(qe[qFn](qArgs)).then(function (r) {
+          if (r && r.ok) return { ok: true, value: r.value };
+          return { ok: false, reason: (r && r.reason) || 'queue op failed' };
+        });
+      }
+      case 'config.testNewsFeed': {   // dry-run a feed draft for the panel Test button: fetch chain only — no store writes, no posts, no seen-marking
+        var tf = (args && args.feed) || {};
+        var tsite = String(tf.site || '').trim().replace(/\/+$/, '');
+        if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(tsite)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
+        function twords(arr, cap) {
+          if (arr == null) return [];
+          if (!Array.isArray(arr)) return null;
+          var tout = [];
+          for (var ti = 0; ti < arr.length; ti++) {
+            var tw = String(arr[ti] == null ? '' : arr[ti]).trim().toLowerCase();
+            if (!tw) continue;
+            if (tw.length > 40) return null;
+            tout.push(tw);
+          }
+          if (tout.length > cap) return null;
+          return tout;
+        }
+        var tbw = twords(tf.banWords, 50), tac = twords(tf.allowCats, 30), tbc = twords(tf.blockCats, 30);
+        if (tbw === null || tac === null || tbc === null) return Promise.resolve({ ok: false, reason: 'filter words must be ≤40 chars (drop ≤50, topics ≤30)' });
+        var tmx = Math.max(1, Math.min(10, Math.round(Number(tf.maxItems) || 5)));
+        var thost = (tsite.match(/^https?:\/\/([^\/:?#]+)/i) || [])[1];
+        if (thost) newsDiscoveredHosts[String(thost).toLowerCase()] = true;   // session-local only, same standing as harvested chain hosts
+        var tens = ensureEngines();
+        if (!tens.length) return Promise.resolve({ ok: false, reason: 'no channels yet — add a channel first' });
+        if (!tens[0] || typeof tens[0].testNewsFeed !== 'function') return Promise.resolve({ ok: false, reason: 'feed test needs a current engine' });
+        return tens[0].testNewsFeed({ site: tsite, name: String(tf.name || tsite).slice(0, 60), banWords: tbw, allowCats: tac, blockCats: tbc, maxItems: tmx }).then(function (tr) {
+          if (tr && tr.ok) return { ok: true, value: tr };
+          return { ok: false, reason: (tr && tr.reason) || 'test failed' };
+        });
+      }
+      case 'config.runNewsFeedNow': {   // panel Run button: immediate single-feed run (saved or draft config, no save required)
+        var rf = (args && args.feed) || {};
+        var rsite = String(rf.site || '').trim().replace(/\/+$/, '');
+        if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(rsite)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
+        var rCh = chKeyOf({ channelId: rf.channelId || '' });
+        if (!rCh) return Promise.resolve({ ok: false, reason: 'assign a Posts-to channel first — Unassigned sources stay dormant' });
+        var re = engines[rCh] || buildEngine(rCh);
+        if (!re) return Promise.resolve({ ok: false, reason: 'no engine for that channel' });
+        if (typeof re.runNewsFeedNow !== 'function') return Promise.resolve({ ok: false, reason: 'run needs a current engine (Stop + Start the bot to load it)' });
+        return Promise.resolve(re.runNewsFeedNow(rf)).then(function (rr) {
+          if (rr && rr.ok) return { ok: true, value: rr };
+          return { ok: false, reason: (rr && rr.reason) || 'run failed' };
+        });
       }
       case 'config.setChannelGate': {   // per-channel speak/read/remember gates (goldfish model)
         var chG = chKeyOf(args);
@@ -2117,9 +2642,11 @@ function __chloeWire(Shell) {
         });
       }
       case 'rescue':
-        { brainMeter.reset(); var rN = 0; eachEngine(function (e) { try { if (e && typeof e.rescueStuck === 'function') { e.rescueStuck('manual rescue from the panel'); rN++; } } catch (rE) { traceErr('rescue', 'engine rescue failed (' + ((rE && rE.message) || rE) + ')'); } });
+        { brainMeter.reset(); var rN = 0, rAcks = 0, rCards = 0; var rJobs = [];
+          eachEngine(function (e) { try { if (e && typeof e.rescueStuck === 'function') { var rR = e.rescueStuck('manual rescue from the panel'); rN++; if (rR && typeof rR.then === 'function') rJobs.push(Promise.resolve(rR).then(function (rv) { try { var vv = rv && rv.value; if (vv) { rAcks += (vv.sweptAcks || 0); rCards += (vv.sweptCards || 0); } } catch (eA) {} }, function () {})); } } catch (rE) { traceErr('rescue', 'engine rescue failed (' + ((rE && rE.message) || rE) + ')'); } });
           trace('rescue', 'manual rescue: brain breaker reset, ' + rN + ' engine(s) cleared');
-          return Promise.resolve({ ok: true, value: { engines: rN } }); }
+          if (!rJobs.length) return Promise.resolve({ ok: true, value: { engines: rN } });
+          return Promise.all(rJobs).then(function () { return { ok: true, value: { engines: rN, sweptAcks: rAcks, sweptCards: rCards } }; }); }
       default:                return Promise.resolve({ ok: false, reason: 'unknown command: ' + cmd });
     }
   }
@@ -2239,6 +2766,10 @@ function __chloeWire(Shell) {
       });
     });
     tabBridge.start();
+    // A closing tab says goodbye so peers drop its row now instead of holding it to the
+    // heartbeat reap (45s of ghost worker otherwise). Guarded: the build smoke test and
+    // headless harnesses stub window without addEventListener.
+    try { if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('beforeunload', function () { try { tabBridge.broadcast('bye'); } catch (e) {} }); } catch (e) {}
     tickTimer = setInterval(function () { tabBridge.tick(); }, 5000);   // host-driven time; the queen tab is the foreground tab
   } else {
     trace('bridge', 'no bus available (BroadcastChannel + GM listener both missing) \u2014 single-tab mode');
@@ -2261,7 +2792,7 @@ function __chloeWire(Shell) {
     if (s.placeholder || s.parts !== 3) bLog('[chloe] WARNING: does not look like a bot token (expect ~70+ chars, 3 dot-parts).');
   }
   function resetState(silent) {
-    if (!silent && !confirm('Reset state (cursor, roster, ring) for ALL channels? Token is NOT touched.')) return Promise.resolve();
+    if (!silent && !confirm('Reset state (cursor, roster, ring, stuck reactions) for ALL channels? Token is NOT touched.')) return Promise.resolve();
     var chain = Promise.resolve();
     channelList().forEach(function (ch) {
       var pfx = prefixFor(ch), st = makeStore(pfx);
@@ -2271,13 +2802,17 @@ function __chloeWire(Shell) {
           // clear archived ("historical friend") users too, via their index
           var archIdx = []; try { var aj = JSON.parse(GM_getValue(NS + pfx + 'arch:index:' + ch, '[]')) || []; archIdx = Array.isArray(aj) ? aj : []; } catch (e) {}
           archIdx.forEach(function (id) { GM_deleteValue(NS + pfx + 'arch:' + ch + ':u:' + id); });
-          // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate
+          // every per-channel state key (kept in sync with the engine's *_KEY set) so a reset is a true clean slate.
+          // NOTE: pending-reply/runlock/poll/procmode are operational, not memory — a reset must not
+          // resurrect a reply, keep a dead run-lock, or leave a poll/mode behind. Memory keys
+          // (consolidate/chansum/epi/affect/work/delib/goals/persona/ethereal) are intentionally kept.
           ['cursor:' + ch, 'roster:index', 'speaker:ring:' + ch, 'rhythm:' + ch, 'mood:' + ch,
            'intent:' + ch, 'reminders:' + ch, 'afk:' + ch, 'highlights:' + ch, 'reacttally:' + ch,
            'lull:' + ch, 'checkins:' + ch, 'beats:lastrun:' + ch, 'selfintents:' + ch, 'ownlines:' + ch, 'feedback:' + ch, 'todos:' + ch, 'skills:' + ch, 'arch:index:' + ch,
            'games:' + ch, 'wordle:' + ch, 'wordlestats:' + ch,
            'pendingact:' + ch, 'approveonce:' + ch, 'actsnooze:' + ch, 'actlog:' + ch,
            'undostack:' + ch,
+           'pending-reply:' + ch, 'runlock:' + ch, 'poll:' + ch, 'procmode:' + ch,
            'modlog', 'backfill:' + ch, 'blocklist'].forEach(function (k) { GM_deleteValue(NS + pfx + k); });
           GM_deleteValue(NS + 'cfg:backfillDone:' + ch);
         });
@@ -2289,27 +2824,13 @@ function __chloeWire(Shell) {
   function factoryReset() {
     // First do the standard state reset (partitions, cursors, rings...)
     return resetState(true).then(function () {
-      // Then wipe all cfg keys except the token (keeps the bot connected)
+      // Then wipe all cfg keys except the token (keeps the bot connected).
+      // R6 rotate-45: this used to be a private second copy of BACKUP_CFG_KEYS
+      // (they had already drifted by 7 legacy/notice keys); now it derives from
+      // the single source of truth plus the reset-only extras, so the two can
+      // never drift apart — same wiped set as before, verified headless.
       var keep = ['token'];
-      var allCfg = [
-        'botUserId','botName','botAliases','botRoleIds','channelId','channels','dmChannels','addressMode','engageMode',
-        'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
-        'lullFiller','checkins','lullPatienceMs','lullMinGapMs','checkinMinInteractions',
-        'checkinAbsenceMs','checkinPerUserGapMs','checkinGapMs','checkinFavorites','checkinBlacklist',
-        'factMemory','moodAware','channelSummary','adaptivePace',
-        'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
-        'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
-        'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
-        'reactionSummon','hamRadio','autoMod','autoModRules','commandPrefixes','beats','procRules',
-        'actPolicy','actGrants',
-        'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
-        'character','personaAnchor','noticeText','noticeMsgId','noticePinned','dmReplies','dmSessions','poolSize',
-        'sendBudgetMs','sendMinGapMs','requestTokenBudget','typingRefreshMs','pollBusyCeilMs',
-        'spawnBackoffMs','strikeDecayMs','strikeLadder','queenDeadAfterMs','archiveStale',
-        'reactionTracking','reactionAutoHighlight','gateEmoji','gatePings','gateEveryone',
-        'gateLinks','gateChannelLinks','autoResume','gate:emoji','gate:pings','gate:everyone',
-        'gate:links','gate:channelLinks','todoMaxPerUser','todoTextMax'
-      ];
+      var allCfg = BACKUP_CFG_KEYS.concat(['noticeMsgId', 'noticePinned', 'gateEmoji', 'gatePings', 'gateEveryone', 'gateLinks', 'gateChannelLinks']);
       allCfg.forEach(function (k) {
         if (keep.indexOf(k) < 0) GM_deleteValue(NS + 'cfg:' + k);
       });
@@ -2321,7 +2842,7 @@ function __chloeWire(Shell) {
       channelList().forEach(function (ch) { GM_deleteValue(NS + 'guildId:' + ch); });
       // Per-channel keys (v0.90.21 — same hole as export: exact-name lists can't enumerate
       // per-channel suffixes, so a reset left stale engageMode:<id> behind).
-      channelList().forEach(function (ch) { GM_deleteValue(NS + 'cfg:engageMode:' + ch); GM_deleteValue(NS + 'cfg:channelLang:' + ch); GM_deleteValue(NS + 'cfg:chanGate:' + ch); });
+      channelList().forEach(function (ch) { GM_deleteValue(NS + 'cfg:engageMode:' + ch); GM_deleteValue(NS + 'cfg:channelLang:' + ch); GM_deleteValue(NS + 'cfg:thoughtsFeed:' + ch); GM_deleteValue(NS + 'cfg:chanGate:' + ch); });
       eachEngine(function (e) { e.stop(); }); engines = {}; lastPoll = null;
       bLog('[chloe] factory reset complete — all state and config cleared (token kept).');
       return { ok: true };
@@ -2334,14 +2855,14 @@ function __chloeWire(Shell) {
   // nothing else, notably never the token. One list so the two can never drift apart.
   var BACKUP_CFG_KEYS = [
       'botUserId','botName','botAliases','botRoleIds','channelId','channels','dmChannels','addressMode','engageMode',
-      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder',
+      'volunteer','greet','backfill','memberCheck','image','imageQueueMax','imageMemory','imageEnhanceOffer','ackReactions','singleParagraph','toolsEnabled','converseEngine','trustHardening','bondLadder','judgeReactions',
       'lullFiller','checkins','lullPatienceMs','lullMinGapMs','checkinMinInteractions',
       'checkinAbsenceMs','checkinPerUserGapMs','checkinGapMs','checkinFavorites','checkinBlacklist',
       'factMemory','moodAware','channelSummary','adaptivePace',
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
       'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
       'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
-      'reactionSummon','hamRadio','autoMod','autoModRules','commandPrefixes','beats','procRules',
+      'reactionSummon','hamRadio','autoMod','autoModRules','commandPrefixes','beats','procRules','newsFeeds','newsPrompt','newsPostTemplate','newsInContext','newsReview',
       'actPolicy','actGrants',
       'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
       'character','personaAnchor','noticeText','dmReplies','dmSessions','poolSize',
@@ -2360,7 +2881,7 @@ function __chloeWire(Shell) {
     // survived backup: exact-name allowlists can't enumerate per-channel suffixes, so snapshot
     // them dynamically for the known channels).
     channelList().forEach(function (ch) {
-      ['engageMode:', 'channelLang:'].forEach(function (p) {
+      ['engageMode:', 'channelLang:', 'thoughtsFeed:'].forEach(function (p) {
         var v = GM_getValue(NS + 'cfg:' + p + ch, null);
         if (v != null) cfg[p + ch] = v;
       });
@@ -2392,7 +2913,7 @@ function __chloeWire(Shell) {
       // per-channel state keys
       ['cursor:'+ch,'speaker:ring:'+ch,'rhythm:'+ch,'mood:'+ch,'intent:'+ch,'reminders:'+ch,
        'afk:'+ch,'highlights:'+ch,'reacttally:'+ch,'lull:'+ch,'checkins:'+ch,
-       'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,
+       'beats:lastrun:'+ch,'modlog','chansum:'+ch,'epi:'+ch,'affect:'+ch,'work:'+ch,'news:'+ch,
        'delib:'+ch,'procmode:'+ch,'charmem','goals','consolidate:'+ch,'backfill:'+ch,'selfintents:'+ch,'ownlines:'+ch,'feedback:'+ch,'todos:'+ch,'skills:'+ch,
        'games:'+ch,'wordle:'+ch,'wordlestats:'+ch,'actlog:'+ch
       ].forEach(function (k) { var v = GM_getValue(NS + pfx + k, null); if (v != null) chData[k] = v; });
@@ -2414,7 +2935,7 @@ function __chloeWire(Shell) {
   var IMPORT_CH_EXACT = ['roster:index', 'modlog', 'charmem', 'goals'];
   var IMPORT_CH_PREFIX = ['cursor:', 'speaker:ring:', 'rhythm:', 'mood:', 'intent:', 'reminders:',
     'afk:', 'highlights:', 'reacttally:', 'lull:', 'checkins:', 'beats:lastrun:', 'chansum:',
-    'epi:', 'affect:', 'work:', 'delib:', 'procmode:', 'consolidate:', 'backfill:',
+    'epi:', 'affect:', 'work:', 'delib:', 'procmode:', 'consolidate:', 'backfill:', 'news:',
     'selfintents:', 'ownlines:', 'feedback:', 'todos:', 'skills:',
     'games:', 'wordle:', 'wordlestats:', 'actlog:'];
   function importKeyOk(k) {
@@ -2439,11 +2960,13 @@ function __chloeWire(Shell) {
         }
         dropped.push('cfg:' + k); return;
       }
-      var mPC = k.match(/^(engageMode|channelLang):(\d{15,25})$/);   // per-channel keys (v0.90.21 —
+      var mPC = k.match(/^(engageMode|channelLang|thoughtsFeed):(\d{15,25})$/);   // per-channel keys (v0.90.21 —
       if (mPC) {                                                      // exact-name allowlists can't enumerate these)
         if (mPC[1] === 'engageMode') { if (IMPORT_ENGAGE.indexOf(src[k]) >= 0) cfg[k] = src[k]; else dropped.push('cfg:' + k); return; }
         var __ln = (typeof ChloeT0 !== 'undefined' && ChloeT0.LANG_NAMES) || {};
-        if (__ln[src[k]]) cfg[k] = src[k]; else dropped.push('cfg:' + k); return;
+        if (mPC[1] === 'channelLang') { if (__ln[src[k]]) cfg[k] = src[k]; else dropped.push('cfg:' + k); return; }
+        if (mPC[1] === 'thoughtsFeed') { if (/^\d{15,25}$/.test(String(src[k] || ''))) cfg[k] = String(src[k]); else dropped.push('cfg:' + k); return; }
+        dropped.push('cfg:' + k); return;
       }
       if (k === 'token' || !allowed[k]) { dropped.push('cfg:' + k); return; }   // never the token, never unknown keys
       var v = src[k];
@@ -2451,6 +2974,19 @@ function __chloeWire(Shell) {
       if (k === 'engageMode' || k.indexOf('engageMode:') === 0) { if (IMPORT_ENGAGE.indexOf(v) >= 0) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       if (k === 'modList') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return typeof x === 'string' && x; }); else dropped.push('cfg:' + k); return; }
       if (k === 'botRoleIds') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return /^\d{8,32}$/.test(String(x)); }).map(String); else dropped.push('cfg:' + k); return; }
+      if (k === 'judgeReactions') {
+        if (Array.isArray(v)) {
+          var cj = [];
+          v.forEach(function (x) {
+            var s = String(x || '').trim().slice(0, 32);
+            if (!s || cj.indexOf(s) >= 0 || cj.length >= 12) return;
+            if (!/[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(s) && !/[\u2600-\u27BF\u2B00-\u2BFF\uFE0F]/.test(s) && !/^<a?:\w+:\d+>$/.test(s)) return;
+            cj.push(s);
+          });
+          cfg[k] = cj;
+        } else dropped.push('cfg:' + k);
+        return;
+      }
       if (k === 'checkinFavorites' || k === 'checkinBlacklist') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return /^\d{8,32}$/.test(String(x).trim()); }).map(function (x) { return String(x).trim(); }).slice(0, 200); else dropped.push('cfg:' + k); return; }
       if (k === 'actPolicy') { if (v === 'allow' || v === 'ask' || v === 'deny') cfg[k] = v; else dropped.push('cfg:' + k); return; }
       if (k === 'actGrants') {
@@ -2464,6 +3000,9 @@ function __chloeWire(Shell) {
       if (k in REACH_BOUNDS) { var rb = REACH_BOUNDS[k]; if (typeof v === 'number' && isFinite(v) && v >= rb[0] && v <= rb[1]) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       if (k === 'commandPrefixes') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return typeof x === 'string' && x; }); else dropped.push('cfg:' + k); return; }
       if (k === 'autoModRules' || k === 'beats' || k === 'procRules') { if (Array.isArray(v)) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      if (k === 'newsFeeds') { var __nv = validateNewsFeeds(v, null); if (__nv.ok) cfg[k] = __nv.feeds; else dropped.push('cfg:' + k); return; }
+      if (k === 'newsPrompt') { if (v == null) cfg[k] = null; else if (typeof v === 'string' && v.length <= 2000) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      if (k === 'newsPostTemplate') { if (v == null) cfg[k] = null; else if (typeof v === 'string' && v.length <= 500) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       cfg[k] = v;
     });
     var topLevel = {}, tls = (data && data.topLevel && typeof data.topLevel === 'object') ? data.topLevel : {};
