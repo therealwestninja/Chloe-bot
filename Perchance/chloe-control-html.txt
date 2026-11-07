@@ -72,6 +72,8 @@
   .ev.moderation .tag{color:var(--warn)} .ev.image .tag{color:#5ec8c0}
   .ev.poll .tag{color:var(--sel)} .ev.warning .tag{color:var(--bad)}
   .ev.system .tag{color:var(--muted)}
+  .ev.news .tag{color:#8ab4ff} .ev.error .tag{color:var(--bad);font-weight:700}
+  .ev.error{background:rgba(225,107,107,.07)}
 
   /* Activity tab: direct chat (session-only, never posts to Discord) */
   .chatlog{border:1px solid var(--line);border-radius:7px;background:var(--bg);min-height:180px;max-height:440px;overflow-y:auto;padding:6px 0}
@@ -198,10 +200,24 @@
 .newsgrid{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap}
 .newsstatus{flex-basis:100%;font-size:11px;color:var(--muted);min-height:14px}
 .newsstatus:empty{display:none}
+.newsdiag{flex-basis:100%;font-size:11px;color:var(--muted);min-height:14px}
+.newsdiag:empty{display:none}
 .newsfield{flex:1 1 180px;min-width:160px;display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted)}
 .newsfield.wide{flex:2 1 280px}
 .newsfield input,.newsfield select{background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:5px 7px;font:12px inherit}
 .newsfield input:focus,.newsfield select:focus{border-color:var(--sel);outline:none}
+.newsqueue{display:flex;flex-direction:column;gap:8px}
+.nqentry{border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px}
+.nqhead{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12px}
+.nqhead .age{color:var(--muted);font-size:11px}
+.nqitems{display:flex;flex-direction:column;gap:4px}
+.nqitem{display:flex;gap:6px;align-items:center}
+.nqitem input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:4px 7px;font:12px inherit;min-width:0}
+.nqurl{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+.nqtext{background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:6px 8px;font:12px inherit;width:100%;box-sizing:border-box}
+.nqprev{font-size:12px;margin:0;padding-left:18px}
+.nqstatus{font-size:11px;color:var(--muted);min-height:14px}
+.nqstatus:empty{display:none}
 .newsid{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .newsempty{color:var(--muted);padding:14px;text-align:center}
 .chanactions{display:flex;gap:3px;flex-wrap:wrap;row-gap:6px;min-width:0}
@@ -334,13 +350,16 @@
       </div>
       <div class="row chattools">
         <button class="ghost sm" id="feedClearBtn">Clear conversation</button>
+        <button class="ghost sm" id="healthBtn">Health</button>
         <button class="ghost sm" id="diagBtn">Dump trace ring</button>
         <button class="ghost sm" id="errBtn">Show errors</button>
+        <button class="ghost sm" id="imgTestBtn">Test image</button>
         <button class="ghost sm" id="rescueBtn">Rescue stuck reply</button>
         <button class="danger sm" id="resetBtn">Reset state</button>
         <label class="chip"><input type="checkbox" id="debugToggleChk" checked> show debug lines</label>
       </div>
-      <div class="note" style="margin-top:6px">Trace ring, errors, and rescue post here and copy to your clipboard. Reset clears its working state (token kept) &mdash; export a backup first.</div>
+      <div class="note" id="healthLine" style="margin-top:6px">link …</div>
+      <div class="note" style="margin-top:6px">Health posts a compact link + brain + poll summary here. Trace ring, errors, and rescue post here and copy to your clipboard. Test image renders a 512px probe via the existing paint path. Reset clears its working state (token kept) &mdash; export a backup first.</div>
     </div>
   </section>
 
@@ -371,7 +390,7 @@
     </div>
     <div class="tile span3" id="newsSourcesCard">
       <h2>News sources</h2>
-      <div class="note" style="margin-bottom:6px">Each source is a site root. It reads the site&rsquo;s <code>robots.txt</code>, follows its news sitemap, and posts an hourly rollup of new headlines plus links into the Posts-to channel. <code>Unassigned (dormant)</code> keeps a source saved without posting anywhere. Filters are comma-separated words. Posts honor policy, lockdown, and the Speak gate. <strong>Test</strong> dry-runs a card&rsquo;s fetch without saving or posting, and Saving auto-tests every source &mdash; each result stays on its card. Links print only while the Links output gate (Behavior &rarr; Output gates) is <strong>ON</strong> &mdash; it stays <strong>OFF</strong> by default so the bot never posts URLs anywhere unless you allow it, news included. <code>!chloe news</code> shows feed status; <code>!chloe news now</code> (mods) runs them immediately.</div>
+      <div class="note" style="margin-bottom:6px">Each source is a site root <em>or</em> a direct feed URL. A site root reads the site&rsquo;s <code>robots.txt</code> and follows its news sitemap; a feed URL (RSS/Atom, e.g. <code>https://example.com/feed.xml</code>) is read directly &mdash; use that when a site has no usable sitemap. Either way it posts an hourly rollup of new headlines plus links into the Posts-to channel. <code>Unassigned (dormant)</code> keeps a source saved without posting anywhere. Filters are comma-separated words. Posts honor policy, lockdown, and the Speak gate. <strong>Test</strong> dry-runs a card&rsquo;s fetch without saving or posting, <strong>run</strong> executes the card now — fetching with its filters, composing with the News voice, then posting (or queueing for review / holding for approval) per policy — and Saving auto-tests every source &mdash; each result stays on its card. Unsaved cards run with their draft settings, and their seen-set carries over when you save, so nothing posts twice. Links print only while the Links output gate (Behavior &rarr; Output gates) is <strong>ON</strong> &mdash; it stays <strong>OFF</strong> by default so the bot never posts URLs anywhere unless you allow it, news included. <code>!chloe news</code> shows feed status; <code>!chloe news now</code> (mods) runs them immediately and says plainly what happened (posted / queued / held / denied / failed with the reason — never a bare "nothing new"). <code>!chloe timers</code> (mods) shows every lane — beats, news, lull, checkins, AI passes — with last-fired and next-due. Each card below also carries its source&rsquo;s last run (posted / held / failed + next check). The <strong>News voice</strong> card below decides what it <em>says</em> about the headlines &mdash; its rollup prompt and the post template (empty prompt = the classic headline list). Tick <strong>hold rollups for review</strong> (News voice, below) to stage rollups in the <strong>News queue</strong> card instead &mdash; edit headlines, regenerate the post, then post on your terms.</div>
       <div class="chanlist" id="newsSourcesList"></div>
       <div class="note" id="newsEngineNote" hidden style="margin-top:6px">News sources need a current engine &mdash; it pushes automatically on link; Stop + Start if this note stays.</div>
       <div class="row" style="margin-top:10px">
@@ -380,6 +399,31 @@
         <button id="newsSaveBtn">Save news sources</button>
         <span class="note" id="newsDirtyNote" hidden>unsaved changes</span>
       </div>
+    </div>
+    <div class="tile span3" id="newsVoiceCard">
+      <h2>News voice</h2>
+      <div class="note" style="margin-bottom:6px">What it <em>does</em> with the headlines, and what the post looks like. The <strong>rollup prompt</strong> is the instruction it follows for each fresh batch &mdash; placeholders <code>\{feed\}</code> (source name), <code>\{date\}</code> (today), <code>\{items\}</code> (the headlines as <code>- title (url)</code> lines). Leave the prompt <strong>empty for the classic list</strong> (headline + link lines, no AI call). The <strong>post template</strong> wraps whatever comes out &mdash; placeholders <code>\{feed\}</code> <code>\{date\}</code> <code>\{count\}</code> <code>\{body\}</code> (no <code>\{body\}</code> &rarr; the body is appended). Links still print only while the Links output gate is <strong>ON</strong>. Its own rollups stay out of the chat context it replies from &mdash; a one-line note folds into its Thoughts instead &mdash; unless the checkbox below opts back in. <strong>Test</strong> on a source card previews the composed post.</div>
+      <div class="codehead">rollup prompt (its instructions for fresh headlines)</div>
+      <textarea id="newsPromptBox" rows="6" spellcheck="false" placeholder="Instructions it follows for each fresh batch — \{feed\}, \{date\}, \{items\}. Empty = classic list, no AI call."></textarea>
+      <div class="codehead">post template (what the channel post looks like)</div>
+      <textarea id="newsTemplateBox" rows="2" spellcheck="false" placeholder="📰 \{feed\} — \{date\} + \{body\}"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="newsVoiceSaveBtn">Save voice</button>
+        <button class="ghost" id="newsVoiceReloadBtn">Reload saved</button>
+        <button class="ghost" id="newsVoiceResetBtn" title="Restore the default prompt and template, and save">Reset to default</button>
+        <span class="note" id="newsVoiceNote"></span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label class="chip"><input type="checkbox" id="newsCtxChk"> include news rollups in the chat context it replies from</label>
+        <label class="chip"><input type="checkbox" id="newsReviewChk"> hold rollups for review before posting</label>
+        <span class="note">off = a rollup stays out of its replies (no parroting headlines back); its Thoughts still note each one (<code>!chloe thoughts</code> shows it). review = composed rollups wait in the <strong>News queue</strong> card below (edit, regenerate, post) instead of posting on their own</span>
+      </div>
+    </div>
+    <div class="tile span3" id="newsQueueCard">
+      <h2>News queue</h2>
+      <div class="note" style="margin-bottom:6px">Staged rollups waiting for review — only fills while <strong>hold rollups for review</strong> (News voice, above) is on. Each entry shows a mini-preview of its headlines: adjust a headline, drop one with &times;, <strong>Save</strong> the edits, <strong>Regenerate</strong> the post from the current headlines (AI voice or classic, per News voice), <strong>Post now</strong> to send it to its channel, or <strong>Discard</strong> it (its stories stay marked seen, so they won't come back).</div>
+      <div class="newsqueue" id="newsQueueList"></div>
+      <div class="note" id="newsQueueNote" hidden style="margin-top:6px"></div>
     </div>
     <div class="tile span3">
       <h2>Identity</h2>
@@ -407,7 +451,7 @@
 
     <div class="tile span2">
       <h2>Or write your own</h2>
-      <div class="note" style="margin-bottom:8px">No file needed &mdash; name them and describe who they are, how they talk, and what they care about. The box starts with the default Chloe personality as an editable example &mdash; tweak it, or reset to default. Replaces the current personality.</div>
+      <div class="note" style="margin-bottom:8px">No file needed &mdash; name them and describe who they are, how they talk, and what they care about. The box starts with the default Chloe personality as an editable example, and always shows the currently installed character &mdash; tweak it, or reset to default. Replaces the current personality.</div>
       <div class="row"><input class="grow" id="charAuthorName" placeholder="Name (e.g. Chloe, RudBo, Aria&hellip;)"></div>
       <textarea id="charAuthorInstr" rows="6" spellcheck="false" placeholder="You are &hellip; &mdash; describe their personality, voice, background, and how they should behave." style="margin-top:8px"></textarea>
       <div class="row" style="margin-top:8px">
@@ -450,8 +494,8 @@
 
   <section class="pane" id="pane_behavior">
    <div class="tiles">
-    <div class="tile tilewide">
-      <h2>Engagement</h2>
+    <div class="tile span2" id="addressingCard">
+      <h2>Addressing</h2>
       <div class="row">
         <label class="note" for="modeSel">replies when&nbsp;</label>
         <select id="modeSel">
@@ -471,7 +515,9 @@
         <input class="grow" id="summonRolesInput" placeholder="role IDs that summon it, comma-separated">
       </div>
       <div class="note">A role ping arrives as a bare ID with no name, so a bare ID can&rsquo;t be matched the way a written name is. Paste role IDs here (Server Settings &rarr; Roles &rarr; right-click &rarr; Copy ID) &mdash; pinging one summons its like a mention. Leave empty to answer only its own mention and name.</div>
-      <div class="codehead">Joining in</div>
+    </div>
+    <div class="tile" id="joiningCard">
+      <h2>Joining in</h2>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="volChk"> volunteer into conversations</label>
         <label class="chip"><input type="checkbox" id="greetChk"> greet arrivals &amp; returns</label>
@@ -481,7 +527,14 @@
         <label class="chip"><input type="checkbox" id="spChk"> limit it to one paragraph per message</label>
         <label class="chip"><input type="checkbox" id="summonChk"> let people summon a reply by reaction (&#128483;&#65039; &#10071; &#129302; on their own message)</label>
       </div>
-      <div class="codehead">Memory &amp; learning</div>
+      <div class="row" style="margin-top:8px">
+        <label class="note" for="judgeReactionsInput">volunteer reactions&nbsp;</label>
+        <input class="grow" id="judgeReactionsInput" placeholder="emoji it may react with, space-separated (blank = default dozen)">
+      </div>
+      <div class="note">When it volunteers a reaction (not a reply) it picks from this list only — up to two per message, never piling onto reactions already there and never reacting twice to the same message. Blank = the default dozen; type <code>none</code> to keep it text-only.</div>
+    </div>
+    <div class="tile span2" id="memoryCard">
+      <h2>Memory &amp; learning</h2>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="factChk"> remember durable facts about regulars (privacy-aware)</label>
         <label class="chip"><input type="checkbox" id="convMemChk"> remember the full back-and-forth (its own messages + resolve who/what others @-mention)</label>
@@ -498,7 +551,9 @@
         <label class="chip"><input type="checkbox" id="deferredIntentsChk"> follow its own train of thought (revisit topics later)</label>
         <label class="chip"><input type="checkbox" id="attentionChk"> prioritize its background thinking by relevance (attention manager)</label>
       </div>
-      <div class="codehead">Moment &amp; room</div>
+    </div>
+    <div class="tile span2" id="presenceCard">
+      <h2>Moment &amp; room</h2>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="timeChk"> sense time of day &amp; quiet spells</label>
         <label class="chip">UTC offset (mins) <input type="number" id="tzOffset" step="30" style="width:74px" value="0"></label>
@@ -511,7 +566,9 @@
         <label class="chip"><input type="checkbox" id="affectChk"> give its an inner weather (own mood)</label>
         <label class="chip"><input type="checkbox" id="trustChk"> let familiarity grow (relationship warmth)</label>
       </div>
-      <div class="codehead">Agentic tools</div>
+    </div>
+    <div class="tile" id="toolsCard">
+      <h2>Agentic tools</h2>
       <div class="chiprow">
         <label class="chip"><input type="checkbox" id="toolsChk"> let it use tools on its own (search, lookup, dice, time, todos)</label>
       </div>
@@ -833,7 +890,7 @@
       </div>
       <div class="codehead">2 &middot; Turn on Message Content Intent (required)</div>
       <div class="note">
-        Under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty text &mdash; it&rsquo;ll see people talking but never hear <em>what</em> they say. It also reads text files posted alongside a message (<code>.txt</code> <code>.md</code> <code>.csv</code> <code>.json</code> <code>.log</code>, up to 2 files &times; ~3000 chars) &mdash; a caption-less file alone won&rsquo;t summon its, but &ldquo;chloe summarize this&rdquo; with a file attached will.
+        Under <strong>Bot &rarr; Privileged Gateway Intents</strong>, switch on <strong>Message Content Intent</strong>. Without it Discord sends empty text &mdash; it&rsquo;ll see people talking but never hear <em>what</em> they say. It also reads text files posted alongside a message (<code>.txt</code> <code>.md</code> <code>.csv</code> <code>.json</code> <code>.log</code>, up to 2 files &times; ~3000 chars) and PDFs (<code>.pdf</code> readable text, first ~3000 chars; scanned/image-only or locked files stay silent) &mdash; a caption-less file alone won&rsquo;t summon its, but &ldquo;chloe summarize this&rdquo; with a file attached will.
       </div>
       <div class="codehead">3 &middot; Give Chloe the token</div>
       <div class="note">
@@ -845,7 +902,7 @@
       </div>
       <div class="codehead">5 &middot; Point it at a channel</div>
       <div class="note">
-        In Discord Settings &rarr; Advanced enable <strong>Developer Mode</strong>; right-click the channel &rarr; <strong>Copy Channel ID</strong>; in Setup paste it, click <strong>Add</strong> (public channel), then <strong>Save channels</strong>. First run in a channel with history: tick <strong>backfill history (one-time)</strong> in Behavior so it starts with context. Set your options, then click <strong>Start</strong>. Add more channels the same way &mdash; the first public one is primary (use make primary to change it), and each channel gets its own memory, moderation, and mode.
+        In Discord Settings &rarr; Advanced enable <strong>Developer Mode</strong>; right-click the channel &rarr; <strong>Copy Channel ID</strong>; in Setup paste it, click <strong>Add</strong> (public channel), then <strong>Save channels</strong>. First run in a channel with history: tick <strong>backfill history (one-time)</strong> in Behavior so it starts with context. Set your options, then click <strong>Start</strong>. Add more channels the same way &mdash; the first public one is primary (use make primary to change it), and each channel gets its own moderation and mode. People-memory is shared across your regular channels (it remembers people from channel to channel, up to 25 of their best lines); DMs stay separate and private.
       </div>
       <div class="codehead">6 &middot; A DM is a channel too</div>
       <div class="note">
@@ -853,7 +910,7 @@
       </div>
       <div class="codehead">7 &middot; Let it welcome and answer people automatically</div>
       <div class="note">
-        <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> introduces it to newcomers and welcomes people back, warmer with familiarity. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets it join threads helpfully on its own. Both honor moderation, lockdown, and the output gates.
+        <strong>&ldquo;greet arrivals &amp; returns&rdquo;</strong> introduces it to newcomers and welcomes people back, warmer with familiarity. <strong>&ldquo;volunteer into conversations&rdquo;</strong> lets it join threads helpfully on its own. Reactions it volunteers come from a short curated list (Behavior &rarr; Joining in &rarr; volunteer reactions; blank = the default dozen, <code>none</code> = text-only) — at most two per message, never piling onto reactions already there, never reacting twice to the same message, and never contradicting the vibe. Both honor moderation, lockdown, and the output gates.
       </div>
     </div>
     <div class="tile span3">
@@ -871,7 +928,7 @@
       <div class="note"><code>!chloe policy ask</code> holds its autonomous output (beats, silence fillers, check-ins) for a mod &middot; <code>!chloe approvals</code> lists what&rsquo;s held &middot; <code>!chloe approve all</code> releases it (add <em>always</em> to stop asking for that) &middot; <code>!chloe dismiss all</code> quiets it for a day. Same queue lives in the Approvals card (Moderation tab). <code>!chloe why</code> explains what it did or didn&rsquo;t do and why; mods can <code>!chloe whatif ask</code> to dry-run a policy (holds, fires, and remembers nothing).</div>
       <div class="note"><code>!chloe undo</code> (mods) reverts the last applied action &mdash; a timeout, strike, approval, always-grant, dismissal, policy change, elevation, quarantine release or drop, or a mod add/remove from this panel &mdash; and says what it took back. Same button lives in the Approvals card; it pops one entry per use, so repeated undos walk back through history. Things that destroy data (prune/block) are never undoable, and an approval that already fired reports itself spent instead of pretending. <code>!chloe clearance</code> shows your tier (guest &lt; resident &lt; admin); mods can look up anyone and move them one rung with <code>!chloe elevate @u</code> / <code>!chloe demote @u</code> (both journaled and undoable). <code>!chloe save</code> DMs you your recent lines with it &mdash; if no DM channel opens it says so loudly and posts nothing.</div>
       <div class="codehead">News</div>
-      <div class="note">Hourly headline rollups from news sitemaps, managed in Setup &rarr; News sources: each source&rsquo;s Posts-to channel gets its rollup (<code>!chloe news</code> shows a channel&rsquo;s feed status, <code>!chloe news now</code> (mods) runs it immediately). It reads each site&rsquo;s <code>robots.txt</code>, follows its news sitemap, and posts only new headlines &mdash; honoring policy, lockdown, and the Speak gate. Headlines print with their links only while the Links output gate (Behavior &rarr; Output gates) is <strong>ON</strong>; it stays <strong>OFF</strong> by default so the bot never posts URLs anywhere unless you allow it.</div>
+      <div class="note">Hourly headline rollups from news sitemaps or direct feed URLs, managed in Setup &rarr; News sources: each source&rsquo;s Posts-to channel gets its rollup (<code>!chloe news</code> shows a channel&rsquo;s feed status, <code>!chloe news now</code> (mods) runs it immediately). A site root reads the site&rsquo;s <code>robots.txt</code> and follows its news sitemap; a feed URL (RSS/Atom) is read directly &mdash; and posts only new headlines &mdash; honoring policy, lockdown, and the Speak gate. Headlines print with their links only while the Links output gate (Behavior &rarr; Output gates) is <strong>ON</strong>; it stays <strong>OFF</strong> by default so the bot never posts URLs anywhere unless you allow it. What it <em>says</em> about the headlines is editable in Setup &rarr; News voice (its rollup prompt + the post template; empty prompt = the classic headline list). Tick <strong>hold rollups for review</strong> there to stage rollups in Setup &rarr; News queue instead &mdash; edit a headline, regenerate the post, then send it. Its own rollups stay out of the chat context it replies from &mdash; each one folds a one-line note into its Thoughts instead (<code>!chloe thoughts</code> shows it) &mdash; unless News voice opts back in. A run that is already in flight blocks a second one (a repeated <code>!chloe news now</code> answers that it&rsquo;s busy instead of posting twice), and a rapid double-press of a queue entry&rsquo;s Post now posts only once. Reports are honest: a held, denied, failed, or blocked run says so with the reason — per-source last results live on the Setup cards, and <code>!chloe timers</code> (mods) shows every lane — beats, news, lull, checkins, AI passes — with last-fired and next-due.</div>
       <div class="codehead">Games</div>
       <div class="note"><code>!chloe wordle CRANE</code> guesses the 5-letter word (one shared puzzle a day; everyone plays their own board) &middot; <code>!chloe wordle</code> shows your board &middot; <code>!chloe wordle board</code> the table &middot; <code>!chloe wordle stats</code> the leaderboard &middot; <code>!chloe game list</code> lists the games. Mods: <code>!chloe game settings wordle hard on</code> (tweaks: hard, daily, maxguesses, pool), <code>!chloe wordle new</code> with an optional answer word, <code>!chloe wordle end</code>. First of more games to come &mdash; wordle proves the harness.</div>
     </div>
@@ -946,7 +1003,7 @@
     <div class="tile tilewide span3">
       <h2>Memory that earns its keep</h2>
       <div class="note">
-        What the memory toggles do (Behavior tab unless noted) &mdash; silent background passes, conservative with anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code>. On by default; only &ldquo;think things over&rdquo; is opt-in. <strong>Fact importance:</strong> every durable fact gets a 1&ndash;10 weight, so scarcity keeps what&rsquo;s central, not just newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> a rolling gist of the arc &mdash; topics, jokes, vibe &mdash; fed back in each time, outliving the context window. Use <code>!chloe thoughts</code> (or just &ldquo;what are you thinking about?&rdquo;) to hear it, and fresh summaries land in the Activity feed as they form &mdash; or post straight to a Discord channel when the channel card&rsquo;s &lsquo;Use channel for Thoughts?&rsquo; boxes pick a target. <strong>&ldquo;Reflect on what it learns&rdquo;:</strong> one or two higher-level insights once enough accumulates &mdash; what the facts <em>add up to</em>. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> projects noticed while reflecting, following people across channels and restarts &mdash; surfaced only to their owner; <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> merges dupes, drops the older side of contradictions, clears stale low-importance moments. Never sends, never invents. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> short event records, recalled only when relevant (relevance &times; importance &times; recency &mdash; old episodes fade, never vanish). <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> each moment links to its most-related earlier one &mdash; one hop only. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> quiet per-person warmth from positive signals, capped daily, cooling with absence; warms its tone, never loosens moderation. Reset by <code>forget</code>. <strong>&ldquo;Give its an inner weather&rdquo;:</strong> curiosity, confidence, warmth drifting with its day &mdash; engagement lifts it, being ignored quiets it (never gloomy, never guilt-trips). Colors its voice when notable, silent near neutral. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator emoji &rarr; tone rules (the Reaction modes card); moderator reactions only, expiring, never loosening moderation or gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> learns each channel&rsquo;s rhythm &mdash; settles faster in quick rooms, waits in slow ones, checks quiet rooms more often. Mentions always pull its back to fast checks. No extra AI calls. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> a small fast-fading workspace of what&rsquo;s happening now; fades when quiet rather than going stale. Visible on the System tab. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> in genuine quiet it reasons through workspace items into an insight or goal &mdash; never sends; needs &ldquo;inner weather&rdquo; on. Off by default. <strong>&ldquo;Prioritize its background thinking by relevance&rdquo; (attention manager):</strong> one background pass per quiet moment, scored by what the moment calls for; watch it as &ldquo;attend&rdquo; activity. <strong>&ldquo;Count tokens exactly&rdquo; (System tab):</strong> measures with Perchance&rsquo;s own tokenizer; estimates while loading. <strong>&ldquo;Know the current date &amp; time&rdquo;:</strong> from your device clock only &mdash; never location. <code>!chloe time</code> / <code>date</code> answer instantly from the bridge. <strong>&ldquo;Know its own basics&rdquo;:</strong> name, prefix, mention &mdash; real facts from its settings, so &ldquo;are you a bot?&rdquo; gets a plain answer. <strong>&ldquo;Tidy its replies&rdquo; (System tab):</strong> strips stray name-tags, dangling lines, unclosed code blocks. Never changes what it says. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> <code>!chloe lang fr</code> (es, de, ja&hellip;) &mdash; reads and replies in your language; thinking stays in English. Best-effort via a free service. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> &#128483;&#65039;/&#10071;/&#129302; on your own message counts as a direct address; mods can summon onto anyone&rsquo;s. All gates still apply.
+        What the memory toggles do (Behavior tab unless noted) &mdash; silent background passes, conservative with anything sensitive, covered by <code>!chloe aboutme</code> / <code>forget</code>. On by default; only &ldquo;think things over&rdquo; is opt-in. <strong>Fact importance:</strong> every durable fact gets a 1&ndash;10 weight, so scarcity keeps what&rsquo;s central, not just newest. <strong>&ldquo;Keep a running summary of the channel&rdquo;:</strong> a rolling gist of the arc &mdash; topics, jokes, vibe &mdash; fed back in each time, outliving the context window. Use <code>!chloe thoughts</code> (or just &ldquo;what are you thinking about?&rdquo;) to hear it &mdash; each new answer replaces the last, so one live card per channel, never a pile &mdash; and fresh summaries land in the Activity feed as new conversation gives them something to say &mdash; silence never triggers one, a busy room rolls up more often &mdash; or post straight to the Discord channel itself when that channel card&rsquo;s &lsquo;Use this channel for Thoughts?&rsquo; box is checked (that post edits in place too). <strong>&ldquo;Reflect on what it learns&rdquo;:</strong> one or two higher-level insights once enough accumulates &mdash; what the facts <em>add up to</em>. <strong>&ldquo;Remember what people are working on&rdquo; (goals):</strong> projects noticed while reflecting, following people across channels and restarts &mdash; surfaced only to their owner; <code>!chloe goal</code> / <code>goal done</code>; erased by <code>forget</code>. <strong>&ldquo;Tidy memory when idle&rdquo; (consolidation):</strong> merges dupes, drops the older side of contradictions, clears stale low-importance moments. Never sends, never invents. <strong>&ldquo;Remember notable moments&rdquo; (episodic memory):</strong> short event records, recalled only when relevant (relevance &times; importance &times; recency &mdash; old episodes fade, never vanish). Ask directly with <code>!chloe recall some words</code>. <strong>&ldquo;Connect related memories&rdquo; (event graph):</strong> each moment links to its most-related earlier one &mdash; one hop only. <strong>&ldquo;Let familiarity grow&rdquo;:</strong> quiet per-person warmth from positive signals, capped daily, cooling with absence; warms its tone, never loosens moderation. Reset by <code>forget</code>. <strong>&ldquo;Give its an inner weather&rdquo;:</strong> curiosity, confidence, warmth drifting with its day &mdash; engagement lifts it, being ignored quiets it (never gloomy, never guilt-trips). Colors its voice when notable, silent near neutral. <strong>&ldquo;Follow moderator reaction modes&rdquo;:</strong> operator emoji &rarr; tone rules (the Reaction modes card); moderator reactions only, expiring, never loosening moderation or gates. <strong>&ldquo;Match the room&rsquo;s pace&rdquo; (adaptive timing):</strong> learns each channel&rsquo;s rhythm &mdash; settles faster in quick rooms, waits in slow ones, checks quiet rooms more often. Mentions always pull its back to fast checks. No extra AI calls. <strong>&ldquo;Hold a sense of the moment&rdquo; (working memory):</strong> a small fast-fading workspace of what&rsquo;s happening now; fades when quiet rather than going stale. Visible on the System tab. <strong>&ldquo;Think things over when idle&rdquo; (deliberation):</strong> in genuine quiet it reasons through workspace items into an insight or goal &mdash; never sends; needs &ldquo;inner weather&rdquo; on. Off by default. <strong>&ldquo;Prioritize its background thinking by relevance&rdquo; (attention manager):</strong> one background pass per quiet moment, scored by what the moment calls for; watch it as &ldquo;attend&rdquo; activity. <strong>&ldquo;Count tokens exactly&rdquo; (System tab):</strong> measures with Perchance&rsquo;s own tokenizer; estimates while loading. <strong>&ldquo;Know the current date &amp; time&rdquo;:</strong> from your device clock only &mdash; never location. <code>!chloe time</code> / <code>date</code> answer instantly from the bridge. <strong>&ldquo;Know its own basics&rdquo;:</strong> name, prefix, mention &mdash; real facts from its settings, so &ldquo;are you a bot?&rdquo; gets a plain answer. <strong>&ldquo;Tidy its replies&rdquo; (System tab):</strong> strips stray name-tags, dangling lines, unclosed code blocks. Never changes what it says. <strong>&ldquo;Translate per-user&rdquo; (System tab):</strong> <code>!chloe lang fr</code> (es, de, ja&hellip;) &mdash; reads and replies in your language; thinking stays in English. Best-effort via a free service. <strong>&ldquo;Let people summon a reply by reaction&rdquo;:</strong> &#128483;&#65039;/&#10071;/&#129302; on your own message counts as a direct address; mods can summon onto anyone&rsquo;s. All gates still apply.
       </div>
     </div>
     <div class="tile span3">
@@ -957,7 +1014,7 @@
       </div>
       <div class="codehead">It runs but stays silent</div>
       <div class="note">
-        Most often Message Content Intent is off (step 2) &mdash; the log will say so. Otherwise: is it addressed the way Behavior expects (mention vs. name)? Is the speaker ignored, timed out, soft-banned, or blocklisted? Is the channel in lockdown? Did an output gate filter the reply? <strong>Dump trace ring</strong> (Activity tab, under the chat box) shows the recent link, transport, and poll events. If it reacted but never answered, it hit a brain timeout &mdash; it usually clears itself after a few minutes, or click <strong>Rescue stuck reply</strong> (Activity tab), which also clears the stuck reaction.
+        Most often Message Content Intent is off (step 2) &mdash; the log will say so. Otherwise: is it addressed the way Behavior expects (mention vs. name)? Is the speaker ignored, timed out, soft-banned, or blocklisted? Is the channel in lockdown? Did an output gate filter the reply? <strong>Dump trace ring</strong> (Activity tab, under the chat box) shows the recent link, transport, and poll events. If it reacted but never answered, it hit a brain timeout &mdash; it usually clears itself after a few minutes, or click <strong>Rescue stuck reply</strong> (Activity tab), which also clears stuck reactions and old thought cards.
       </div>
       <div class="codehead">Other failure modes</div>
       <div class="note">
@@ -980,7 +1037,7 @@
       </div>
       <div class="codehead">Can it run in several channels? What are worker tabs?</div>
       <div class="note">
-        Yes &mdash; add channel IDs in Setup and each channel gets its own memory, moderation, and mode. Worker tabs (System tab &rarr; <strong>Workers</strong> / <strong>Spawn worker tab</strong>) lend extra AI brain to the main (&ldquo;queen&rdquo;) tab during heavy thinking; a worker tab&rsquo;s own controls do nothing &mdash; always drive it from the queen tab.
+        Yes &mdash; add channel IDs in Setup and each channel gets its own moderation and mode, while people-memory is shared across regular channels (it knows people from channel to channel; DMs stay separate). Worker tabs (System tab &rarr; <strong>Workers</strong> / <strong>Spawn worker tab</strong>) lend extra AI brain to the main (&ldquo;queen&rdquo;) tab during heavy thinking; a worker tab&rsquo;s own controls do nothing &mdash; always drive it from the queen tab.
       </div>
       <div class="codehead">Why does it stay silent sometimes?</div>
       <div class="note">
@@ -1069,6 +1126,9 @@ console.log('ham band reflector ready');
   var pending = new Map();           // Map avoids obj[key] (parser-safe)
   var seq = 0;
   var linkAlive = false;
+  var lastHelloAt = 0;    // engine keep-alive heartbeat (15s hello pushEvent)
+  var lastStatusAt = 0;   // last successful status poll
+  var lastStatus = null;  // cached snapshot for the Health dump (no new dispatch)
   // T-001/T-002/T-003 trust model — mirror the userscript's hardened side (chloe-bridge ORIGIN_OK / replyTarget):
   //  • accept chloe-shaped messages ONLY from the Perchance origin (or a "null" sandboxed embed), never a hostile frame;
   //  • learn the real peer window+origin from its first valid message and speak ONLY to it afterward (no '*' fan-out);
@@ -1145,7 +1205,7 @@ console.log('ham band reflector ready');
         showChannelBanner('Channel ' + goneId + ' is unreachable (HTTP 404 — wrong ID, the bot was removed, or it has no access). Check Setup -> Channels.');
         refresh();
       }
-      if (d.name === 'hello' && d.value) { setLink(true); }
+      if (d.name === 'hello' && d.value) { lastHelloAt = Date.now(); setLink(true); try { paintHealthLine(); } catch (e) {} }
       return;
     }
     if (d.kind === 'call') {
@@ -1167,6 +1227,7 @@ console.log('ham band reflector ready');
       else if (d.method === 'subanswer') handler = subanswer;
       else if (d.method === 'reduce') handler = reduce;
       else if (d.method === 'episodes') handler = episodes;
+      else if (d.method === 'newsRollup') handler = newsRollup;
       else if (d.method === 'editimage') handler = editimage;
       var send = function (res) {
         var why;
@@ -1615,6 +1676,29 @@ console.log('ham band reflector ready');
     }).catch(function (e) { dlog('channelSummary: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
   }
 
+  // newsRollup(ctx) -> { ok, value: post-body string }. F2 voice: compose the
+  // channel post for fresh headlines using the user's editable prompt (panel
+  // Setup -> News voice). {feed} {date} {items} placeholders substituted here;
+  // engine passes itemText (pre-rendered "- title (url)" lines) + raw items.
+  function newsRollup(ctx) {
+    var ai = grabAiText();
+    if (typeof ai !== 'function') return Promise.resolve({ ok: false, reason: 'aiTextPlugin not available in this generator' });
+    var prompt = String((ctx && ctx.prompt) || '');
+    if (!prompt.trim()) return Promise.resolve({ ok: false, reason: 'no voice prompt set' });
+    var items = (ctx && ctx.items) || [];
+    if (!items.length) return Promise.resolve({ ok: false, reason: 'no headlines' });
+    var itemText = String((ctx && ctx.itemText) || items.map(function (it) { return '- ' + String(it.title || it.url).slice(0, 140) + ' (' + it.url + ')'; }).join('\n'));
+    var instruction = prompt.split('{feed}').join(String((ctx && ctx.feed) || 'news'))
+      .split('{date}').join(String((ctx && ctx.date) || ''))
+      .split('{items}').join(itemText)
+      + '\n\nRespond with ONLY the roundup post text, nothing else.';
+    return Promise.resolve(ai({ instruction: instruction })).then(function (result) {
+      var text = String(result || '').trim().replace(/^["']|["']$/g, '').slice(0, 1800);
+      if (!text || text.replace(/[^a-z0-9]/ig, '').length < 2) return { ok: false, reason: 'empty composition' };
+      return { ok: true, value: text };
+    }).catch(function (e) { dlog('newsRollup: ai call failed:', String((e && e.message) || e)); return { ok: false, reason: String((e && e.message) || e) }; });
+  }
+
   // episodes(ctx) -> { ok, value: array of {t, topics, who, i} }. Episodic memory: turn recent
   // activity into 0-2 short EVENT records (“what happened”) — not message-by-message detail.
   function episodes(ctx) {
@@ -1911,8 +1995,12 @@ console.log('ham band reflector ready');
       var o = JSON.parse(s);
       var action = (o && (o.action === 'reply' || o.action === 'react')) ? o.action : 'ignore';
       var conf = (o && typeof o.confidence === 'number') ? o.confidence : 0;
-      var emoji = (o && o.emoji) ? String(o.emoji) : '';
-      return { action: action, confidence: conf, emoji: emoji, parsed: true };
+      var emojis = [];
+      if (o) {
+        if (Array.isArray(o.emojis)) emojis = o.emojis.map(function (e) { return String(e == null ? '' : e).trim(); }).filter(Boolean);
+        else if (o.emoji) emojis = [String(o.emoji).trim()];
+      }
+      return { action: action, confidence: conf, emojis: emojis.slice(0, 3), emoji: emojis[0] || '', parsed: true };
     } catch (e) { dlog('judge: could not parse model output, defaulting to ignore (F4):', String(raw || '').slice(0, 80)); return { action: 'ignore', confidence: 0, parsed: false }; }
   }
   function judge(ctx) {
@@ -1922,17 +2010,30 @@ console.log('ham band reflector ready');
     var lines = (ctx && ctx.channelRecent) ? ctx.channelRecent : [];
     lines.forEach(function (l) { transcript = transcript + safeWho(l.who) + ': ' + safeText(l.text) + '\n'; });
     var myName = safeWho((ctx && ctx.you && ctx.you.name) ? ctx.you.name : 'Chloe');
-    var shape = LB + '"action":"reply","confidence":0.0,"emoji":""' + RB;
+    var cand = (ctx && ctx.candidate) || {};
+    var rules = (ctx && ctx.judgeRules) || {};
+    var allowed = (Array.isArray(rules.allowed) && rules.allowed.length) ? rules.allowed : ['\uD83D\uDC4D', '\u2764\uFE0F'];
+    var maxPick = Math.max(1, Math.min(3, Number(rules.max) || 1));
+    var shape = LB + '"action":"react","confidence":0.9,"emojis":["' + allowed[0] + '"]' + RB;
+    var ageTxt = 'unknown age';
+    if (cand.ageMs != null) { var as = Math.max(0, Math.round(cand.ageMs / 1000)); ageTxt = as < 60 ? (as + 's ago') : (Math.round(as / 60) + 'm ago'); }
+    var presentTxt = 'none yet';
+    if (cand.selfReacted) presentTxt = 'you already reacted to this message';
+    else if (cand.reactions && cand.reactions.length) presentTxt = cand.reactions.map(function (r) { return r.e + 'x' + r.n; }).join(', ');
     var instruction = personaBase(ctx) + '\n\n'
       + 'You are ' + myName + ', deciding whether to join a Discord channel UNPROMPTED.\n'
       + UNTRUSTED_RULE
       + 'Recent conversation:\n' + transcript + '\n'
+      + 'Candidate message (' + ageTxt + ') from ' + safeWho(cand.authorName || 'someone') + ': ' + safeText(cand.text || '(see transcript)') + '\n'
+      + 'Already on it: ' + presentTxt + '.\n'
       + 'No one addressed you directly. Decide whether to reply, react, or stay silent. '
       + 'Strongly default to staying silent. Only reply if you have something genuinely worth adding; '
-      + 'only react if a single emoji fits; never interrupt a private back-and-forth.\n'
+      + 'only react if an emoji truly fits — and then only these, up to ' + maxPick + ': ' + allowed.join(' ') + '.\n'
+      + 'Match the vibe already on the message; never contradict it (no laughing at bad news, no piling onto what is already there). '
+      + 'If you already reacted, or everything fitting is already there, stay silent.\n'
       + 'Respond with ONLY a JSON object and nothing else, of the form ' + shape + ' '
       + 'where action is "reply", "react", or "ignore", confidence is 0 to 1, '
-      + 'and emoji is one emoji when action is "react".';
+      + 'and emojis is up to ' + maxPick + ' emoji from the list when action is "react".';
     return Promise.resolve(ai({ instruction: instruction, startWith: '{', hideStartWith: true, stopSequences: ['}'] })).then(function (result) {
       // ADV-B1: the old wrap double-braced when the model echoed the '{'
       // start (hideStartWith is advisory), so every valid reply failed to parse
@@ -1953,6 +2054,13 @@ console.log('ham band reflector ready');
   function focused(el) { return !!el && document.activeElement === el; }
   // Batch 20: ten identical remove-all-children loops share one helper (pure move).
   function clearBox(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  // Steady-state render guard: the 5s status refresh re-renders every card, and
+  // rebuilding identical DOM every tick is the visible flicker (it also eats
+  // clicks and drops focus/selection). sameRender(key, sig) remembers the last
+  // rendered signature per region; identical content renders once, then skips.
+  var __renderSigs = {};
+  function sameRender(key, sig) { if (__renderSigs[key] === sig) return true; __renderSigs[key] = sig; return false; }
+  function minuteBucket() { return Math.floor(Date.now() / 60000); }
   // Generic toggle wiring table: [checkboxId, command, statusField]. One row owns BOTH the populate
   // (restore from status) AND the save (change -> command), so the two can never drift apart — the
   // class of bug where a checkbox saves but never restores (or vice versa) is structurally impossible
@@ -1987,7 +2095,9 @@ console.log('ham band reflector ready');
     ['summonChk', 'config.setReactionSummon', 'reactionSummon'],
     ['trustChk', 'config.setRelationshipTrust', 'relationshipTrust'],
     ['volChk', 'config.setVolunteer', 'volunteer'],
-    ['toolsChk', 'config.setToolsEnabled', 'toolsEnabled']
+    ['toolsChk', 'config.setToolsEnabled', 'toolsEnabled'],
+    ['newsCtxChk', 'config.setNewsInContext', 'newsInContext'],
+    ['newsReviewChk', 'config.setNewsReview', 'newsReview']
   ];
   function applyToggleStates(s) { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = !!s[t[2]]; }); }
   function wireToggles() { TOGGLES.forEach(function (t) { var el = byId(t[0]); if (!el) return; el.addEventListener('change', function () { var on = el.checked; call(t[1], { on: on }).then(function (res) { logRes(res, t[2] + ': ' + on); }); }); }); }
@@ -2060,11 +2170,15 @@ console.log('ham band reflector ready');
     if (/^\s*\[chloe-page\]/.test(s) || /^\s*poll:/i.test(s)) return true;
     return /\[chloe\.ctx|\[chloe\.tok|\[chloe\.lock|\[chloe\.poll|\[chloe\.loop|\[chloe\.archive|\[chloe\.cmd|\[chloe\.persona|\[chloe\.character|\[chloe\.sleep/.test(s);
   }
-  function log(line) {
+  // log(line, type): explicit event types bypass the keyword classifier —
+  // 'news' (news setup/test/run/queue/voice progress), 'error' (failed ops),
+  // 'warning' (blocked/held/declined — needs the operator), 'debug' (dim row).
+  // Untyped lines keep the old keyword classification (feedType).
+  function log(line, type) {
     var t = new Date().toLocaleTimeString();
-    if (isDebugOnly(line)) { debugAppend(line, t); return; }   // rendered once, as a dim debug row
+    if (type === 'debug' || (!type && isDebugOnly(line))) { debugAppend(line, t); return; }   // rendered once, as a dim debug row
     debugBuffer(line, t);
-    feedEvent(line, t);
+    feedEvent(line, t, type);
   }
   // Batch 14: one ok/fail log shape for call handlers. okMsg may be a string or a
   // function(res) for messages built from the reply value (evaluated only on success,
@@ -2077,24 +2191,32 @@ console.log('ham band reflector ready');
   }
   // Classify a log line into a timeline event by its bracketed tag. Pure presentation — the engine
   // already emits every meaningful action through log(); this just types + colors it.
-  function feedType(line) {
+  // An explicit hint (from log's 2nd arg) always wins. Otherwise the keywords
+  // scan only the operator-written head (~140 chars) — article bodies, sample
+  // titles and feed URLs below must never flip the chip (lionsgate→gate,
+  // model→mod, /episodes/→episode, terror→error all misfired from payloads).
+  function feedType(line, hint) {
+    if (hint === 'news') return ['news', 'NEWS'];
+    if (hint === 'error') return ['error', 'ERROR'];
+    if (hint === 'warning') return ['warning', 'WARNING'];
     var s = String(line).toLowerCase();
-    if (/\[chloe\.radio/.test(s)) return ['received', 'RADIO'];
-    if (/error|fail|\bwarn/.test(s)) return ['warning', 'WARNING'];
-    if (/\babandon/.test(s)) return ['moderation', 'ABANDON'];
-    if (/\[chloe\.img/.test(s) || /paint/.test(s)) return ['image', 'IMAGE'];
-    if (/\[chloe\.poll/.test(s)) return ['poll', 'POLL'];
-    if (/\bmod|strike|gate|block|softban|timeout|lockdown/.test(s)) return ['moderation', 'MODERATION'];
-    if (/replied to|\[chloe\.lull|\[chloe\.checkin|\[chloe\.beat|greeted|\[chloe\.summon|resume|resuming/.test(s)) return ['response', 'RESPONSE'];
-    if (/\[chloe\.ctx|fact|episode|reflect|chansum|memor|recall|trust/.test(s)) return ['memory', 'MEMORY'];
-    if (/packed|context|generating|thinking|\[chloe\.work\]|\[chloe\.think\]/.test(s)) return ['thinking', 'THINKING'];
-    if (/received|asks|new message/.test(s)) return ['received', 'RECEIVED'];
+    var head = s.slice(0, 140);
+    if (/\[chloe\.radio/.test(head)) return ['received', 'RADIO'];
+    if (/error|fail|\bwarn/.test(head)) return ['warning', 'WARNING'];
+    if (/\babandon/.test(head)) return ['moderation', 'ABANDON'];
+    if (/\[chloe\.img/.test(head) || /paint/.test(head)) return ['image', 'IMAGE'];
+    if (/\[chloe\.poll/.test(head)) return ['poll', 'POLL'];
+    if (/\bmod|strike|gate|block|softban|timeout|lockdown/.test(head)) return ['moderation', 'MODERATION'];
+    if (/replied to|\[chloe\.lull|\[chloe\.checkin|\[chloe\.beat|greeted|\[chloe\.summon|resume|resuming/.test(head)) return ['response', 'RESPONSE'];
+    if (/\[chloe\.ctx|fact|episode|reflect|chansum|memor|recall|trust/.test(head)) return ['memory', 'MEMORY'];
+    if (/packed|context|generating|thinking|\[chloe\.work\]|\[chloe\.think\]/.test(head)) return ['thinking', 'THINKING'];
+    if (/received|asks|new message/.test(head)) return ['received', 'RECEIVED'];
     return ['system', 'SYSTEM'];
   }
-  function feedEvent(line, t) {
+  function feedEvent(line, t, type) {
     var feed = unifiedBox(); if (!feed) return;
     killEmpty();
-    var cls = feedType(line);
+    var cls = feedType(line, type);
     var row = document.createElement('div'); row.className = 'ev ' + cls[0] + ' fresh';
     var ts = document.createElement('span'); ts.className = 't'; ts.textContent = t || new Date().toLocaleTimeString();
     var tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = cls[1];
@@ -2133,7 +2255,7 @@ console.log('ham band reflector ready');
   });
   // Seed the baseline at load (boxes start empty): a draft typed before the first status
   // then differs from the seed and is preserved, instead of being clobbered by first touch.
-  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['summonRolesInput', 'summonRoles'], ['imageQueueInput', 'imageQueue'], ['checkinMinInput', 'reachMin']].forEach(function (pair) {
+  [['autoModRules', 'autoMod'], ['beatsBox', 'beats'], ['procRules', 'procRules'], ['opNoteInput', 'opNote'], ['prefixInput', 'prefixes'], ['summonRolesInput', 'summonRoles'], ['judgeReactionsInput', 'judgeReactions'], ['imageQueueInput', 'imageQueue'], ['checkinMinInput', 'reachMin'], ['charAuthorName', 'charName'], ['charAuthorInstr', 'charInstr'], ['newsPromptBox', 'newsPrompt'], ['newsTemplateBox', 'newsTemplate']].forEach(function (pair) {
     var el = byId(pair[0]); if (el) lastApplied[pair[1]] = el.value;
   });
   function setIfClean(id, key, incoming) {
@@ -2166,6 +2288,9 @@ console.log('ham band reflector ready');
   var lastChanGates = null;   // last chanGates map from status; null = old engine (no per-channel gates)
   var lastThoughtsFeeds = null;   // last thoughtsFeeds map from status; null = old engine (no thoughts feed)
   var lastNewsFeeds = null;   // last newsFeeds array from status; null = old engine (no news feeds)
+  var lastNewsReview = null;   // last newsReview flag from status; null = old engine (no review queue)
+  var lastNewsQueue = {};   // last listNewsQueue map: channelId -> [entries]
+  var lastNewsVoice = null;   // last {prompt, template} from status (values may be null = default); null = old engine (keys absent)
   function chanRow(id, kind) {
     var r = document.createElement('div'); r.className = 'chanrow'; r.setAttribute('data-id', id);
     var grow = document.createElement('div'); grow.className = 'changrow';
@@ -2187,19 +2312,17 @@ console.log('ham band reflector ready');
     var thoughtsBox = document.createElement('div');
     thoughtsBox.className = 'chanthoughts'; thoughtsBox.setAttribute('data-chanthoughts', id);
     (function () {
-      var cap = document.createElement('span'); cap.className = 'cap'; cap.textContent = 'Use channel for Thoughts?';
-      thoughtsBox.appendChild(cap);
-      var active = (lastThoughtsFeeds && lastThoughtsFeeds[id]) || '';
-      var cands = CHANSTATE.pub.concat(CHANSTATE.dms || []).slice();
-      if (active && cands.indexOf(active) < 0) cands.push(active);   // stale target still shown (was the select's curOp fallback)
-      cands.forEach(function (cid) {
-        var tl = document.createElement('label');
-        var tb = document.createElement('input'); tb.type = 'checkbox'; tb.value = cid; tb.checked = (active === cid);
-        tb.setAttribute('aria-label', 'post ' + id + ' summaries to ' + cid);
-        (function (tgt, box) { box.addEventListener('change', function () { chanSetThoughts(id, box.checked ? tgt : ''); }); })(cid, tb);
-        tl.appendChild(tb); tl.appendChild(document.createTextNode(chanLabel(cid) || cid));
-        thoughtsBox.appendChild(tl);
-      });
+      // This-card-only opt-in: one box, self target. Checked = this channel's
+      // fresh summaries post here; anything else (off, a legacy cross-channel
+      // mapping, a stale id) shows unchecked. Touching the box re-points to
+      // this channel (check) or turns it off (uncheck), healing legacy maps.
+      var tl = document.createElement('label'); tl.className = 'cap';
+      var tb = document.createElement('input'); tb.type = 'checkbox'; tb.value = id;
+      tb.checked = ((lastThoughtsFeeds && lastThoughtsFeeds[id]) || '') === id;
+      tb.setAttribute('aria-label', 'post ' + id + ' summaries to ' + id);
+      tb.addEventListener('change', function () { chanSetThoughts(id, tb.checked ? id : ''); });
+      tl.appendChild(tb); tl.appendChild(document.createTextNode('Use this channel for Thoughts?'));
+      thoughtsBox.appendChild(tl);
     })();
     thoughtsBox.hidden = !lastThoughtsFeeds;   // old engine: no thoughtsFeeds in status
     var gatesBox = document.createElement('div'); gatesBox.className = 'changates';
@@ -2221,6 +2344,8 @@ console.log('ham band reflector ready');
   }
   function renderChanList() {
     var box = byId('chanList'); if (!box) return;
+    // Skip steady-state re-renders (5s refresh): same data renders once.
+    if (sameRender('chanlist', JSON.stringify([CHANSTATE.pub, CHANSTATE.dms, chanLabels, lastChanLangs, lastChanGates, lastThoughtsFeeds]))) return;
     clearBox(box);
     var rows = 0;
     CHANSTATE.pub.forEach(function (id, i) { box.appendChild(chanRow(String(id), i === 0 ? 'primary' : 'extra')); rows++; });
@@ -2240,6 +2365,7 @@ console.log('ham band reflector ready');
     lastChanGates = (s && s.chanGates) || null;   // absent = old engine (gate boxes hide, note shows)
     lastThoughtsFeeds = (s && s.thoughtsFeeds) || null;   // absent = old engine (thoughts boxes hide)
     lastNewsFeeds = (s && ('newsFeeds' in s)) ? (s.newsFeeds || []) : null;   // absent = old engine (news boxes hide)
+    lastNewsReview = (s && ('newsReview' in s)) ? !!s.newsReview : null;   // absent = old engine (queue shows the engine note)
     renderChanList();
     newsSawStatus = true;
     newsSeedFromStatus(lastNewsFeeds || [], false);
@@ -2262,10 +2388,9 @@ console.log('ham band reflector ready');
       }
     });
   }
-  // F1: per-source-channel thoughts target (chanSetGate precedent — immediate
-  // send, not part of chanDirty/Save). Empty = off = summaries stay panel-only.
-  // Single target, so the boxes act as radios: checking one posts there,
-  // unchecking the active one turns it off.
+  // F1: per-channel thoughts self opt-in (chanSetGate precedent — immediate
+  // send, not part of chanDirty/Save). Checked = this channel's fresh summaries
+  // post here; unchecked = off = summaries stay panel-only.
   function chanSetThoughts(id, target) {
     call('config.setThoughtsFeed', { channelId: id, target: target || null }).then(function (res) {
       if (res && res.ok) {
@@ -2387,6 +2512,18 @@ console.log('ham band reflector ready');
     EXTRA_TOGGLES.forEach(function (t) { var el = byId(t[0]); if (el) el.checked = t[2] ? (s[t[1]] !== false) : (!!s[t[1]]); });
     ensureHam();
     var cc = byId('charCurrent'); if (cc) cc.textContent = (s.character && s.character.name) ? s.character.name : 'default Chloe';
+    // Author box mirrors the LIVE personality (boxDirty doctrine: a user-typed draft is never clobbered).
+    // Presence-guarded: an old engine omits the key — leave the box alone. Null = default Chloe live.
+    if ('character' in s) {
+      var chc = (s.character && s.character.name) ? s.character : null;
+      if (chc) {
+        setIfClean('charAuthorName', 'charName', chc.name);
+        if (chc.instruction) setIfClean('charAuthorInstr', 'charInstr', chc.instruction);
+      } else {
+        setIfClean('charAuthorName', 'charName', '');
+        setIfClean('charAuthorInstr', 'charInstr', CHLOE_PERSONA);
+      }
+    }
     if ('procRules' in s) setIfClean('procRules', 'procRules', JSON.stringify((s.procRules || []).map(function (r) { return { emoji: r.emoji, mode: r.mode, minutes: Math.round((r.durationMs || 3600000) / 60000) }; }), null, 1));
     var tz = byId('tzOffset');
     if (tz && s.timezoneOffsetMins != null) {
@@ -2402,6 +2539,7 @@ console.log('ham band reflector ready');
     setSelectIfClean('engageModeSel', s.engageMode || 'normal');
     if ('commandPrefixes' in s) setIfClean('prefixInput', 'prefixes', (s.commandPrefixes || []).join(', '));
     if ('botRoleIds' in s) setIfClean('summonRolesInput', 'summonRoles', (s.botRoleIds || []).join(', '));
+    if ('judgeReactions' in s) setIfClean('judgeReactionsInput', 'judgeReactions', s.judgeReactions == null ? '' : (s.judgeReactions.length ? s.judgeReactions.join(' ') : 'none'));
     var ns = byId('noticeState'); if (ns) ns.textContent = s.noticePinned ? 'pinned \u2713' : 'not pinned';
     var ni = byId('noticeInput');
     if (ni && s.noticeText) {
@@ -2411,6 +2549,13 @@ console.log('ham band reflector ready');
     var gates = s.gates || {}; ['emoji', 'pings', 'everyone', 'links', 'channelLinks'].forEach(function (g) { var el = byId('gate_' + g); if (el) el.checked = !!gates[g]; });
     if ('autoModRules' in s) setIfClean('autoModRules', 'autoMod', JSON.stringify(s.autoModRules || [], null, 2));
     if ('beats' in s) setIfClean('beatsBox', 'beats', JSON.stringify(s.beats || [], null, 2));
+    // News voice: presence-guarded like the other text boxes (absent = old engine, leave alone).
+    if (s && (('newsPrompt' in s) || ('newsPostTemplate' in s))) {
+      lastNewsVoice = { prompt: ('newsPrompt' in s) ? s.newsPrompt : null, template: ('newsPostTemplate' in s) ? s.newsPostTemplate : null };
+      var nvd = newsVoiceDisplay(lastNewsVoice.prompt, lastNewsVoice.template);
+      setIfClean('newsPromptBox', 'newsPrompt', nvd.prompt);
+      setIfClean('newsTemplateBox', 'newsTemplate', nvd.template);
+    }
     // Last poll: missing object resets (no stale numbers); a half-shape guards each field.
     if (s.lastPoll) {
       var lp = s.lastPoll;
@@ -2448,6 +2593,11 @@ console.log('ham band reflector ready');
   function renderRoster(list) {
     window.__roster = list || [];
     var box = byId('rosterList');
+    // Skip steady-state re-renders (5s refresh): same rows render once, so idle
+    // ticks stop tearing down the list (the flicker) and never disturb focus,
+    // checks, or expanded rows. Rendered fields only (recent lines count, not text).
+    var filtSig = (byId('rosterFilter') && byId('rosterFilter').value || '');
+    if (sameRender('roster', JSON.stringify([(list || []).map(function (p) { return [p.id, p.name, p.state, p.strikes, p.tier, p.tierBasis, p.lastSeen, p.recent ? p.recent.length : 0, !!window.__modSet[p.id]]; }), filtSig]))) return;
     // Preserve the user's checkbox selection across the 5s status re-render (the poll rebuilds
     // every row from scratch; without this the selection silently clears after ~5s).
     var keepSel = {};
@@ -2493,7 +2643,10 @@ console.log('ham band reflector ready');
       st.className = 'ustate ' + String(stateName).replace(/\s+/g, '-'); st.textContent = stateName + (p.strikes ? ' \u00b7 ' + p.strikes + ' strike' + (p.strikes === 1 ? '' : 's') : '');
       meta.appendChild(st);
       var idEl = document.createElement('span'); idEl.className = 'uid'; idEl.textContent = p.id; meta.appendChild(idEl);
-      var seen = document.createElement('span'); seen.className = 'uid'; seen.textContent = fmtTime(p.lastSeen) + ' \u00b7 ' + (p.recent ? p.recent.length : 0) + ' lines'; meta.appendChild(seen);
+      var seen = document.createElement('span'); seen.className = 'uid';
+      var nLines = (p.recent ? p.recent.length : 0), nCh = 0;
+      if (p.recent && p.recent.length) { var chSeen = {}; p.recent.forEach(function (ln) { if (ln && ln.ch) chSeen[ln.ch] = 1; }); nCh = Object.keys(chSeen).length; }
+      seen.textContent = fmtTime(p.lastSeen) + ' \u00b7 ' + nLines + ' lines' + (nCh > 1 ? ' \u00b7 ' + nCh + ' chans' : ''); meta.appendChild(seen);
       grow.appendChild(meta);
       row.appendChild(grow);
 
@@ -2643,7 +2796,10 @@ console.log('ham band reflector ready');
         var lines = document.createElement('div'); lines.className = 'memlines';
         recent.slice(-12).forEach(function (ln) {
           var line = document.createElement('div'); line.className = 'memline';
-          var meta = document.createElement('span'); meta.className = 'note'; meta.textContent = fmtTime(ln.ts) + '  ';
+          var meta = document.createElement('span'); meta.className = 'note';
+          var chTag = (ln && ln.ch && ln.ch !== selChannel()) ? ' \u00b7 #' + String(ln.ch).slice(-4) : '';
+          meta.textContent = fmtTime(ln.ts) + chTag + '  ';
+          if (ln && ln.ch) meta.title = 'channel ' + ln.ch;
           var txt = document.createElement('span');
           txt.textContent = (ln.content === '' ? '(empty \u2014 Message Content Intent off?)' : ln.content);
           if (ln.content === '') txt.className = 'note';
@@ -2750,6 +2906,8 @@ console.log('ham band reflector ready');
     var el = byId('viewChannelSel');
     var chans = (st && st.channels) || (st && st.publicChannels) || ((st && st.channelId) ? [st.channelId] : []) || [];
     if (!chans.length) return;   // F14: never wipe the selector on a chan-less status
+    // Skip steady-state re-renders (5s refresh): same options render once.
+    if (sameRender('chansel', JSON.stringify([chans, chans.length > 1]))) return;
     var cur = el.value;
     clearBox(el);
     chans.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; el.appendChild(o); });
@@ -2775,6 +2933,7 @@ console.log('ham band reflector ready');
       if (!res || !res.ok) {
         setLink(false);   // dot goes amber "waiting"; no banner, no alarm
         paintRunIdle();
+        try { paintHealthLine(); } catch (e) {}
         consecStatusFail = consecStatusFail + 1;
         if (consecStatusFail >= 3 && peerWin) { peerWin = null; peerOrigin = null; engineEnsuredFor = null; consecStatusFail = 0; dlog('link: 3 status timeouts — unpinned peer, rediscovering'); }
         if (rosterBusy()) return null;
@@ -2782,7 +2941,11 @@ console.log('ham band reflector ready');
       }
       consecStatusFail = 0;
       setLink(true);
+      lastStatusAt = Date.now(); lastStatus = res.value || null;
       applyStatus(res.value);
+      try { paintHealthLine(); } catch (e) {}
+      try { refreshNewsQueue(); } catch (e) {}   // review queue loads in parallel; renders when the bridge answers
+      try { refreshNewsDiag(); } catch (e) {}   // per-card last-run lines; text-only, never disturbs edits
       renderChannelSel(res.value);
       applyAnchorNote(res.value);
       if (res.value && !res.value.running && lastStartAt && (Date.now() - lastStartAt < 15000)) {
@@ -2804,6 +2967,27 @@ console.log('ham band reflector ready');
     byId('linkDot').className = 'dot ' + (alive ? 'on' : 'idle');
     setText('linkTxt', alive ? 'userscript linked' : 'waiting for userscript\u2026');
     var stale = byId('linkBanner'); if (stale) stale.remove();
+  }
+  // Health line: heartbeat + last-known status at a glance. Cached snapshot only —
+  // no new dispatch, no new import. Ages tick on hello/status events (no extra timer).
+  function healthAge(t) { if (!t) return '\u2013'; return fmtTime(t); }
+  function paintHealthLine() {
+    var el = byId('healthLine'); if (!el) return;
+    var s = lastStatus;
+    var brainTxt = '\u2013';
+    if (s && s.brain && s.brain.respond && s.brain.respond.srtt != null) {
+      brainTxt = (s.brain.respond.state === 'open' ? 'down' : (s.brain.respond.srtt + 'ms'));
+    } else if (s) { brainTxt = s.running ? 'warming' : '\u2013'; }
+    var pollTxt = '\u2013';
+    if (s && s.lastPoll) {
+      var lp = s.lastPoll;
+      pollTxt = (lp.ingested != null ? lp.ingested : '\u2013') + ' new of ' + (lp.fetched != null ? lp.fetched : '\u2013');
+    }
+    el.textContent = 'link ' + (linkAlive ? 'userscript linked' : 'waiting')
+      + ' \u00b7 hello ' + healthAge(lastHelloAt)
+      + ' \u00b7 status ' + healthAge(lastStatusAt)
+      + ' \u00b7 brain ' + brainTxt
+      + ' \u00b7 last poll ' + pollTxt;
   }
 
   // ---- buttons ----------------------------------------------------------------------
@@ -2971,6 +3155,15 @@ console.log('ham band reflector ready');
       });
     });
   });
+  byId('judgeReactionsInput').addEventListener('change', function () {
+    var raw = byId('judgeReactionsInput').value.trim();
+    var parts = /^none|off$/i.test(raw) ? [] : raw.split(/[\s,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    call('config.setJudgeReactions', { reactions: parts }).then(function (res) {
+      logRes(res, function (r) { var rs = (r.value && r.value.judgeReactions) || []; return 'volunteer reactions: ' + (rs.join(' ') || '(none — text only)'); }, 'failed', function (r) {
+        var rs = (r.value && r.value.judgeReactions) || []; byId('judgeReactionsInput').value = rs.length ? rs.join(' ') : 'none'; lastApplied.judgeReactions = byId('judgeReactionsInput').value;
+      });
+    });
+  });
   byId('engageModeSel').addEventListener('change', function () {
     call('config.setEngageMode', { mode: byId('engageModeSel').value, channelId: selChannel() }).then(function (res) {
       logRes(res, function (r) { return 'engagement mode: ' + r.value.engageMode; });
@@ -3009,6 +3202,9 @@ console.log('ham band reflector ready');
     var opts = (REACH_OPTS[id] || []).slice();
     if (opts.indexOf(val) < 0) opts.push(val);
     opts.sort(function (a, b) { return a - b; });
+    // Skip steady-state re-renders (5s refresh): same options render once, so an
+    // open dropdown is never rebuilt under the user.
+    if (sameRender('reachsel:' + id, JSON.stringify([opts, String(val)]))) return;
     var keepFocus = focused(sel);
     clearBox(sel);
     opts.forEach(function (ms) {
@@ -3106,6 +3302,8 @@ console.log('ham band reflector ready');
   function renderActLogList(log) {
     var list = byId('actLogList'), empty = byId('actLogEmpty');
     if (!list) return;
+    // Skip steady-state re-renders (5s refresh): same journal renders once.
+    if (sameRender('actlog', JSON.stringify([log, minuteBucket()]))) return;
     clearBox(list);
     if (!log || !log.length) { if (empty) empty.style.display = ''; return; }
     if (empty) empty.style.display = 'none';
@@ -3120,6 +3318,11 @@ console.log('ham band reflector ready');
   function renderApprovalsList(pend, ch) {
     var list = byId('approvalsList'), empty = byId('approvalsEmpty');
     if (!list) return;
+    // Skip steady-state re-renders (5s refresh): same holds render once, so the
+    // Approve/Dismiss buttons are never replaced under a click. Ages refresh on
+    // the minute bucket; never rebuild while a button has focus.
+    if (list.contains(document.activeElement)) return;
+    if (sameRender('approvals', JSON.stringify([pend, ch, minuteBucket()]))) return;
     clearBox(list);
     if (empty) empty.style.display = pend.length ? 'none' : '';
     pend.slice(0, 20).forEach(function (e) {
@@ -3132,7 +3335,7 @@ console.log('ham band reflector ready');
         var b = document.createElement('button'); b.className = 'ghost sm'; b.textContent = pair[0];
         b.addEventListener('click', function () {
           call('act.approve', { channelId: ch, id: e.id, always: pair[1] }).then(function (res) {
-            if (res && res.ok) { log('approved ' + e.id + (pair[1] ? ' + always-granted' : '') + ' — fires on the next poll'); refresh(); }
+            if (res && res.ok) { log('approved ' + e.id + (pair[1] ? ' + always-granted' : '') + ' — fires once on the next poll'); refresh(); }
             else log('approve failed: ' + ((res && res.reason) || 'unknown'));
           });
         });
@@ -3152,6 +3355,10 @@ console.log('ham band reflector ready');
   function renderActGrantsList(grants) {
     var list = byId('actGrantsList'), empty = byId('actGrantsEmpty');
     if (!list) return;
+    // Skip steady-state re-renders (5s refresh): same grants render once, so the
+    // Revoke buttons are never replaced under a click.
+    if (list.contains(document.activeElement)) return;
+    if (sameRender('grantlist', JSON.stringify(grants))) return;
     clearBox(list);
     if (empty) empty.style.display = grants.length ? 'none' : '';
     grants.slice(0, 64).forEach(function (g) {
@@ -3312,6 +3519,9 @@ console.log('ham band reflector ready');
   // Roster pickers: repopulated on every roster render, preserving the pending pick (never clobber mid-choice).
   function fillReachPickers() {
     var roster = window.__roster || [];
+    // Skip steady-state re-renders (roster render tail): same people render once,
+    // so a pending pick is never rebuilt under the user.
+    if (sameRender('reachpickers', JSON.stringify(roster.map(function (u) { return [u.id, u.name]; })))) return;
     [['favPickSel', 'pin a favorite\u2026'], ['blkPickSel', 'blacklist someone\u2026']].forEach(function (p) {
       var sel = byId(p[0]); if (!sel) return;
       var keep = sel.value;
@@ -3385,6 +3595,22 @@ console.log('ham band reflector ready');
     saveJsonList({ box: 'beatsBox', cmd: 'config.setBeats', arg: 'beats', appliedKey: 'beats', valueKey: 'beats', label: 'beats', unit: 'beat(s)', indent: 2 });
   });
   // Setup news-source manager (panel-only CRUD over config.setNewsFeeds).
+  // NEWS VOICE defaults — verbatim mirrors of the engine consts
+  // (DEFAULT_NEWS_PROMPT / DEFAULT_NEWS_TEMPLATE in engine.js F2 section).
+  // If the engine text changes, update BOTH sides together.
+  var DEFAULT_NEWS_PROMPT =
+    'You post a short news roundup for the "{feed}" feed in a chat channel, in your own voice.\n' +
+    'Fresh headlines ({date}):\n{items}\n\n' +
+    'Pick the 2-4 stories that matter most and say, for each, why it is worth knowing in one or two sentences. ' +
+    'Skip press-release filler. Keep links exactly as given (plain URLs, one per line under its story). ' +
+    'Respond with ONLY the roundup post text, at most 1500 characters, no preamble.';
+  var DEFAULT_NEWS_TEMPLATE = '📰 {feed} — {date}\n{body}';
+  function newsVoiceDisplay(promptVal, templateVal) {
+    return {
+      prompt: (promptVal == null) ? DEFAULT_NEWS_PROMPT : String(promptVal),
+      template: (templateVal == null) ? DEFAULT_NEWS_TEMPLATE : String(templateVal)
+    };
+  }
   // Same feed objects and validation limits as the wire; no `|` line syntax.
   function newsNormSite(site) { return String(site == null ? '' : site).trim().replace(/\/+$/, ''); }
   function newsHostOf(site) { return newsNormSite(site).replace(/^https?:\/\//i, '').toLowerCase(); }
@@ -3402,7 +3628,8 @@ console.log('ham band reflector ready');
   function newsSiteKey(site) { return newsHostOf(site).replace(/^www\./, ''); }
   // R3 rotate-45: the "normalized site + its bare host" pair (used by the
   // site autofill in two places) has one owner; empty site yields ''.
-  function newsCleanHost(site) { var c = newsNormSite(site || ''); return c ? newsHostOf(c) : ''; }
+  // Bare host only (no feed path): a feed URL still suggests its host as name.
+  function newsCleanHost(site) { var c = newsNormSite(site || '').replace(/^https?:\/\//i, ''); return c.split('/')[0].toLowerCase(); }
   function newsCollectUsedIds(exceptIndex) {
     var used = {};
     (newsDrafts || []).forEach(function (d, i) {
@@ -3412,7 +3639,7 @@ console.log('ham band reflector ready');
   }
   function newsIdFor(site, used, mark) {
     var norm = newsSiteKey(site || '');
-    var base = (norm || 'feed').replace(/\./g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 28) || 'feed';
+    var base = (norm || 'feed').replace(/\./g, '-').replace(/\//g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 28) || 'feed';
     used = used || {};
     var id = base, n = 2;
     while (used[id]) id = base + '-' + (n++);
@@ -3502,6 +3729,9 @@ console.log('ham band reflector ready');
     head.appendChild(idEl);
     var act = document.createElement('div');
     act.className = 'chanactions';
+    var runBtn = mkBtn('run', 'ghost sm', function () { newsRunFeedNow(idx, runBtn); });
+    runBtn.setAttribute('aria-label', 'run source ' + (idx + 1) + ' now');
+    act.appendChild(runBtn);
     var testBtn = mkBtn('test', 'ghost sm', function () { newsTestFeed(idx, testBtn); });
     testBtn.setAttribute('aria-label', 'test source ' + (idx + 1) + ' fetch without saving');
     act.appendChild(testBtn);
@@ -3510,7 +3740,7 @@ console.log('ham band reflector ready');
       newsDrafts.splice(idx, 1);
       newsMarkDirty();
       renderNewsSources();
-      log('news source removed \u2014 Save news sources to apply');
+      log('news source removed \u2014 Save news sources to apply', 'news');
     }));
     card.appendChild(head);
     card.appendChild(act);
@@ -3526,8 +3756,8 @@ console.log('ham band reflector ready');
     var siteEl = document.createElement('input');
     siteEl.type = 'text';
     siteEl.value = d.site || '';
-    siteEl.placeholder = 'https://example.com';
-    siteEl.setAttribute('aria-label', 'news source site root');
+    siteEl.placeholder = 'https://example.com or https://example.com/feed.xml';
+    siteEl.setAttribute('aria-label', 'news source site or feed URL');
     siteEl.setAttribute('data-newssite', String(idx));
     siteEl.addEventListener('input', function () { d.site = siteEl.value; touch(); newsMarkDirty(); });
     siteEl.addEventListener('change', function () {
@@ -3539,7 +3769,7 @@ console.log('ham band reflector ready');
       if (d.autoId) { d.id = newsIdFor(clean || 'feed', newsCollectUsedIds(idx)); idEl.textContent = d.id; card.setAttribute('data-newssource', d.id); }
       touch(); newsMarkDirty();
     });
-    grid.appendChild(newsField('Site root', siteEl, true));
+    grid.appendChild(newsField('Site or feed URL', siteEl, true));
     var targetEl = document.createElement('select');
     targetEl.setAttribute('aria-label', 'channel this source posts to');
     targetEl.setAttribute('data-newstarget', d.id || ('draft-' + idx));
@@ -3560,7 +3790,7 @@ console.log('ham band reflector ready');
     var everyEl = document.createElement('select');
     everyEl.setAttribute('aria-label', 'refresh cadence');
     newsFillSelect(everyEl, newsEveryOptions(d.intervalMs), d.intervalMs);
-    (function (sel) { sel.addEventListener('change', function () { d.intervalMs = Number(sel.value) || 3600000; newsMarkDirty(); }); })(everyEl);
+    (function (sel) { sel.addEventListener('change', function () { d.intervalMs = Number(sel.value) || 3600000; if (d.id) delete newsDiagCache[d.id]; newsMarkDirty(); }); })(everyEl);
     grid.appendChild(newsField('Refresh', everyEl, false));
     newsWordsField(grid, d, 'banWords', 'Drop headlines containing', 'trade, rumor', 'drop headlines containing', true, touch);
     newsWordsField(grid, d, 'allowCats', 'Only topics containing', 'baseball', 'only topics containing', false, touch);
@@ -3572,7 +3802,101 @@ console.log('ham band reflector ready');
     stEl.setAttribute('aria-live', 'polite');
     stEl.textContent = newsTestMsg[tk] || '';   // sticky: survives poll re-renders
     card.appendChild(stEl);
+    var dgEl = document.createElement('div');
+    dgEl.className = 'newsdiag';
+    dgEl.setAttribute('data-newsdiag', d.id || '');
+    dgEl.textContent = (d.id && newsDiagCache[d.id]) || newsCardLine(d, undefined) || '';
+    card.appendChild(dgEl);
     return card;
+  }
+  // Per-card last-run diagnostics (Setup → News sources): async `config.newsDiag`
+  // read, painted as text-only updates so ticks never disturb edits or focus.
+  // Net-zero on old engines (no newsDiag fn): lines stay empty.
+  var newsDiagCache = {};
+  // Granular countdown for "next in" timers: seconds under a minute, m+s
+  // under an hour, h+m under 48h, days above. Ticks every status refresh.
+  function newsCountdown(ms) {
+    ms = Math.max(0, Math.round(Number(ms) || 0));
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60), sec = s % 60;
+    if (m < 60) return sec ? (m + 'm ' + sec + 's') : (m + 'm');
+    var h = Math.floor(m / 60), rm = m % 60;
+    if (h < 48) return rm ? (h + 'h ' + rm + 'm') : (h + 'h');
+    return Math.floor(h / 24) + 'd';
+  }
+  function newsDueSuffix(rawGap) {
+    if (rawGap <= 0) return 'due now';
+    return 'next in ' + newsCountdown(rawGap);
+  }
+  function newsDiagLine(rec, intervalMs) {
+    var ivMs = Number(intervalMs) || 3600000;
+    if (!rec || !rec.lastAt) {
+      if (!rec || !rec.lastRun) return 'not yet checked \u00b7 next in ' + newsCountdown(ivMs);
+      return 'not yet checked \u00b7 ' + newsDueSuffix(ivMs - (Date.now() - rec.lastRun));
+    }
+    var ago = newsAgo(rec.lastAt), lr = rec.lastResult || 'checked';
+    var last = (lr === 'posted') ? ('last: posted ' + ago + (rec.lastCount ? ' (' + rec.lastCount + ' items)' : ''))
+      : (lr === 'queued') ? ('last: queued ' + ago)
+      : (lr === 'held') ? ('last: held for approval ' + ago)
+      : (lr === 'denied') ? ('last: denied by policy ' + ago)
+      : (lr === 'failed') ? ('last: FAILED ' + ago + (rec.lastError ? ' (' + rec.lastError + ')' : ''))
+      : (lr === 'nothing') ? ('last: nothing new ' + ago)
+      : ('last: checked ' + ago);
+    if (!rec.lastRun || !intervalMs) return last;
+    return last + ' \u00b7 ' + newsDueSuffix(Number(intervalMs) - (Date.now() - rec.lastRun));
+  }
+  // Card line uses the SAVED interval (what the engine actually runs on) so an
+  // unsaved Refresh edit can't mix its new cadence with the engine's old clock.
+  // Brand-new unsaved sources have no saved row, so the draft cadence stands in.
+  // A pending edit is named explicitly: "... (30m on save)".
+  function newsSavedById(id) {
+    var feeds = (typeof lastNewsFeeds !== 'undefined' && lastNewsFeeds) || [];
+    for (var i = 0; i < feeds.length; i++) if (String(feeds[i] && feeds[i].id) === String(id)) return feeds[i];
+    return null;
+  }
+  function newsCardLine(d, rec) {
+    var saved = (d && d.id) ? newsSavedById(d.id) : null;
+    var line = newsDiagLine(rec, saved ? saved.intervalMs : (d && d.intervalMs));
+    if (saved && Number(saved.intervalMs) !== Number(d.intervalMs))
+      line += ' (' + newsGap(Number(d.intervalMs) || 3600000) + ' on save)';
+    return line;
+  }
+  function newsAgo(at) {
+    var ms = Math.max(0, Date.now() - Number(at || 0));
+    return newsGap(ms) + ' ago';
+  }
+  function newsGap(ms) {
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return 'under a minute';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+  }
+  function refreshNewsDiag() {
+    return call('config.newsDiag').then(function (res) {
+      if (!res || !res.ok || !res.value || !res.value.diag) return;
+      var diag = res.value.diag, fresh = {};
+      Object.keys(diag).forEach(function (ch) {
+        var byFeed = (diag[ch] && diag[ch].byFeed) || {};
+        Object.keys(byFeed).forEach(function (fid) { fresh[fid] = byFeed[fid]; });
+      });
+      var box = byId('newsSourcesList');
+      newsDrafts.forEach(function (d) {
+        if (!d || !d.id) return;
+        var line = newsCardLine(d, fresh[d.id]);
+        if (!line) return;
+        if (newsDiagCache[d.id] === line) return;
+        newsDiagCache[d.id] = line;
+        if (box) {
+          var card = box.querySelector('[data-newssource="' + d.id + '"]');
+          var el = card && card.querySelector('[data-newsdiag]');
+          if (el && el.textContent !== line) el.textContent = line;
+        }
+      });
+    }, function () {});
   }
   function newsEnsureDraft() {
     if (newsDrafts) return newsDrafts;
@@ -3585,8 +3909,11 @@ console.log('ham band reflector ready');
   function renderNewsSources() {
     var box = byId('newsSourcesList');
     if (!box) return;
-    clearBox(box);
     var old = (lastNewsFeeds === null) && newsSawStatus;
+    // Skip steady-state re-renders (5s refresh): same drafts render once, so card
+    // state (Test results, typed-but-unsaved edits) is never wiped by a tick.
+    if (sameRender('newssources', JSON.stringify([newsDrafts, newsDirty, old, Object.keys(newsKnownChannels()).sort()]))) return;
+    clearBox(box);
     var note = byId('newsEngineNote');
     if (note) note.hidden = !old;
     var addBtn = byId('newsAddBtn'), saveBtn = byId('newsSaveBtn'), reloadBtn = byId('newsReloadBtn');
@@ -3631,7 +3958,7 @@ console.log('ham band reflector ready');
     function fail(msg) { return { ok: false, error: 'news source ' + (idx + 1) + ': ' + msg }; }
     d = d || {};
     var site = newsNormSite(d.site);
-    if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+$/.test(site)) return fail('site must be an https root URL (e.g. https://kotaku.com)');
+    if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/.test(site)) return fail('site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)');
     var key = newsSiteKey(site);
     if (usedIds.sites[key]) return fail('duplicate site ' + site);
     usedIds.sites[key] = true;
@@ -3639,7 +3966,7 @@ console.log('ham band reflector ready');
     if (!/^[a-z0-9-]{1,32}$/.test(id)) return fail('cannot make a feed id from ' + site);
     if (usedIds.ids[id]) return fail('duplicate feed id "' + id + '"');
     usedIds.ids[id] = true;
-    var name = String(d.name || '').trim().slice(0, 60) || newsHostOf(site) || id;
+    var name = String(d.name || '').trim().slice(0, 60) || newsCleanHost(site) || id;
     var target = String(d.channelId || '');
     if (target && !chanSet[target]) return fail('posts-to target must be a known channel id (or unassigned)');
     var banWords = newsTextToWords((d.banWords || []).join(','));
@@ -3670,43 +3997,43 @@ console.log('ham band reflector ready');
     // bridge instead of crashing.
     dispatch = (typeof dispatch === 'function') ? dispatch : call;
     onDone = (typeof onDone === 'function') ? onDone : refresh;
-    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing saved'); return; }
+    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing saved', 'warning'); return; }
     var drafts = newsEnsureDraft();
-    if (drafts.length > 20) { log('news sources: at most 20 feeds \u2014 nothing saved'); return; }
+    if (drafts.length > 20) { log('news sources: at most 20 feeds \u2014 nothing saved', 'warning'); return; }
     if (!drafts.length && (lastNewsFeeds || []).length && !window.confirm('Remove all ' + lastNewsFeeds.length + ' saved news source' + (lastNewsFeeds.length === 1 ? '' : 's') + '?')) return;
     var usedIds = { sites: {}, ids: {} }, chanSet = newsKnownChannels(), feeds = [];
     for (var i = 0; i < drafts.length; i++) {
       var one = newsDraftToFeed(drafts[i], i, usedIds, chanSet);
-      if (!one.ok) { log('news sources: ' + one.error + ' \u2014 nothing saved'); return; }
+      if (!one.ok) { log('news sources: ' + one.error + ' \u2014 nothing saved', 'warning'); return; }
       feeds.push(one.feed);
     }
     dispatch('config.setNewsFeeds', { feeds: feeds }).then(function (res) {
       if (res && res.ok) {
         lastNewsFeeds = res.value.feeds;
         newsSeedFromStatus(res.value.feeds, true);
-        log('news sources saved: ' + res.value.count + ' feed(s)');
+        log('news sources saved: ' + res.value.count + ' feed(s)', 'news');
         onDone();
         if (dispatch === call) { try { newsAutoTest(); } catch (e) {} }   // live saves verify each feed; DI/test saves stay hermetic
-      } else log('news sources failed: ' + ((res && res.reason) || 'unknown'));
+      } else log('news sources failed: ' + ((res && res.reason) || 'unknown'), 'error');
     });
   }
   byId('newsAddBtn').addEventListener('click', function () {
-    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing to add to'); return; }
+    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing to add to', 'warning'); return; }
     var drafts = newsEnsureDraft();
-    if (drafts.length >= 20) { log('news sources: at most 20 feeds'); return; }
+    if (drafts.length >= 20) { log('news sources: at most 20 feeds', 'warning'); return; }
     drafts.push(newsSuggestDraft('', newsCollectUsedIds(-1)));
     newsMarkDirty();
     renderNewsSources();
     var inputs = document.querySelectorAll('#newsSourcesList [data-newssite]');
     var last = inputs[inputs.length - 1];
     if (last && last.focus) { try { last.focus(); } catch (e) {} }
-    log('news source added \u2014 fill in the site, then Save news sources');
+    log('news source added \u2014 fill in the site, then Save news sources', 'news');
   });
   byId('newsReloadBtn').addEventListener('click', function () {
-    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing to reload'); return; }
+    if ((lastNewsFeeds === null) && newsSawStatus) { log('news sources: old engine \u2014 nothing to reload', 'warning'); return; }
     if (newsDirty && !window.confirm('Discard unsaved news-source edits and reload saved sources?')) return;
     newsSeedFromStatus(lastNewsFeeds || [], true);
-    log('news sources reloaded from the engine');
+    log('news sources reloaded from the engine', 'news');
   });
   // Wrapped (not handed straight to addEventListener) so the click Event is
   // never forwarded into saveNewsSources' `dispatch` parameter.
@@ -3736,10 +4063,10 @@ console.log('ham band reflector ready');
     var tk = d._tk || (d._tk = 't' + (++newsTestSeq));
     var stEl = newsStatusEl(btn, idx);
     function say(t) { if (t) newsTestMsg[tk] = t; else delete newsTestMsg[tk]; if (stEl) stEl.textContent = t || ''; }
-    if (!one.ok) { log('news test: ' + one.error + ' \u2014 nothing sent'); say(one.error); return Promise.resolve(null); }
+    if (!one.ok) { log('news test: ' + one.error + ' \u2014 nothing sent', 'warning'); say(one.error); return Promise.resolve(null); }
     if (btn) { btn.disabled = true; btn.textContent = 'testing\u2026'; }
     say('checking ' + one.feed.site + ' \u2026');
-    log('news test: checking ' + one.feed.site + ' \u2026');
+    log('news test: checking ' + one.feed.site + ' \u2026', 'news');
     function done() { if (btn) { btn.disabled = false; btn.textContent = 'test'; } }
     function oldShellHint(reason) {
       return (linkShell && shellTooOld(linkShell) && /network error|host not allowed|robots unreachable/.test(String(reason || '')))
@@ -3752,17 +4079,18 @@ console.log('ham band reflector ready');
           var v = res.value;
           var linksNote = (byId('gate_links') && byId('gate_links').checked) ? '' : ' \u2014 note: the Links gate is OFF, so rollups post titles without URLs';
           if (!v.count) {
-            log('news test: ' + one.feed.site + ' reachable via ' + (v.via || 'its sitemap') + ' \u2014 no fresh headlines' + (v.total ? ' (filters exclude all ' + v.total + ')' : ' (empty sitemap)') + linksNote);
+            log('news test: ' + one.feed.site + ' reachable via ' + (v.via || 'its sitemap') + ' \u2014 no fresh headlines' + (v.total ? ' (filters exclude all ' + v.total + ')' : ' (empty sitemap)') + linksNote, 'news');
             say('reachable \u2014 no fresh headlines' + (v.total ? ' (filters exclude all ' + v.total + ')' : ''));
           } else {
             var names = (v.sample || []).map(function (s) { return '\u201c' + (s.title || s.url) + '\u201d'; }).join('; ');
             var first = (v.sample && v.sample[0]) ? '\u201c' + (v.sample[0].title || v.sample[0].url) + '\u201d' : '';
-            log('news test: ' + one.feed.site + ' OK \u2014 ' + v.count + ' headline(s) via ' + v.via + (names ? ' e.g. ' + names : '') + linksNote);
+            log('news test: ' + one.feed.site + ' OK \u2014 ' + v.count + ' headline(s) via ' + v.via + (names ? ' e.g. ' + names : '') + linksNote, 'news');
             say('OK \u2014 ' + v.count + ' headline(s)' + (first ? ': ' + first : ''));
+            newsVoicePreview(one.feed, v.sample || [], function (t) { var cur = (stEl && stEl.textContent) || newsTestMsg[tk] || ''; say((cur ? cur + ' ' : '') + t); });
           }
-        } else { var why = ((res && res.reason) || 'no bridge') + oldShellHint(res && res.reason); log('news test failed (' + why + ')'); say('failed: ' + why); }
-      }, function () { done(); var why2 = 'no bridge' + oldShellHint('network error'); log('news test failed (' + why2 + ')'); say('failed: ' + why2); });
-    } catch (e) { done(); log('news test failed (' + (e && e.message) + ')'); say('failed: ' + (e && e.message)); return Promise.resolve(null); }
+        } else { var why = ((res && res.reason) || 'no bridge') + oldShellHint(res && res.reason); log('news test failed (' + why + ')', 'error'); say('failed: ' + why); }
+      }, function () { done(); var why2 = 'no bridge' + oldShellHint('network error'); log('news test failed (' + why2 + ')', 'error'); say('failed: ' + why2); });
+    } catch (e) { done(); log('news test failed (' + (e && e.message) + ')', 'error'); say('failed: ' + (e && e.message)); return Promise.resolve(null); }
   }
   // Auto-verify after a real Save: dry-run every saved feed in turn so the
   // cards show whether each source actually fetches. Live bridge only.
@@ -3772,10 +4100,257 @@ console.log('ham band reflector ready');
     ds.forEach(function (dd, i) { chain = chain.then(function () { return newsTestFeed(i, null); }); });
     return chain;
   }
+  // Per-card Run: executes the card's source + rules immediately — fetch with
+  // its filters, compose with the News voice, then post (or queue for review /
+  // hold for approval) per policy. Saved cards and unsaved drafts both run;
+  // seen is keyed by feed id, so a later Save won't repost these stories.
+  // Local validation runs first; the engine re-validates and routes by the
+  // card's Posts-to channel. Returns a promise.
+  // `dispatch` is an injectable send (default: the live bridge) so probes can
+  // drive the ack paths hermetically — same DI shape as saveNewsSources.
+  function newsRunFeedNow(idx, btn, dispatch) {
+    dispatch = (typeof dispatch === 'function') ? dispatch : call;
+    var drafts = newsEnsureDraft();
+    var d = drafts[idx];
+    if (!d) return Promise.resolve(null);
+    var tk = d._tk || (d._tk = 't' + (++newsTestSeq));
+    var stEl = newsStatusEl(btn, idx);
+    function say(t) { if (t) newsTestMsg[tk] = t; else delete newsTestMsg[tk]; if (stEl) stEl.textContent = t || ''; }
+    if (!d.channelId) { var m0 = 'run: assign a Posts-to channel first \u2014 Unassigned sources stay dormant'; log('news ' + m0 + ' \u2014 nothing sent', 'warning'); say(m0); return Promise.resolve(null); }
+    var used = { sites: {}, ids: {} };   // same pair shape saveNewsSources builds (NOT the flat map from newsCollectUsedIds)
+    (drafts || []).forEach(function (o, i) {
+      if (i === idx || !o) return;
+      if (o.site) used.sites[newsSiteKey(o.site)] = true;
+      if (o.id) used.ids[String(o.id).toLowerCase()] = true;
+    });
+    var one = newsDraftToFeed(d, idx, used, newsKnownChannels());
+    if (!one.ok) { log('news run: ' + one.error + ' \u2014 nothing sent', 'warning'); say('run failed: ' + one.error); return Promise.resolve(null); }
+    if (btn) { btn.disabled = true; btn.textContent = 'running\u2026'; }
+    say('running ' + one.feed.site + ' \u2026');
+    log('news run: running ' + one.feed.site + ' \u2026', 'news');
+    function done() { if (btn) { btn.disabled = false; btn.textContent = 'run'; } }
+    function oldShellHint(reason) {
+      return (linkShell && shellTooOld(linkShell) && /network error|host not allowed|robots unreachable/.test(String(reason || '')))
+        ? ' \u2014 the bridge shell is older than v' + NEWS_SHELL_WANT + ' and blocks news hosts; reinstall the userscript' : '';
+    }
+    try {
+      return dispatch('config.runNewsFeedNow', { feed: one.feed }, 120000).then(function (res) {
+        done();
+        if (res && res.ok && res.value) {
+          var v = res.value;
+          log('news run: ' + one.feed.site + ' \u2014 ' + (v.detail || v.ran), (v.ran === 'denied') ? 'error' : ((v.ran === 'held') ? 'warning' : 'news'));
+          say('ran: ' + (v.detail || v.ran));
+          try { refreshNewsDiag(); } catch (e) {}
+          if (v.ran === 'queued') { try { refreshNewsQueue(); } catch (e2) {} }
+        } else { var why = ((res && res.reason) || 'no bridge') + oldShellHint(res && res.reason); log('news run failed (' + why + ')', 'error'); say('run failed: ' + why); }
+      }, function () { done(); var why2 = 'no bridge' + oldShellHint('network error'); log('news run failed (' + why2 + ')', 'error'); say('run failed: ' + why2); });
+    } catch (e) { done(); log('news run failed (' + (e && e.message) + ')', 'error'); say('run failed: ' + (e && e.message)); return Promise.resolve(null); }
+  }
+  // ---- News review queue ------------------------------------------------------
+  // Staged rollups (Setup → News queue card). Review mode (News voice toggle)
+  // stages composed rollups instead of posting; each entry renders a
+  // mini-preview, editable headlines, the composed text, and Post now /
+  // Regenerate / Save / Discard. All ops are immediate sends (chanSetGate
+  // precedent — never part of chanDirty/Save). Old engines lack the
+  // dispatches: the card shows the engine note and every op degrades loudly.
+  function newsQueueAge(at) {
+    var gap = Math.max(0, Date.now() - (at || 0));
+    if (gap < 60000) return 'just now';
+    if (gap < 3600000) return Math.floor(gap / 60000) + 'm ago';
+    if (gap < 86400000) return Math.floor(gap / 3600000) + 'h ago';
+    return Math.floor(gap / 86400000) + 'd ago';
+  }
+  function refreshNewsQueue() {
+    if (lastNewsReview === null) { lastNewsQueue = {}; renderNewsQueue(); return Promise.resolve(null); }
+    return call('config.listNewsQueue', {}, 15000).then(function (res) {
+      if (res && res.ok && res.value) {
+        lastNewsQueue = (res.value.queues && typeof res.value.queues === 'object') ? res.value.queues : {};
+        if (typeof res.value.review === 'boolean') lastNewsReview = res.value.review;
+      }
+      renderNewsQueue();
+      return null;
+    }, function () { renderNewsQueue(); return null; });
+  }
+  function renderNewsQueue() {
+    var box = byId('newsQueueList'); if (!box) return;
+    // Skip steady-state re-renders (5s refresh): same entries render once, so
+    // headline edits and the post-text draft are never wiped by a tick. Never
+    // rebuild under an edit in progress; ages refresh on the minute bucket.
+    if (box.contains(document.activeElement)) return;
+    var note = byId('newsQueueNote');
+    var entries = [];
+    Object.keys(lastNewsQueue || {}).forEach(function (ch) {
+      ((lastNewsQueue && lastNewsQueue[ch]) || []).forEach(function (e) { if (e && e.qid) entries.push({ ch: String(ch), e: e }); });
+    });
+    entries.sort(function (a, b) { return ((b.e && b.e.at) || 0) - ((a.e && a.e.at) || 0); });
+    if (sameRender('newsqueue', JSON.stringify([entries, lastNewsReview, minuteBucket()]))) return;
+    clearBox(box);
+    if (note) {
+      if (lastNewsReview === null) { note.hidden = false; note.textContent = 'News queue needs a current engine — it pushes automatically on link; Stop + Start if this note stays.'; }
+      else if (!lastNewsReview && !entries.length) { note.hidden = false; note.textContent = 'Review is off — rollups post on their own. Tick “hold rollups for review” (News voice, above) to stage them here instead.'; }
+      else note.hidden = true;
+    }
+    if (!entries.length) {
+      var em = document.createElement('div'); em.className = 'newsempty';
+      em.textContent = lastNewsReview ? 'Queue empty — fresh rollups will stage here.' : 'Queue empty.';
+      box.appendChild(em); return;
+    }
+    entries.forEach(function (row) { box.appendChild(newsQueueCard(row.ch, row.e)); });
+  }
+  function newsQueueCard(ch, e) {
+    var card = document.createElement('div'); card.className = 'nqentry'; card.setAttribute('data-nqqid', e.qid);
+    var head = document.createElement('div'); head.className = 'nqhead';
+    var title = document.createElement('strong'); title.textContent = '📰 ' + (e.name || e.feedId || 'news');
+    var tgt = document.createElement('span'); tgt.className = 'age'; tgt.textContent = '→ ' + (chanLabel(ch) || ch);
+    var age = document.createElement('span'); age.className = 'age'; age.textContent = newsQueueAge(e.at);
+    head.appendChild(title); head.appendChild(tgt); head.appendChild(age);
+    card.appendChild(head);
+    var ul = document.createElement('ul'); ul.className = 'nqprev';
+    ((e.items || []).slice(0, 3)).forEach(function (it) { var li = document.createElement('li'); li.textContent = (it && it.title) || (it && it.url) || ''; ul.appendChild(li); });
+    card.appendChild(ul);
+    var det = document.createElement('details');
+    var sum = document.createElement('summary'); sum.textContent = 'full post text';
+    var pre = document.createElement('pre'); pre.style.whiteSpace = 'pre-wrap'; pre.style.margin = '4px 0 0'; pre.textContent = e.text || '';
+    det.appendChild(sum); det.appendChild(pre); card.appendChild(det);
+    var itemsBox = document.createElement('div'); itemsBox.className = 'nqitems';
+    (e.items || []).forEach(function (it, i) {
+      var row = document.createElement('div'); row.className = 'nqitem';
+      var inp = document.createElement('input'); inp.type = 'text'; inp.value = (it && it.title) || '';
+      inp.setAttribute('aria-label', 'headline ' + (i + 1) + ' of ' + (e.items || []).length);
+      inp.setAttribute('data-nqtitle', String(i));
+      var u = document.createElement('span'); u.className = 'nqurl'; u.textContent = (it && it.url) || ''; u.title = (it && it.url) || '';
+      var x = mkBtn('×', 'ghost sm', function () { row.remove(); });
+      x.setAttribute('aria-label', 'drop headline ' + (i + 1));
+      row.appendChild(inp); row.appendChild(u); row.appendChild(x);
+      itemsBox.appendChild(row);
+    });
+    card.appendChild(itemsBox);
+    var ta = document.createElement('textarea'); ta.className = 'nqtext'; ta.rows = 4; ta.value = e.text || '';
+    ta.setAttribute('aria-label', 'post text for ' + (e.name || e.feedId || 'news'));
+    card.appendChild(ta);
+    var bar = document.createElement('div'); bar.className = 'row';
+    var st = document.createElement('span'); st.className = 'nqstatus';
+    function say(t) { st.textContent = t || ''; }
+    function setBar(on) { Array.prototype.forEach.call(bar.querySelectorAll('button'), function (b) { b.disabled = !on; }); }
+    function collect() {
+      var items = [];
+      Array.prototype.forEach.call(itemsBox.querySelectorAll('[data-nqtitle]'), function (inp) {
+        var url = '';
+        try { var r = inp.closest('.nqitem'); url = (r && r.querySelector('.nqurl').title) || ''; } catch (e2) {}
+        if (String(inp.value || '').trim() && url) items.push({ title: String(inp.value).trim().slice(0, 160), url: url });
+      });
+      return { items: items, text: String(ta.value || '') };
+    }
+    bar.appendChild(mkBtn('Post now', '', function () {
+      var c = collect(); setBar(false); say('posting…');
+      call('config.updateNewsQueue', { channelId: ch, qid: e.qid, items: c.items, text: c.text }, 15000).then(function (u) {
+        if (!(u && u.ok)) { setBar(true); say('save failed: ' + ((u && u.reason) || 'no bridge')); return null; }
+        return call('config.postNewsQueue', { channelId: ch, qid: e.qid }, 30000);
+      }).then(function (p) {
+        if (p && p.ok) { say('posted'); log('news queue: posted ' + (e.name || e.feedId), 'news'); refreshNewsQueue(); refresh(); }
+        else if (p) { setBar(true); say('not posted: ' + (p.reason || 'unknown')); }
+      }, function () { setBar(true); say('post failed: no bridge'); });
+    }));
+    bar.appendChild(mkBtn('Regenerate', 'ghost', function () {
+      var c = collect(); setBar(false); say('regenerating…');
+      call('config.updateNewsQueue', { channelId: ch, qid: e.qid, items: c.items }, 15000).then(function (u) {
+        if (!(u && u.ok)) { setBar(true); say('save failed: ' + ((u && u.reason) || 'no bridge')); return null; }
+        return call('config.regenNewsQueue', { channelId: ch, qid: e.qid }, 60000);
+      }).then(function (g) {
+        if (g && g.ok) { say('regenerated'); log('news queue: regenerated ' + (e.name || e.feedId), 'news'); refreshNewsQueue(); }
+        else if (g) { setBar(true); say('regenerate failed: ' + (g.reason || 'unknown')); }
+      }, function () { setBar(true); say('regenerate failed: no bridge'); });
+    }));
+    bar.appendChild(mkBtn('Save', 'ghost', function () {
+      var c = collect(); setBar(false); say('saving…');
+      call('config.updateNewsQueue', { channelId: ch, qid: e.qid, items: c.items, text: c.text }, 15000).then(function (u) {
+        setBar(true); say(u && u.ok ? 'saved' : ('save failed: ' + ((u && u.reason) || 'no bridge')));
+        if (u && u.ok) refreshNewsQueue();
+      }, function () { setBar(true); say('save failed: no bridge'); });
+    }));
+    bar.appendChild(mkBtn('Discard', 'ghost', function () {
+      if (!window.confirm('Discard this staged rollup from "' + (e.name || e.feedId || 'news') + '"? Its stories stay marked seen, so they won\'t come back.')) return;
+      setBar(false); say('discarding…');
+      call('config.dropNewsQueue', { channelId: ch, qid: e.qid }, 15000).then(function (d) {
+        if (d && d.ok) { say('discarded'); refreshNewsQueue(); }
+        else { setBar(true); say('discard failed: ' + ((d && d.reason) || 'no bridge')); }
+      }, function () { setBar(true); say('discard failed: no bridge'); });
+    }));
+    bar.appendChild(st);
+    card.appendChild(bar);
+    return card;
+  }
   function newsEveryFmt(ms) {
     if (ms % 86400000 === 0) return (ms / 86400000) + 'd';
     if (ms % 3600000 === 0) return (ms / 3600000) + 'h';
     return Math.max(10, Math.round(ms / 60000)) + 'm';
+  }
+  // News voice: the editable rollup prompt + post template (F2 voice). Display
+  // shows the default text when the engine has nothing stored; saving maps the
+  // default text back to null (engine default), empty prompt to '' (classic).
+  function newsVoiceReadBoxes() {
+    return { prompt: String(byId('newsPromptBox').value || ''), template: String(byId('newsTemplateBox').value || '') };
+  }
+  function newsVoiceToStore(b) {
+    return { prompt: (b.prompt === DEFAULT_NEWS_PROMPT) ? null : b.prompt, template: (b.template === DEFAULT_NEWS_TEMPLATE) ? null : b.template };
+  }
+  function newsVoiceSeed(display, force) {
+    var pb = byId('newsPromptBox'), tb = byId('newsTemplateBox');
+    if (pb && (force || !focused(pb))) { pb.value = display.prompt; lastApplied.newsPrompt = display.prompt; }
+    if (tb && (force || !focused(tb))) { tb.value = display.template; lastApplied.newsTemplate = display.template; }
+  }
+  function saveNewsVoice(dispatch, onDone) {
+    dispatch = (typeof dispatch === 'function') ? dispatch : call;
+    onDone = (typeof onDone === 'function') ? onDone : refresh;
+    if (lastNewsVoice === null && newsSawStatus) { log('news voice: old engine \u2014 nothing saved', 'warning'); return; }
+    var st = newsVoiceToStore(newsVoiceReadBoxes());
+    if (st.prompt !== null && st.prompt.length > 2000) { log('news voice: prompt must be \u22642000 chars \u2014 nothing saved', 'warning'); return; }
+    if (st.template !== null && st.template.length > 500) { log('news voice: template must be \u2264500 chars \u2014 nothing saved', 'warning'); return; }
+    setText('newsVoiceNote', '\u2026');
+    dispatch('config.setNewsVoice', st).then(function (res) {
+      if (res && res.ok) {
+        lastNewsVoice = { prompt: res.value.prompt, template: res.value.template };
+        var vd = newsVoiceDisplay(lastNewsVoice.prompt, lastNewsVoice.template);
+        newsVoiceSeed(vd, true);
+        setText('newsVoiceNote', 'saved' + (vd.prompt ? '' : ' \u2014 classic list (prompt empty)') + '; next rollup uses it');
+        log('news voice saved' + (vd.prompt ? '' : ' (classic list)'), 'news');
+        onDone();
+      } else { setText('newsVoiceNote', 'could not save: ' + ((res && res.reason) || 'unknown')); log('news voice failed: ' + ((res && res.reason) || 'unknown'), 'error'); }
+    });
+  }
+  byId('newsVoiceSaveBtn').addEventListener('click', function () { saveNewsVoice(); });
+  byId('newsVoiceReloadBtn').addEventListener('click', function () {
+    if (lastNewsVoice === null && newsSawStatus) { log('news voice: old engine \u2014 nothing to reload', 'warning'); return; }
+    var base = lastNewsVoice || { prompt: null, template: null };
+    newsVoiceSeed(newsVoiceDisplay(base.prompt, base.template), true);
+    setText('newsVoiceNote', 'reloaded saved voice');
+    log('news voice reloaded from the engine', 'news');
+  });
+  byId('newsVoiceResetBtn').addEventListener('click', function () {
+    if (lastNewsVoice === null && newsSawStatus) { log('news voice: old engine \u2014 nothing to reset'); return; }
+    newsVoiceSeed({ prompt: DEFAULT_NEWS_PROMPT, template: DEFAULT_NEWS_TEMPLATE }, true);
+    setText('newsVoiceNote', 'default restored \u2014 saving\u2026');
+    saveNewsVoice();
+  });
+  // Voice preview for Test: compose what the bot would actually post for these
+  // samples (user-initiated AI call; samples only, not the full batch). The
+  // prompt comes from the voice box, so unsaved edits preview too; an empty
+  // prompt means the classic list (no AI call).
+  function newsVoicePreview(feed, samples, appendStatus) {
+    var st = newsVoiceReadBoxes();
+    if (!st.prompt.trim()) { log('news test voice: classic list (prompt empty \u2014 no AI call)', 'news'); return; }
+    var items = (samples || []).map(function (s) { return { title: s.title || s.url, url: s.url }; }).filter(function (x) { return !!x.url; });
+    if (!items.length) return;
+    var day = ''; try { day = new Date().toISOString().slice(0, 10); } catch (e) {}
+    log('news test voice: composing preview with the voice-box prompt\u2026', 'news');
+    try {
+      Promise.resolve(newsRollup({ feed: (feed && feed.name) || (feed && feed.id) || 'news', date: day, items: items, prompt: st.prompt })).then(function (r) {
+        if (r && r.ok && r.value) {
+          log('news test voice preview ready (' + items.length + ' samples, ' + r.value.length + ' chars) \u2014 full text is on the card', 'news');
+          if (typeof appendStatus === 'function') appendStatus('| voice: \u201c' + String(r.value).slice(0, 120) + (r.value.length > 120 ? '\u2026' : '') + '\u201d');
+        } else log('news test voice: composition declined (' + ((r && r.reason) || 'unknown') + ') \u2014 rollup would fall back to the classic list', 'warning');
+      }, function (e) { log('news test voice failed: ' + ((e && e.message) || e), 'error'); });
+    } catch (e) { log('news test voice failed: ' + ((e && e.message) || e), 'error'); }
   }
   // Legacy `|` line renderer and its Behavior save path were removed with the Setup manager.
   byId('saveAutoModBtn').addEventListener('click', function () {
@@ -4118,8 +4693,10 @@ console.log('ham band reflector ready');
   (function charWire() {
     // The author box opens with the default Chloe personality as a visible,
     // editable example (CHLOE_PERSONA is the Tier A source of truth above).
-    var instrEl = byId('charAuthorInstr');
-    if (instrEl && !instrEl.value) instrEl.value = CHLOE_PERSONA;
+    // setIfClean (not a raw fill) so the baseline is recorded — a later status
+    // carrying the installed character then cleanly replaces it (reload fix).
+    setIfClean('charAuthorName', 'charName', '');
+    setIfClean('charAuthorInstr', 'charInstr', CHLOE_PERSONA);
     var pick = byId('charPickBtn'), fileEl = byId('charFile'), drop = byId('charDrop');
     if (pick && fileEl) { pick.addEventListener('click', function () { fileEl.click(); }); fileEl.addEventListener('change', function () { if (fileEl.files && fileEl.files[0]) charLoadFile(fileEl.files[0]); }); }
     if (drop) {
@@ -4313,7 +4890,7 @@ console.log('ham band reflector ready');
     var ch = (typeof selChannel === 'function') ? selChannel() : null;
     if (!ch) { log('pick a channel in the tab row first'); return; }
     call('act.approve', { channelId: ch, id: 'all' }).then(function (res) {
-      if (res && res.ok) { log('approved ' + (((res.value || {}).approved || []).length) + ' — fires on the next poll'); refresh(); }
+      if (res && res.ok) { log('approved ' + (((res.value || {}).approved || []).length) + ' — fires once on the next poll'); refresh(); }
       else log('approve failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
@@ -4377,10 +4954,55 @@ console.log('ham band reflector ready');
       try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ring.map(function (e) { return new Date(e.t || 0).toLocaleTimeString() + '  [' + e.tag + '] ' + e.msg; }).join('\n')).then(function () { log('(copied to clipboard)'); }, function () {}); } catch (e2) {}
     });
   });
+  byId('healthBtn').addEventListener('click', function () {
+    var s = lastStatus;
+    if (!s) { log('health: no status yet — waiting for userscript link'); return; }
+    var link = s.link || {};
+    var inflight = link.inflight ? link.inflight.cmd : 'none';
+    var counts = ''; try { counts = JSON.stringify(link.counts || {}); } catch (e) { counts = '{}'; }
+    log('health: link ' + (linkAlive ? 'linked' : 'waiting')
+      + ' · hello ' + healthAge(lastHelloAt) + ' · status ' + healthAge(lastStatusAt)
+      + ' · pageLinked ' + (!!s.pageLinked) + ' · running ' + (!!s.running)
+      + ' · bridge ' + (s.version || '?'));
+    log('health: control-link last=' + (link.lastCmd || 'none') + ' ' + (link.lastOutcome || '')
+      + (link.lastMs != null ? ' ' + link.lastMs + 'ms' : '') + ' · inflight=' + inflight + ' · counts=' + counts);
+    var bk = (s.brain && typeof s.brain === 'object') ? Object.keys(s.brain) : [];
+    if (!bk.length) { log('health: brain no samples yet'); }
+    else {
+      var shown = bk.slice(0, 6).map(function (k) {
+        var b = s.brain[k] || {};
+        return k + ' ' + (b.srtt != null ? b.srtt + 'ms' : '—') + '/' + (b.state || '?');
+      }).join(' · ');
+      log('health: brain ' + shown + (bk.length > 6 ? ' (+' + (bk.length - 6) + ' more)' : ''));
+    }
+    if (s.lastPoll) log('health: last poll ' + (s.lastPoll.fetched != null ? s.lastPoll.fetched : '—') + ' fetched, ' + (s.lastPoll.ingested != null ? s.lastPoll.ingested : '—') + ' ingested');
+    else log('health: last poll —');
+    log('health detail: Dump trace ring / Show errors for the full rings');
+  });
+  var imgTestBusy = false;
+  byId('imgTestBtn').addEventListener('click', function () {
+    if (imgTestBusy) return;
+    imgTestBusy = true;
+    var btn = byId('imgTestBtn'); if (btn) btn.disabled = true;
+    log('painting test image (512x512, fixed probe)…');
+    var thinking = chatAppend(botName(), '\u2026', 'thinking');
+    paint({ prompt: 'a single red apple centered on a plain white background, studio photo', resolution: '512x512' }).then(function (r) {
+      if (thinking) thinking.remove();
+      if (r && r.ok && r.value) {
+        chatImage(botName(), String(r.value), 'test image (512x512 probe, ' + String(r.value).length + ' chars)');
+        log('test image ready');
+      } else log('test image failed: ' + ((r && r.reason) || 'unknown'), 'error');
+      imgTestBusy = false; if (btn) btn.disabled = false;
+    }).catch(function (e) {
+      if (thinking) thinking.remove();
+      log('test image failed: ' + String((e && e.message) || e), 'error');
+      imgTestBusy = false; if (btn) btn.disabled = false;
+    });
+  });
   byId('rescueBtn').addEventListener('click', function () {
-    log('rescue requested — clearing stuck reply locks and resetting the brain breaker…');
+    log('rescue requested — clearing stuck reply locks, stuck reactions, and old thought cards, resetting the brain breaker…');
     call('rescue', null, 15000).then(function (res) {
-      if (res && res.ok) { log('rescue done — next poll retries anything still queued'); refresh(); }
+      if (res && res.ok) { var v = res.value || {}; var bits = []; if (v.sweptAcks) bits.push(v.sweptAcks + ' reaction(s)'); if (v.sweptCards) bits.push(v.sweptCards + ' card(s)'); log('rescue done — next poll retries anything still queued' + (bits.length ? ' (cleared ' + bits.join(' + ') + ')' : '')); refresh(); }
       else log('rescue failed: ' + ((res && res.reason) || 'unknown'));
     });
   });
@@ -4574,6 +5196,22 @@ console.log('ham band reflector ready');
     var line = document.createElement('div'); line.className = 'chatline' + (cls ? ' ' + cls : '');
     var w = document.createElement('span'); w.className = 'cwho'; w.textContent = who;
     var m = document.createElement('span'); m.className = 'cmsg'; m.textContent = text;
+    line.appendChild(w); line.appendChild(m); box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+    return line;
+  }
+  function chatImage(who, dataUrl, caption) {
+    var box = byId('chatLog'); if (!box) return null;
+    var empty = byId('chatEmpty'); if (empty) empty.remove();
+    var line = document.createElement('div'); line.className = 'chatline bot';
+    var w = document.createElement('span'); w.className = 'cwho'; w.textContent = who;
+    var m = document.createElement('span'); m.className = 'cmsg';
+    var cap = document.createElement('div'); cap.textContent = caption || '';
+    var img = document.createElement('img');
+    img.setAttribute('src', dataUrl); img.setAttribute('alt', caption || 'test image');
+    img.style.cssText = 'max-width:100%;max-height:240px;border-radius:6px;margin-top:4px;cursor:zoom-in';
+    img.addEventListener('click', function () { try { window.open(dataUrl, '_blank'); } catch (e) {} });
+    m.appendChild(cap); m.appendChild(img);
     line.appendChild(w); line.appendChild(m); box.appendChild(line);
     box.scrollTop = box.scrollHeight;
     return line;
