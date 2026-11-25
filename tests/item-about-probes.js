@@ -10,7 +10,7 @@ try {
   const chipLabel = id => { const el = document.getElementById(id); const l = el ? el.closest('label') : null; return norm(l ? l.textContent : ''); };
   // A1 — setup steps name the live buttons/controls
   ck('A1-save-channels', about.includes(btnLabel('setChannelsBtn')), 'label=' + btnLabel('setChannelsBtn'));
-  ck('A1-backfill', about.includes(chipLabel('backfillChk')), 'chip=' + chipLabel('backfillChk'));
+  ck('A1-backfill', about.includes('Backfill') && typeof chanBackfill === 'function', 'channels-row backfill named in setup docs + handler present');
   ck('A1-validate', about.includes(btnLabel('validateBtn')), 'label=' + btnLabel('validateBtn'));
   ck('A1-start', about.includes(btnLabel('startBtn')), 'label=' + btnLabel('startBtn'));
   // A2 — behavior chips quoted in the feature cards match live labels (core words)

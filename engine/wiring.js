@@ -23,6 +23,9 @@ function __chloeWire(Shell) {
   function semInjectUpsert(entry) { var m = semInjectMap(); m[entry.id] = entry; GM_setValue(NS + 'seminject:map', m); }
   function semInjectDrop(id) { var m = semInjectMap(); if (m[id]) { delete m[id]; GM_setValue(NS + 'seminject:map', m); } }
   function cfgSet(k, v) { GM_setValue(NS + 'cfg:' + k, v); }
+  // Rule S S6/R1: one first-settles-wins factory — eight GM-transport timeouts
+  // carried the same `var settled` + settle-guard pair (names differed, bodies identical).
+  function settleOnce(resolve) { var done = false; return function (v) { if (done) return; done = true; resolve(v); }; }
   // #17: a small in-memory ring of link/transport/poll events, readable after the fact (the link's
   // failure modes are timing-dependent and easy to miss live). Mirrors to console; capped at 60.
   var traceRing = [], TRACE_MAX = 60;
@@ -152,12 +155,21 @@ function __chloeWire(Shell) {
   // snapshots (chanSpeak/chanRead/chanRemember) at build + targeted updateConfig on change.
   function chanGate(chId, gate) { var g = cfgGet('chanGate:' + chId, null); if (!g || typeof g !== 'object') return true; return g[gate] !== false; }
   function chanGatesFor(chId) { return { speak: chanGate(chId, 'speak'), read: chanGate(chId, 'read'), remember: chanGate(chId, 'remember') }; }
+  // Sync status reads of ENGINE-STORE keys (shakedown 2026-11-25): the engine writes these
+  // via store.set = GM_setValue(JSON-string), so the raw GM value is a STRING, not an array.
+  // Parse it (corrupt -> null, like makeStore.get); genuinely-raw values pass through.
+  function gmJson(key) {
+    var v = null;
+    try { v = GM_getValue(key, null); } catch (eG) { return null; }
+    if (typeof v === 'string') { try { v = JSON.parse(v); } catch (eJ) { return null; } }
+    return v;
+  }
   // A1: held autonomous actions per channel (bundle v12+), read defensively.
   function pendingActFor(ch) {
     var list = null;
     try {
       var pfx = prefixFor(ch);
-      var v = GM_getValue(NS + pfx + 'pendingact:' + ch, null);
+      var v = gmJson(NS + pfx + 'pendingact:' + ch);
       if (Array.isArray(v)) list = v.filter(function (e) { return e && typeof e.id === 'string' && typeof e.class === 'string'; }).slice(0, 20);
     } catch (e) {}
     return list || [];
@@ -167,7 +179,7 @@ function __chloeWire(Shell) {
     var list = null;
     try {
       var pfx = prefixFor(ch);
-      var v = GM_getValue(NS + pfx + 'actlog:' + ch, null);
+      var v = gmJson(NS + pfx + 'actlog:' + ch);
       if (Array.isArray(v)) list = v.filter(function (e) { return e && typeof e.at === 'number' && typeof e.class === 'string' && typeof e.verdict === 'string'; }).slice(-30);
     } catch (e) {}
     return list || [];
@@ -178,7 +190,7 @@ function __chloeWire(Shell) {
     var list = null;
     try {
       var pfx = prefixFor(ch);
-      var v = GM_getValue(NS + pfx + 'undostack:' + ch, null);
+      var v = gmJson(NS + pfx + 'undostack:' + ch);
       if (Array.isArray(v)) list = v.filter(function (e) { return e && typeof e.at === 'number' && typeof e.summary === 'string' && e.summary; }).slice(-10);
     } catch (eU) {}
     if (!list || !list.length) return null;
@@ -196,8 +208,8 @@ function __chloeWire(Shell) {
   // simply have no keys, and validateIndex/validateState rebuild garbage).
   function gameStatusFor(ch) {
     var idx = null, st = null;
-    try { idx = GM_getValue(NS + 'games:' + ch, null); } catch (eG) {}
-    try { st = GM_getValue(NS + 'wordle:' + ch, null); } catch (eS) {}
+    idx = gmJson(NS + 'games:' + ch);
+    st = gmJson(NS + 'wordle:' + ch);
     try {
       if (typeof ChloeWordle !== 'undefined' && ChloeWordle && ChloeWordle.statusFor) return ChloeWordle.statusFor(idx, st);
     } catch (eD) {}
@@ -344,8 +356,7 @@ function __chloeWire(Shell) {
     var prot = protectTokens(input);
     var url = TRANSLATE_URL + '?client=gtx&sl=' + encodeURIComponent(src) + '&tl=' + encodeURIComponent(target) + '&dt=t&q=' + encodeURIComponent(prot.text);
     return new Promise(function (resolve) {
-      var settled = false;
-      function done(val) { if (settled) return; settled = true; resolve(val); }
+      var done = settleOnce(resolve);
       var to = setTimeout(function () { trace('translate', 'timeout -> original text'); done({ text: input, src: src }); }, 6000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
@@ -396,8 +407,7 @@ function __chloeWire(Shell) {
     if (!q) return Promise.resolve({ ok: false, reason: 'empty query' });
     function wget(url, ms) {
       return new Promise(function (resolve) {
-        var settled = false;
-        function wdone(v) { if (settled) return; settled = true; resolve(v); }
+        var wdone = settleOnce(resolve);
         var wto = setTimeout(function () { wdone({ ok: false }); }, ms || 8000);
         try {
           GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
@@ -444,8 +454,7 @@ function __chloeWire(Shell) {
   // kinds: define | synonym | rhyme | soundslike | country | onthisday | quote | weather | translate.
   function almanacGet(url, ms) {
     return new Promise(function (resolve) {
-      var settled = false;
-      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var adone = settleOnce(resolve);
       var ato = setTimeout(function () { adone({ ok: false }); }, ms || 8000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: url, headers: { 'User-Agent': UA }, anonymous: true,
@@ -542,8 +551,7 @@ function __chloeWire(Shell) {
     if (!q) return Promise.resolve({ ok: false, reason: 'empty query' });
     var url = SEARCH_URL + '?q=' + encodeURIComponent(q) + '&format=json&no_html=1&skip_disambig=1';
     return new Promise(function (resolve) {
-      var settled = false;
-      function done(v) { if (settled) return; settled = true; resolve(v); }
+      var done = settleOnce(resolve);
       function ddgFallback(reason) {
         wikiSearch(q).then(function (w) {
           if (w && w.ok) { log('[wire:search] wiki fallback ok "' + q.slice(0, 60) + '"'); done({ ok: true, value: w.value }); }
@@ -590,8 +598,7 @@ function __chloeWire(Shell) {
     try { host = String(u.match(/^https?:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
     if (!/^https?:\/\//i.test(u) || !FETCH_HOSTS[host]) return Promise.resolve({ ok: false, reason: 'fetch allowlist is Wikipedia only' });
     return new Promise(function (resolve) {
-      var settled = false;
-      function fdone(v) { if (settled) return; settled = true; resolve(v); }
+      var fdone = settleOnce(resolve);
       var fto = setTimeout(function () { log('[wire:fetch] timeout -> fail-open'); fdone({ ok: false, reason: 'timeout' }); }, 10000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: u, headers: { 'User-Agent': UA }, anonymous: true,
@@ -643,7 +650,8 @@ function __chloeWire(Shell) {
       var ch = String(f.channelId || '').trim();
       if (ch && !/^\d{15,25}$/.test(ch)) return { ok: false, reason: 'feed "' + id + '": channelId must be a channel id (or empty: dormant, posts nowhere)' };
       if (ch && chans && !chans[ch]) return { ok: false, reason: 'feed "' + id + '": unknown channel ' + ch };
-      var iv = (f.intervalMs == null) ? 3600000 : Number(f.intervalMs);
+      var kind = (f.kind === 'podcast') ? 'podcast' : 'news';
+      var iv = (f.intervalMs == null) ? ((kind === 'podcast') ? 43200000 : 3600000) : Number(f.intervalMs);
       if (!isFinite(iv)) return { ok: false, reason: 'feed "' + id + '": bad intervalMs' };
       iv = Math.max(600000, Math.min(86400000, Math.round(iv)));
       var mx = (f.maxItems == null) ? 5 : Number(f.maxItems);
@@ -652,7 +660,7 @@ function __chloeWire(Shell) {
       var bw = words(f.banWords, 50); if (bw === null) return { ok: false, reason: 'feed "' + id + '": banWords must be ≤50 strings (≤40 chars)' };
       var ac = words(f.allowCats, 30); if (ac === null) return { ok: false, reason: 'feed "' + id + '": allowCats must be ≤30 strings (≤40 chars)' };
       var bc = words(f.blockCats, 30); if (bc === null) return { ok: false, reason: 'feed "' + id + '": blockCats must be ≤30 strings (≤40 chars)' };
-      clean.push({ id: id, name: String(f.name || id).slice(0, 60), site: site, channelId: ch, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc });
+      clean.push({ id: id, name: String(f.name || id).slice(0, 60), site: site, kind: kind, channelId: ch, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc });
     }
     return { ok: true, feeds: clean };
   }
@@ -693,8 +701,7 @@ function __chloeWire(Shell) {
     if (/\.(gz|zip|tgz|br)(\?|$)/i.test(u)) return Promise.resolve({ ok: false, reason: 'compressed sitemap skipped' });
     if (!newsHostOk(host)) { trace('news', 'fetch blocked (off-allowlist host): ' + host); return Promise.resolve({ ok: false, reason: 'host not allowed' }); }
     return new Promise(function (resolve) {
-      var settled = false;
-      function done(v) { if (settled) return; settled = true; resolve(v); }
+      var done = settleOnce(resolve);
       var fto = setTimeout(function () { trace('news', 'fetch timeout -> fail-open'); done({ ok: false, reason: 'timeout' }); }, 12000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: u, headers: { 'User-Agent': UA }, anonymous: true,
@@ -889,8 +896,7 @@ function __chloeWire(Shell) {
     try { host = String(u.match(/^https:\/\/([^\/:?#]+)/i)[1]).toLowerCase(); } catch (e) {}
     if (!/^https:\/\//i.test(u) || !ATTACH_HOSTS[host]) return Promise.resolve({ ok: false, reason: 'attachment host not allowed' });
     return new Promise(function (resolve) {
-      var settled = false;
-      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var adone = settleOnce(resolve);
       var ato = setTimeout(function () { log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); }, 15000);
       function byteLen(x) {
         if (!x) return 0;
@@ -937,8 +943,7 @@ function __chloeWire(Shell) {
     var ct = String((job && (job.content_type || job.contentType)) == null ? '' : (job.content_type || job.contentType)).toLowerCase().split(';')[0].trim();
     if ((job && job.pdf) || /\.pdf$/.test(fn) || ct === 'application/pdf') return fetchAttachmentPdf(job);   // B2: binary body needs the pdf path, not responseText
     return new Promise(function (resolve) {
-      var settled = false;
-      function adone(v) { if (settled) return; settled = true; resolve(v); }
+      var adone = settleOnce(resolve);
       var ato = setTimeout(function () { log('[wire:attach] timeout "' + name + '" -> fail-open'); adone({ ok: false, reason: 'timeout' }); }, 10000);
       try {
         GM_xmlhttpRequest({ method: 'GET', url: u, anonymous: true,
@@ -1383,7 +1388,7 @@ function __chloeWire(Shell) {
         channelLang: cfgGet('channelLang:' + channelId, null),   // v0.90.21: per-channel reply default (null = English)
         thoughtsFeedTarget: cfgGet('thoughtsFeed:' + channelId, null),   // F1: post fresh summaries to this Discord channel (null = panel feed only)
         newsFeeds: cfgGet('newsFeeds', []),   // F2: hourly sitemap rollups targeting this channel (filtered by engine)
-        newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
+        newsPrompt: cfgGet('newsPrompt', null), newsPodcastPrompt: cfgGet('newsPodcastPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
         newsInContext: !!cfgGet('newsInContext', false),   // F2 redirect: false (default) = own 📰 rollups stay out of the reply transcript, marker folds into Thoughts instead
         newsReview: !!cfgGet('newsReview', false),   // F2 review queue: false (default) = composed rollups post immediately; true = they stage in the news queue instead
         newsFn: function (ctx) { return brainCall('newsRollup', ctx); },
@@ -1699,6 +1704,7 @@ function __chloeWire(Shell) {
       return { ok: true, value: { id: me.id, username: me.username, bot: me.bot } };
     }).catch(function (e) { return { ok: false, reason: 'HTTP ' + (e.status || '?'), body: errBrief(e.body) || null }; });   // surface the error code, not the PII-bearing raw body
   }
+  function chanMap(fn) { var m = {}; channelList().forEach(function (c) { var v = fn(c); if (v !== undefined) m[c] = v; }); return m; }
   function statusSnapshot() {
     try { return statusSnapshotCore(); } catch (e) { return { version: VERSION, snapshotError: String((e && e.message) || e), channelId: cfgGet('channelId', ''), running: false }; }
   }
@@ -1708,6 +1714,7 @@ function __chloeWire(Shell) {
       channelId: cfgGet('channelId', ''), botUserId: cfgGet('botUserId', ''), botName: cfgGet('botName', ''),
       botRoleIds: cfgGet('botRoleIds', []), addressMode: cfgGet('addressMode', 'both'), volunteer: !!cfgGet('volunteer', false), judgeReactions: cfgGet('judgeReactions', null),
       greet: !!cfgGet('greet', true), memberCheck: !!cfgGet('memberCheck', false), backfill: !!cfgGet('backfill', false),
+      backfillDone: chanMap(function (c) { return !!cfgGet('backfillDone:' + c, false); }),
       dmReplies: !!cfgGet('dmReplies', true),
       publicChannels: [primaryChannel()].concat(cfgGet('channels', []) || []).filter(Boolean),
       dmChannels: declaredDmChannels(),
@@ -1769,22 +1776,22 @@ function __chloeWire(Shell) {
       engageMode: cfgGet('engageMode:' + primaryChannel(), cfgGet('engageMode', 'normal')),
       channelLang: cfgGet('channelLang:' + primaryChannel(), null),
       channels: channelList(),
-      channelLangs: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('channelLang:' + c, null); }); return m; })(),
-      thoughtsFeeds: (function () { var m = {}; channelList().forEach(function (c) { var t = cfgGet('thoughtsFeed:' + c, null); if (t) m[c] = t; }); return m; })(),
+      channelLangs: chanMap(function (c) { return cfgGet('channelLang:' + c, null); }),
+      thoughtsFeeds: chanMap(function (c) { var t = cfgGet('thoughtsFeed:' + c, null); return t || undefined; }),
       newsFeeds: cfgGet('newsFeeds', []),
-      newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
+      newsPrompt: cfgGet('newsPrompt', null), newsPodcastPrompt: cfgGet('newsPodcastPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null),
       newsInContext: !!cfgGet('newsInContext', false),
       newsReview: !!cfgGet('newsReview', false),
-      engageModes: (function () { var m = {}; channelList().forEach(function (c) { m[c] = cfgGet('engageMode:' + c, cfgGet('engageMode', 'normal')); }); return m; })(),
-      chanGates: (function () { var m = {}; channelList().forEach(function (c) { m[c] = chanGatesFor(c); }); return m; })(),
-      games: (function () { var m = {}; channelList().forEach(function (c) { m[c] = gameStatusFor(c); }); return m; })(),
+      engageModes: chanMap(function (c) { return cfgGet('engageMode:' + c, cfgGet('engageMode', 'normal')); }),
+      chanGates: chanMap(chanGatesFor),
+      games: chanMap(gameStatusFor),
       quarantine: quarantineSummary(),
       actPolicy: cfgGet('actPolicy', 'allow'),
       actGrants: (function () { var g = cfgGet('actGrants', []); return Array.isArray(g) ? g : []; })(),
-      pendingAct: (function () { var m = {}; channelList().forEach(function (c) { m[c] = pendingActFor(c); }); return m; })(),
-      actLog: (function () { var m = {}; channelList().forEach(function (c) { m[c] = actLogFor(c); }); return m; })(),
-      undoTop: (function () { var m = {}; channelList().forEach(function (c) { m[c] = undoTopFor(c); }); return m; })(),
-      runningByChannel: (function () { var m = {}; channelList().forEach(function (c) { m[c] = !!(engines[c] && engines[c].isRunning && engines[c].isRunning()); }); return m; })(),
+      pendingAct: chanMap(pendingActFor),
+      actLog: chanMap(actLogFor),
+      undoTop: chanMap(undoTopFor),
+      runningByChannel: chanMap(function (c) { return !!(engines[c] && engines[c].isRunning && engines[c].isRunning()); }),
       beats: cfgGet('beats', []),
       commandPrefixes: cfgGet('commandPrefixes', []),
       noticePinned: !!cfgGet('noticePinned', false), noticeText: cfgGet('noticeText', ''),
@@ -2081,17 +2088,21 @@ function __chloeWire(Shell) {
         var __et = engines[chT]; if (__et && typeof __et.updateConfig === 'function') { try { __et.updateConfig({ thoughtsFeedTarget: tgt || null }); } catch (eT) {} }
         return Promise.resolve({ ok: true, value: { target: tgt || null, channelId: chT } });
       }
-      case 'config.setNewsVoice': {   // F2 voice: user-editable rollup prompt + post template (null clears to default; '' prompt = classic list)
+      case 'config.setNewsVoice': {   // F2 voice: user-editable rollup prompt(s) + post template (null clears to default; '' prompt = classic list)
         var vp = (args && ('prompt' in args)) ? args.prompt : undefined;
+        var vpp = (args && ('podcastPrompt' in args)) ? args.podcastPrompt : undefined;
         var vt = (args && ('template' in args)) ? args.template : undefined;
         if (vp !== undefined && vp !== null) { vp = String(vp); if (!vp.trim()) vp = ''; if (vp.length > 2000) return Promise.resolve({ ok: false, reason: 'prompt must be ≤2000 chars' }); }
         else if (vp !== undefined) vp = null;
+        if (vpp !== undefined && vpp !== null) { vpp = String(vpp); if (!vpp.trim()) vpp = ''; if (vpp.length > 2000) return Promise.resolve({ ok: false, reason: 'podcast prompt must be ≤2000 chars' }); }
+        else if (vpp !== undefined) vpp = null;
         if (vt !== undefined && vt !== null) { vt = String(vt); if (vt.length > 500) return Promise.resolve({ ok: false, reason: 'template must be ≤500 chars' }); }
         else if (vt !== undefined) vt = null;
         if (vp !== undefined) cfgSet('newsPrompt', vp);
+        if (vpp !== undefined) cfgSet('newsPodcastPrompt', vpp);
         if (vt !== undefined) cfgSet('newsPostTemplate', vt);
-        patchEngines({ newsPrompt: cfgGet('newsPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null) });
-        return Promise.resolve({ ok: true, value: { prompt: cfgGet('newsPrompt', null), template: cfgGet('newsPostTemplate', null) } });
+        patchEngines({ newsPrompt: cfgGet('newsPrompt', null), newsPodcastPrompt: cfgGet('newsPodcastPrompt', null), newsPostTemplate: cfgGet('newsPostTemplate', null) });
+        return Promise.resolve({ ok: true, value: { prompt: cfgGet('newsPrompt', null), podcastPrompt: cfgGet('newsPodcastPrompt', null), template: cfgGet('newsPostTemplate', null) } });
       }
       case 'config.setNewsFeeds': {   // F2: hourly sitemap rollup feeds (global array; engines filter by channelId)
         var chk = validateNewsFeeds(args && args.feeds, channelList());
@@ -2163,7 +2174,8 @@ function __chloeWire(Shell) {
         var tens = ensureEngines();
         if (!tens.length) return Promise.resolve({ ok: false, reason: 'no channels yet — add a channel first' });
         if (!tens[0] || typeof tens[0].testNewsFeed !== 'function') return Promise.resolve({ ok: false, reason: 'feed test needs a current engine' });
-        return tens[0].testNewsFeed({ site: tsite, name: String(tf.name || tsite).slice(0, 60), banWords: tbw, allowCats: tac, blockCats: tbc, maxItems: tmx }).then(function (tr) {
+        var tkind = (tf.kind === 'podcast') ? 'podcast' : 'news';
+        return tens[0].testNewsFeed({ site: tsite, name: String(tf.name || tsite).slice(0, 60), kind: tkind, banWords: tbw, allowCats: tac, blockCats: tbc, maxItems: tmx }).then(function (tr) {
           if (tr && tr.ok) return { ok: true, value: tr };
           return { ok: false, reason: (tr && tr.reason) || 'test failed' };
         });
@@ -2204,6 +2216,19 @@ function __chloeWire(Shell) {
           } catch (eG) {}
         }
         return Promise.resolve({ ok: true, value: { channelId: chG, gates: chanGatesFor(chG) } });
+      }
+      case 'config.setChannelBackfill': {   // Channels card per-channel pull: re-walk ONLY this channel's history (bounded pages, ingest-only)
+        var chB = String((args && args.channelId) || '').trim();
+        if (!chB || channelList().indexOf(chB) < 0) return Promise.resolve({ ok: false, reason: 'unknown channel' });
+        if (!chanGate(chB, 'remember')) return Promise.resolve({ ok: false, reason: 'turn Remember on for this channel first — goldfish channels keep nothing' });
+        GM_deleteValue(NS + 'cfg:backfillDone:' + chB);
+        var be = engines[chB] || buildEngine(chB);
+        if (!be) return Promise.resolve({ ok: false, reason: 'no engine for that channel' });
+        if (typeof be.resetBackfill !== 'function') return Promise.resolve({ ok: false, reason: 'backfill needs a current engine (Stop + Start the bot to load it)' });
+        return Promise.resolve(be.resetBackfill()).then(function () {
+          cfgSet('backfill', true); patchEngines({ backfill: true });
+          return { ok: true, value: { channelId: chB, backfill: true } };
+        });
       }
       case 'config.setImageQueue': {
         var n = Math.max(1, Math.min(20, parseInt((args && args.max), 10) || 8));
@@ -2377,7 +2402,7 @@ function __chloeWire(Shell) {
         });
       }
       case 'mod.addMod': {
-        var idA = String((args && args.id) || '').trim(); if (!idA) return Promise.resolve({ ok: false, reason: 'no id' });
+        var idA = String((args && args.id) || '').trim(); if (!/^\d{15,25}$/.test(idA)) return Promise.resolve({ ok: false, reason: 'mod id must be a Discord user id' });
         var listA0 = cfgGet('modList', []); if (!Array.isArray(listA0)) listA0 = [];
         var isNewA = listA0.indexOf(idA) < 0;
         var listA = listA0.slice(); if (isNewA) listA.push(idA); cfgSet('modList', listA); patchEngines({ modList: listA });
@@ -2622,6 +2647,7 @@ function __chloeWire(Shell) {
       // unavailable Discord ban is logged but never blocks the purge.
       case 'mod.permaban': {
         var pid = String((args && args.id) || '').trim();
+        if (!/^\d{15,25}$/.test(pid)) return Promise.resolve({ ok: false, reason: 'target must be a Discord user id' });
         var pname = String((args && args.name) || pid);
         var preason = (args && args.reason) || 'Chloe permaban';
         if (!pid) return Promise.resolve({ ok: false, reason: 'no target' });
@@ -2862,7 +2888,7 @@ function __chloeWire(Shell) {
       'workingMemory','idleDeliberation','attentionManager','selfKnowledge','cleanOutput',
       'translate','deviceTime','exactTokens','episodeGraph','idleConsolidation','goalObjects',
       'reflection','episodicMemory','relationshipTrust','ownAffect','proceduralModes',
-      'reactionSummon','hamRadio','autoMod','autoModRules','commandPrefixes','beats','procRules','newsFeeds','newsPrompt','newsPostTemplate','newsInContext','newsReview',
+      'reactionSummon','hamRadio','autoMod','autoModRules','commandPrefixes','beats','procRules','newsFeeds','newsPrompt','newsPodcastPrompt','newsPostTemplate','newsInContext','newsReview',
       'actPolicy','actGrants',
       'modList','serverMemberCount','timeAware','timezoneOffsetMins','personality',
       'character','personaAnchor','noticeText','dmReplies','dmSessions','poolSize',
@@ -3001,7 +3027,7 @@ function __chloeWire(Shell) {
       if (k === 'commandPrefixes') { if (Array.isArray(v)) cfg[k] = v.filter(function (x) { return typeof x === 'string' && x; }); else dropped.push('cfg:' + k); return; }
       if (k === 'autoModRules' || k === 'beats' || k === 'procRules') { if (Array.isArray(v)) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       if (k === 'newsFeeds') { var __nv = validateNewsFeeds(v, null); if (__nv.ok) cfg[k] = __nv.feeds; else dropped.push('cfg:' + k); return; }
-      if (k === 'newsPrompt') { if (v == null) cfg[k] = null; else if (typeof v === 'string' && v.length <= 2000) cfg[k] = v; else dropped.push('cfg:' + k); return; }
+      if (k === 'newsPrompt' || k === 'newsPodcastPrompt') { if (v == null) cfg[k] = null; else if (typeof v === 'string' && v.length <= 2000) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       if (k === 'newsPostTemplate') { if (v == null) cfg[k] = null; else if (typeof v === 'string' && v.length <= 500) cfg[k] = v; else dropped.push('cfg:' + k); return; }
       cfg[k] = v;
     });

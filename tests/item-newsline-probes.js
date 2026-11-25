@@ -152,6 +152,27 @@ try {
   newsDrafts = null; newsDirty = false; newsSeed = ''; newsSawStatus = false; chanDirty = false;
   try { applyStatus({ running: false, channelId: 'N1', publicChannels: ['N1', 'N2'], dmChannels: [], channelLangs: {}, chanGates: {}, thoughtsFeeds: {} }); } catch (e) { ck('N6-degrade', false, 'threw'); }
   ck('N6-degrade', byId('newsEngineNote') && byId('newsEngineNote').hidden === false && byId('newsAddBtn').disabled === true && /current engine/.test(byId('newsSourcesList').textContent), byId('newsSourcesList') ? byId('newsSourcesList').textContent.slice(0, 60) : 'no list');
+  // N8 — kind-aware drafts: old objects default to news, converter carries
+  // podcast kind, status-seeded cards start collapsed behind Edit.
+  newsDrafts = [
+    { id: 'n-com', name: 'N', site: 'https://n.com', channelId: 'N1', intervalMs: 3600000, maxItems: 5, banWords: [], allowCats: [], blockCats: [] },
+    { id: 'p-com', name: 'P', site: 'https://p.com/feed.xml', kind: 'podcast', channelId: 'N1', intervalMs: 43200000, maxItems: 3, banWords: [], allowCats: [], blockCats: [] }
+  ];
+  newsDirty = false; newsExpanded = {}; newsSeed = '[]'; lastNewsFeeds = []; newsSawStatus = true; renderNewsSources();
+  const n8cards = newsCards();
+  const n8grids = n8cards.length ? n8cards.map(c => c.querySelector('.newsgrid').hidden) : [];
+  ck('N8-collapsed', n8cards.length === 2 && n8grids[0] === true && n8grids[1] === true, 'hidden=' + n8grids.join(','));
+  const n8sum1 = n8cards.length > 1 ? n8cards[1].querySelector('.newssum').textContent : '';
+  ck('N8-podsum', /podcast/.test(n8sum1) && /every 12h/.test(n8sum1) && /3 episodes/.test(n8sum1), n8sum1.slice(0, 120));
+  const n8conv = newsDraftToFeed(newsDrafts[1], 1, { sites: {}, ids: {} }, { N1: true, N2: true });
+  ck('N8-kindcarried', n8conv.ok && n8conv.feed.kind === 'podcast' && n8conv.feed.intervalMs === 43200000, JSON.stringify(n8conv.ok && n8conv.feed));
+  const n8convNews = newsDraftToFeed(newsDrafts[0], 0, { sites: {}, ids: {} }, { N1: true, N2: true });
+  ck('N8-newsdefault', n8convNews.ok && n8convNews.feed.kind === 'news', JSON.stringify(n8convNews.ok && n8convNews.feed.kind));
+  // edit one card open, expand state is per-card
+  const n8edit = n8cards.length ? [...n8cards[0].querySelectorAll('button')].filter(b => b.textContent === 'edit')[0] : null;
+  if (n8edit) n8edit.click();
+  ck('N8-editone', newsCards()[0].querySelector('.newsgrid').hidden === false && newsCards()[1].querySelector('.newsgrid').hidden === true, 'grids=' + newsCards().map(c => c.querySelector('.newsgrid').hidden).join(','));
+  newsExpanded = {};
   restore();
   // N7 — LIVE wire, version-aware, semantically a no-op: write the live feeds back
   let st = null;

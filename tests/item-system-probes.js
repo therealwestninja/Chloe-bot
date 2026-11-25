@@ -55,14 +55,14 @@ try {
   } else ck('SYS-10-clear', true, 'SKIPPED: note anchored (' + nb.slice(0, 40) + ')');
   // SYS-11 — addMod + removeMod probe-id round-trip (net-zero)
   const mi = document.getElementById('modInput'), mi0 = mi.value;
-  mi.value = 'ProbeSys22';
+  mi.value = '888877776666555444'; // probe-only snowflake shape (never a real user; net-zero, removed below)
   document.getElementById('addModBtn').click();
-  const aml = await waitLog('added mod ProbeSys22', 15000);
+  const aml = await waitLog('added mod 888877776666555444', 15000);
   let rml = null;
   if (aml) {
     const rows = [...document.querySelectorAll('#modListBox .row')];
-    const row = rows.find(r => (r.textContent || '').includes('ProbeSys22'));
-    if (row && row.querySelector('button')) { row.querySelector('button').click(); rml = await waitLog('removed mod ProbeSys22', 15000); }
+    const row = rows.find(r => (r.textContent || '').includes('888877776666555444'));
+    if (row && row.querySelector('button')) { row.querySelector('button').click(); rml = await waitLog('removed mod 888877776666555444', 15000); }
   }
   mi.value = mi0;
   ck('SYS-11-mod-roundtrip', !!aml && !!rml, 'add=' + !!aml + ' remove=' + !!rml);

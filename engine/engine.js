@@ -259,6 +259,7 @@
       fetchText: null,               // F2: wiring-provided (url) -> Promise<{ok, value|reason}> (host-allowlisted, fail-open); null = news lane inert
       newsFn: null,                  // F2 voice: wiring-provided ({feed, date, items, itemText, prompt}) -> Promise<{ok, value}>; null = classic list only
       newsPrompt: null,              // F2 voice: null/undefined = DEFAULT_NEWS_PROMPT (AI voice); '' = classic deterministic list; other = custom instruction ({feed} {date} {items})
+      newsPodcastPrompt: null,       // F2 podcast voice: null/undefined = DEFAULT_PODCAST_PROMPT; '' = classic list; other = custom ({feed} {date} {item} {duration} {audio} {kind} {cadence})
       newsPostTemplate: null,        // F2 voice: null/undefined = DEFAULT_NEWS_TEMPLATE; {feed} {date} {count} {body} (no {body} -> appended)
       newsInContext: false,          // F2 redirect: false (default) = own 📰 rollups stay OUT of the reply transcript (they'd eat the budget + get parroted); a one-line marker folds into Thoughts instead. true = classic: own posts join chat context like any reply.
       newsReview: false,             // F2 review queue: false (default) = composed rollups post immediately; true = they stage in the news queue (Setup → News queue) for edit/regenerate/post instead.
@@ -703,7 +704,7 @@
     // Parser-safe plain JS (no ESM, no bare {word}/[word] in string literals). See rook-mesh converse-test.mjs.
     var CONVERSE_FILLER = /^(lol+|lmao|haha+|ok(ay)?|k|yeah?|yep|nah|same|fr|true|nice|cool|hmm+|oh|ah|\W+)$/i;
     var CONVERSE_WORTH = /\?|\b(think|feel|should|maybe|why|how|what if|imo|honestly|anyone|help|idea|wonder)\b|!{1,}/i;
-    function converseEscId(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function converseEscId(s) { return escRe(s); } // Rule S S2/R1: single regex-escape intent — was a byte-identical copy of escRe
     function makeConverse(opts) {
       opts = opts || {};
       var selfId = opts.selfId, selfName = opts.selfName || '', aliases = Array.isArray(opts.aliases) ? opts.aliases : [];
@@ -898,9 +899,19 @@
       });
     }
     function clearCharacterMemories() { return Promise.resolve(crossStore().del(CHARMEM_KEY)); }
+    // Rule S S2/R3: single tolerant array-read — getReminders/getSelfIntents/getTodos/
+    // getSkills/getHighlights carried the same Array.isArray-guard (corrupt → []).
+    function getStoredArray(key) { return Promise.resolve(store.get(key)).then(function (v) { return Array.isArray(v) ? v : []; }); }
+    // Rule S S4/R1: single provider-content shape — the {text,tokens} return the
+    // assembler reads. Eight gather sites carried the same object literal.
+    function textTokens(text) { return { text: text, tokens: estimateTokens(text) }; }
+    // Rule S S4/R2: single raw-args normalization — seven verb handlers carried the
+    // same null-safe trim+lower. The three unguarded String(c.rawArgs||'') sites stay
+    // (different null behavior — Rule O, same class as the releaseSend ramp).
+    function normArg(c) { return String((c && c.rawArgs) || '').trim().toLowerCase(); }
 
     // ---- reminders (poll-driven, front-end only, no AI call) --------------------------------
-    function getReminders() { return Promise.resolve(store.get(REMIND_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
+    function getReminders() { return getStoredArray(REMIND_KEY); }
     function scheduleReminder(opts) {
       var minutes = Number(opts && opts.minutes);
       if (!isFinite(minutes) || minutes < 1) return Promise.resolve({ ok: false, reason: 'minutes must be at least 1' });
@@ -921,7 +932,7 @@
     // The same dueAt-queue shape as reminders, but a fired intent is an INTERNAL action, never a send.
     // Entry: { id, kind, dueAt, subject, mode, createdAt }. Today the only kind is 'revisit' (come back
     // and re-think a deliberation subject later); the dispatch is built so new kinds are a new branch.
-    function getSelfIntents() { return Promise.resolve(store.get(SELFINTENT_KEY)).then(function (r) { return Array.isArray(r) ? r : []; }); }
+    function getSelfIntents() { return getStoredArray(SELFINTENT_KEY); }
     function scheduleSelfIntent(kind, delayMs, fields) {
       if (!cfg.deferredIntents) return Promise.resolve(null);
       return getSelfIntents().then(function (list) {
@@ -966,7 +977,7 @@
     // ---- todos (channel-local personal checklists, same store-list shape as reminders) ----
     // Entry: { id, authorId, authorName, text, at }. No due dates — a todo waits until the
     // person asks. Bounded per author + text cap, same manners as reminders.
-    function getTodos() { return Promise.resolve(store.get(TODO_KEY)).then(function (t) { return Array.isArray(t) ? t : []; }); }
+    function getTodos() { return getStoredArray(TODO_KEY); }
     function addTodo(authorId, authorName, text) {
       var clean = String(text || '').trim().slice(0, (cfg.todoTextMax || 140));
       if (!clean) return Promise.resolve({ ok: false, reason: 'a todo needs some text' });
@@ -1001,7 +1012,7 @@
     // ---- skills (server knowledge packs, mod-managed, auto-injected on trigger match) ----
     // Entry: { id, name, triggers[], text, by, at }. Matched by the RECALL provider below;
     // managed by the `skill`/`skills` chat commands (mods only for writes).
-    function getSkills() { return Promise.resolve(store.get(SKILL_KEY)).then(function (s) { return Array.isArray(s) ? s : []; }); }
+    function getSkills() { return getStoredArray(SKILL_KEY); }
     function addSkill(name, triggers, text, by) {
       var nm = String(name || '').trim().slice(0, 40);
       var tx = String(text || '').trim().slice(0, 800);
@@ -1099,7 +1110,7 @@
     }
 
     // ---- highlights (front-end only, no AI call) --------------------------------------------
-    function getHighlights() { return Promise.resolve(store.get(HILITE_KEY)).then(function (h) { return Array.isArray(h) ? h : []; }); }
+    function getHighlights() { return getStoredArray(HILITE_KEY); }
     // Save a notable message. `src` carries the captured message ({ text, authorName }) — usually the
     // replied-to message, or a manual quote. Returns { ok, value } or { ok:false, reason }.
     function addHighlight(src, savedBy, savedByName, note) {
@@ -1995,7 +2006,7 @@
     // check) and trusted panel actions (no check — the operator's surface is already trusted).
    function applyModAction(action, targetId, opts) {
      opts = opts || {};
-     if (!targetId) return Promise.resolve({ ok: false, reason: 'no target user' });
+     if (!/^\d{15,25}$/.test(String(targetId || ''))) return Promise.resolve({ ok: false, reason: 'target must be a Discord user id' });
      return Promise.resolve(userStore().get(partKey(targetId))).then(function (p) {
        var now = clock.now();
         // A6: before-snapshot so the action is undoable. `existed` matters: undoing an
@@ -2470,6 +2481,13 @@
       });
     }
 
+    // Per-channel re-pull: drop the history-walk checkpoint so the next
+    // maintenance pass walks this channel again (wiring also clears the
+    // backfillDone flag and re-arms the driver). Never throws.
+    function resetBackfill() {
+      return Promise.resolve(store.del(BACKFILL_KEY)).then(function () { return { ok: true }; }, function () { return { ok: true }; });
+    }
+
     // T4: irreversible purge. Deletes the partition and de-indexes, then VERIFIES the delete
     // actually round-tripped (the partition is truly gone) — a silently-failed moderation delete
     // is the one bug that matters most, so we never *assume* it worked.
@@ -2609,7 +2627,7 @@
         return ChloeWordle.handleWordle({ uid: String(uid), name: (c && c.authorName) || '', isMod: isMod(uid), prefix: cfg.commandPrefix || '!chloe', now: clock.now(), io: wio, channelId: cfg.channelId }, String((c && c.rawArgs) || '').trim());
       } },
       { verb: 'policy',    modOnly: false, help: 'policy [allow|ask|deny] (gate its proactive output: beats, check-ins, lull, thoughts feed, news — setting is mods-only)', handler: function (uid, c) {
-        var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+        var a = normArg(c);
         var p = (cfg.actPolicy === 'ask' || cfg.actPolicy === 'deny') ? cfg.actPolicy : 'allow';
         if (!a) {
           return getPendingAct().then(function (list) {
@@ -2731,7 +2749,7 @@
         });
       } },
       { verb: 'whatif',    modOnly: true, help: 'whatif allow|ask|deny (dry run: what each gate would say — holds, fires, and remembers nothing)', handler: function (modId, c) {
-        var p = String((c && c.rawArgs) || '').trim().toLowerCase();
+        var p = normArg(c);
         return actWhatIf(p).then(function (r) {
           if (!r.ok) return { ack: 'policy must be allow|ask|deny' };
           var lines = ['what if policy were ' + r.policy + ' (dry run — nothing held, fired, or remembered):'];
@@ -2777,7 +2795,7 @@
           }, function () { return { ack: 'could not reach my memory right now' }; });
         } },
       { verb: 'news',      modOnly: true, help: 'news (this channel\'s feed status) / news now (run this channel\'s feeds now)', handler: function (modId, c) {
-          var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var arg = normArg(c);
           function failName(e) { return (e && e.id) + ((e && e.error) ? ' (' + String(e.error).slice(0, 80) + ')' : ''); }
           if (arg === 'now' || arg === 'run' || arg === 'force') {
             var nmid = c && c.messageId;
@@ -2810,8 +2828,10 @@
           return newsStateGet().then(function (st) {
             var now = clock.now();
             var lines = feeds.map(function (f) {
+              var kind = newsKindOf(f), tag = (kind === NEWS_KIND_POD) ? '🎙️ podcast' : '📰 news';
+              var every = 'every ' + humanGap(Number(f.intervalMs) || 3600000);
               var rec = st.byFeed[f.id];
-              if (!rec) { var iv0 = (Number(f.intervalMs) || 3600000); return '• ' + (f.name || f.id) + ' — seeding (first check next poll; next in ' + humanGap(iv0) + ')'; }
+              if (!rec) { var iv0 = (Number(f.intervalMs) || 3600000); return '• ' + tag + ' ' + (f.name || f.id) + ' (' + every + ') — seeding (first check next poll; next in ' + humanGap(iv0) + ')'; }
               var gap = Math.max(0, (Number(f.intervalMs) || 3600000) - (now - (rec.lastRun || 0)));
               var next = 'next check in ' + (gap < 60000 ? 'under a minute' : humanGap(gap));
               var last = 'never checked';
@@ -2826,7 +2846,7 @@
                 else if (lr === 'nothing') last = 'last: nothing new ' + ago;
                 else last = 'last: checked ' + ago;
               }
-              return '• ' + (f.name || f.id) + ' — ' + next + '; ' + last;
+              return '• ' + ((newsKindOf(f) === NEWS_KIND_POD) ? '🎙️ podcast ' : '📰 news ') + (f.name || f.id) + ' (every ' + humanGap(Number(f.intervalMs) || 3600000) + ') — ' + next + '; ' + last;
             });
             var qn = (st.queue || []).length;
             var lr2 = st.lastRun;
@@ -2843,7 +2863,9 @@
               if (lr2.busy) runLine += ' — a second run stood down (busy)';
               if (lr2.blocked) runLine += ' — blocked (' + lr2.blocked + ')';
             }
-            return { ack: clipLines('news feeds here:\n' + lines.join('\n') + runLine + '\nvoice: ' + (cfg.newsPrompt === '' ? 'classic list' : (cfg.newsPrompt == null ? 'default AI voice' : 'custom AI voice')) + '\nreview: ' + (cfg.newsReview ? ('on' + (qn ? ' (' + qn + ' queued)' : ' (queue empty)')) : 'off'), 1900) };
+            var voiceNews = (cfg.newsPrompt === '' ? 'classic list' : (cfg.newsPrompt == null ? 'default AI voice' : 'custom AI voice'));
+            var voicePod = (cfg.newsPodcastPrompt === '' ? 'classic list' : (cfg.newsPodcastPrompt == null ? 'default podcast voice' : 'custom podcast voice'));
+            return { ack: clipLines('news feeds here:\n' + lines.join('\n') + runLine + '\nvoice: news=' + voiceNews + '; podcast=' + voicePod + '\nreview: ' + (cfg.newsReview ? ('on' + (qn ? ' (' + qn + ' queued)' : ' (queue empty)')) : 'off'), 1900) };
           }, function () { return { ack: 'could not read feed state' }; });
         } },
       { verb: 'timers',    modOnly: true, help: 'timers (when each timer last fired + next due: beats, news, lull, checkins, ai passes)', handler: function () {
@@ -2864,7 +2886,7 @@
                   var nx = rec.lastRun ? ('due in ' + (gap < 60000 ? 'under a minute' : humanGap(gap))) : ('seeding (first check next poll; next in ' + humanGap(Number(f.intervalMs) || 3600000) + ')');
                   var last = 'never checked';
                   if (rec.lastAt) last = 'last ' + (rec.lastResult || 'checked') + ' ' + humanGap(Math.max(0, now - rec.lastAt)) + ' ago' + (rec.lastError ? ' (' + rec.lastError + ')' : '');
-                  lines.push('- news "' + (f.name || f.id) + '": ' + nx + '; ' + last);
+                  lines.push('- ' + ((newsKindOf(f) === NEWS_KIND_POD) ? 'podcast 🎙️' : 'news 📰') + ' "' + (f.name || f.id) + '" (every ' + humanGap(Number(f.intervalMs) || 3600000) + '): ' + nx + '; ' + last);
                 });
                 if (lr && lr.at) lines.push('- last news run ' + humanGap(Math.max(0, now - lr.at)) + ' ago' + (lr.forced ? ' (manual)' : ' (timer)') + ': checked ' + ((lr.checked || []).length) + ((lr.posted || []).length ? ', posted ' + lr.posted.length : '') + ((lr.held || []).length ? ', held ' + lr.held.length : '') + ((lr.failed || []).length ? ', failed ' + lr.failed.length : ''));
                 var lull = sched.lull || {};
@@ -2888,13 +2910,13 @@
         } },
       { verb: 'status',    modOnly: true, cooldownMs: 5000, aliases: ['\ud83d\udcca'], help: 'status', handler: function () { return Promise.resolve({ ack: statusText(), embed: statusEmbed() }); } },
       { verb: 'trust',     modOnly: true, help: 'trust on|off  (multi-participant trust hardening: defang forged labels + bots can’t command)', handler: function (modId, c) {
-          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var a = normArg(c);
           if (a === 'on' || a === 'enable' || a === 'true')   { cfg.trustHardening = true;  log('[chloe.trust] trust hardening ENABLED by mod'); return Promise.resolve({ ack: 'trust hardening on — forged "Name:" labels are stripped from what I read, and another bot can never command me.' }); }
           if (a === 'off' || a === 'disable' || a === 'false') { cfg.trustHardening = false; log('[chloe.trust] trust hardening DISABLED by mod'); return Promise.resolve({ ack: 'trust hardening off — back to prior behavior (' + cfg.commandPrefix + ' trust on to re-enable).' }); }
           return Promise.resolve({ ack: 'trust hardening is ' + (cfg.trustHardening ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' trust on|off (the panel toggle persists it).' });
         } },
       { verb: 'converse',  modOnly: true, help: 'converse on|off  (the ported social-ganglion engage engine; off = legacy engage logic)', handler: function (modId, c) {
-          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var a = normArg(c);
           if (a === 'on' || a === 'enable' || a === 'true')   { cfg.converseEngine = true;  log('[chloe.converse] engage engine ENABLED by mod'); return Promise.resolve({ ack: 'converse engine on \u2014 the social ganglion now governs when I chime in (bot-loop damper + worth gate + two-person skip).' }); }
           if (a === 'off' || a === 'disable' || a === 'false') { cfg.converseEngine = false; log('[chloe.converse] engage engine DISABLED by mod (legacy path)'); return Promise.resolve({ ack: 'converse engine off \u2014 back to my legacy engage logic (' + cfg.commandPrefix + ' converse on to re-enable).' }); }
           return Promise.resolve({ ack: 'converse engine is ' + (cfg.converseEngine ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' converse on|off (the panel toggle persists it).' });
@@ -2909,7 +2931,7 @@
           return executeJob(parsed.job.task, parsed.job.args, { authorId: modId, authorName: '' });
         } },
       { verb: 'tools',     modOnly: true, help: 'tools on|off  (let the AI call safe tools from its reply)', handler: function (modId, c) {
-          var a = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var a = normArg(c);
           if (a === 'on' || a === 'enable' || a === 'true')  { cfg.toolsEnabled = true;  log('[chloe.tool] model tool-loop ENABLED by mod'); return Promise.resolve({ ack: 'model tool-loop on \u2014 I can now quietly use safe tools (summarize/recap/remindme/roster/search/fetch/almanac/time/roll/todos) from my own replies.' }); }
           if (a === 'off' || a === 'disable' || a === 'false') { cfg.toolsEnabled = false; log('[chloe.tool] model tool-loop DISABLED by mod'); return Promise.resolve({ ack: 'model tool-loop off \u2014 tools only run from ' + cfg.commandPrefix + ' do now.' }); }
           return Promise.resolve({ ack: 'model tool-loop is ' + (cfg.toolsEnabled ? 'on' : 'off') + '. Use ' + cfg.commandPrefix + ' tools on|off (the panel toggle persists it).' });
@@ -3072,7 +3094,7 @@
           });
         } },
       { verb: 'lang',      modOnly: false, help: 'lang <code> (e.g. fr, es, de) / lang off / lang \u2014 your reply language (mods: lang default <code>|off = this channel\u2019s default)', handler: function (uid, c) {
-          var arg = String((c && c.rawArgs) || '').trim().toLowerCase();
+          var arg = normArg(c);
           var pfx = cfg.commandPrefix || '!chloe';
           var chDef = cfg.channelLang || null;   // v0.90.21: queen-patched snapshot of channelLang:<this channel>
           function bareAck(lg) {
@@ -4140,7 +4162,7 @@
     function elevateUser(targetId, targetName, modId, opts) {
       opts = opts || {};
       var id = String(targetId || '');
-      if (!id) return Promise.resolve({ ok: false, reason: 'no target user' });
+      if (!/^\d{15,25}$/.test(id)) return Promise.resolve({ ok: false, reason: 'target must be a Discord user id' });
       if (isMod(id)) return Promise.resolve({ ok: false, reason: 'already admin' });
       return Promise.resolve(userStore().get(partKey(id))).then(function (p) {
         var now = clock.now();
@@ -4174,7 +4196,7 @@
     function demoteUser(targetId, modId, opts) {
       opts = opts || {};
       var id = String(targetId || '');
-      if (!id) return Promise.resolve({ ok: false, reason: 'no target user' });
+      if (!/^\d{15,25}$/.test(id)) return Promise.resolve({ ok: false, reason: 'target must be a Discord user id' });
       if (isMod(id)) {
         var ml = (Array.isArray(cfg.modList) ? cfg.modList.slice() : []).filter(function (x) { return x !== id; });
         cfg.modList = ml;
@@ -4808,14 +4830,28 @@
     // AI voice below; '' = classic deterministic list; other = custom instruction with
     // {feed} {date} {items} placeholders) + newsPostTemplate (null = default template below).
     // AI path fail-opens to the classic list; the Links gate still strips URLs at send time.
+    // Per-story voice: the default prompt covers ONE headline per AI call (more
+    // room per story than a whole-batch prompt). The URL is detached — the model
+    // never sees or copies it; the engine re-attaches it at pack time.
     var DEFAULT_NEWS_PROMPT =
-      'You post a short news roundup for the "{feed}" feed in a chat channel, in your own voice.\n' +
-      'Fresh headlines ({date}):\n{items}\n\n' +
-      'Pick the 2-4 stories that matter most and say, for each, why it is worth knowing in one or two sentences. ' +
-      'Skip press-release filler. Keep links exactly as given (plain URLs, one per line under its story). ' +
-      'Respond with ONLY the roundup post text, at most 1500 characters, no preamble.';
+      'You post a short news blurb for the "{feed}" feed in a chat channel, in your own voice.\n' +
+      'One fresh headline ({date}):\n{item}\n\n' +
+      'Say why it is worth knowing in one or two sentences — concrete, no press-release filler. ' +
+      'Do NOT include any link or URL (it is attached separately) — never guess or reconstruct one from the headline either. ' +
+      'Respond with ONLY the blurb text, at most 400 characters, no preamble.';
     var DEFAULT_NEWS_TEMPLATE = '📰 {feed} — {date}\n{body}';
+    var DEFAULT_PODCAST_PROMPT =
+      'You post a short blurb for a new episode of the "{feed}" podcast in a chat channel, in your own voice.\n' +
+      'One fresh episode ({date}, {cadence}):\n{item}\n\n' +
+      'Say why it is worth a listen in one or two sentences — concrete, no press-release filler. ' +
+      'Do NOT include any link or URL (it is attached separately) — never guess or reconstruct one from the episode title either. ' +
+      'Respond with ONLY the blurb text, at most 400 characters, no preamble.';
+    var DEFAULT_PODCAST_TEMPLATE = '🎙️ {feed} — {date}\n{body}';
     var NEWS_PROMPT_MAX = 2000, NEWS_TEMPLATE_MAX = 500;
+    var NEWS_KIND_NEWS = 'news', NEWS_KIND_POD = 'podcast';
+    var NEWS_DEFAULT_EVERY = 3600000, NEWS_POD_DEFAULT_EVERY = 43200000;   // new-draft cadence per kind (panel mirrors)
+    var NEWS_ITEM_MAX = 450;   // per-story blurb cap (the prompt asks for <=400)
+    var NEWS_POST_MAX = 1900;  // hard post cap: Discord allows 2000, the send path slices at 1900
    var NEWS_KEY = 'news:' + cfg.channelId;   // { byFeed: { id: { lastRun, seen: [urls] } } }
     // Double-post guard: a news run (fetch chain + AI compose + post) can outlast
     // the 45s run-lock and a queen handover, so a second engine — or a second
@@ -4914,6 +4950,18 @@
       inner = String(inner).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1');
       return newsUnescape(inner).trim();
     }
+    function newsKindOf(feed) { return (feed && feed.kind === NEWS_KIND_POD) ? NEWS_KIND_POD : NEWS_KIND_NEWS; }
+    function newsKindEmoji(kind) { return (kind === NEWS_KIND_POD) ? '🎙️' : '📰'; }
+    function newsKindLabel(kind) { return (kind === NEWS_KIND_POD) ? 'podcast' : 'news'; }
+    // Human cadence for the {cadence} prompt slot + Discord lines ("every 30 minutes").
+    function newsCadence(ms) {
+      var v = Number(ms) || NEWS_DEFAULT_EVERY;
+      var mins = Math.round(v / 60000);
+      if (mins < 60) return 'every ' + mins + ' minute' + (mins === 1 ? '' : 's');
+      var hrs = mins / 60;
+      if (hrs < 48) { var h = Math.round(hrs * 2) / 2; return 'every ' + h + ' hour' + (h === 1 ? '' : 's'); }
+      var d = Math.round(hrs / 24); return 'every ' + d + ' day' + (d === 1 ? '' : 's');
+    }
     function newsParseFeedItems(xml) {
       var items = [];
       var blocks = String(xml || '').match(/<(item|entry)[\s>][\s\S]*?<\/\1\s*>/gi) || [];
@@ -4931,7 +4979,33 @@
         if (!url) return;
         var title = newsFieldText(b, 'title').replace(/\s+/g, ' ').slice(0, 160);
         var date = (newsFieldText(b, 'pubDate') || newsFieldText(b, 'updated') || newsFieldText(b, 'published')).slice(0, 30);
-        items.push({ url: url.slice(0, 500), title: title, date: date, keywords: [] });
+        // Podcast extras: enclosure audio URL + duration + show-notes snippet.
+        var audio = '';
+        try {
+          var encRe = /<enclosure[^>]*>/gi, em, cands = [];
+          while ((em = encRe.exec(b)) && cands.length < 10) {
+            var eu = (em[0].match(/url\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+            var et = (em[0].match(/type\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+            eu = newsUnescape(eu).trim();
+            if (/^https?:\/\//i.test(eu)) cands.push({ url: eu.slice(0, 500), audio: /audio\//i.test(et) || /\.(mp3|m4a|ogg|opus|wav|mp4)(\?|#|$)/i.test(eu) });
+          }
+          if (cands.length) {
+            var aud = null;
+            for (var ai = 0; ai < cands.length; ai++) { if (cands[ai].audio) { aud = cands[ai]; break; } }
+            audio = (aud || cands[0]).url;
+          }
+        } catch (e) {}
+        if (!audio) {
+          for (var li = 0; li < hrefs.length; li++) { if (/\.(mp3|m4a|ogg|opus|wav|mp4)(\?|#|$)/i.test(hrefs[li])) { audio = hrefs[li].slice(0, 500); break; } }
+        }
+        var duration = '';
+        try { duration = (newsFieldText(b, 'itunes:duration') || newsFieldText(b, 'duration')).replace(/\s+/g, ' ').slice(0, 20); } catch (e) {}
+        var desc = '';
+        try {
+          desc = newsFieldText(b, 'description') || newsFieldText(b, 'content:encoded') || newsFieldText(b, 'itunes:summary') || newsFieldText(b, 'itunes:subtitle') || newsFieldText(b, 'summary');
+          desc = String(desc).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+        } catch (e) {}
+        items.push({ url: url.slice(0, 500), title: title, date: date, keywords: [], audio: audio, duration: duration, desc: desc });
       });
       return items;
     }
@@ -4946,7 +5020,7 @@
       var block = (opts.blockCats || []).map(function (w) { return String(w).toLowerCase(); }).filter(Boolean);
       return (Array.isArray(items) ? items : []).filter(function (it) {
         if (!it || !it.url || seen[it.url]) return false;
-        var hay = ((it.title || '') + ' ' + it.url).toLowerCase();
+        var hay = ((it.title || '') + ' ' + it.url + ' ' + (it.desc || '')).toLowerCase();
         for (var i = 0; i < bans.length; i++) { if (bans[i] && hay.indexOf(bans[i]) >= 0) return false; }
         if (allow.length || block.length) {
           var path = '';
@@ -4976,13 +5050,14 @@
     }
     // Classic deterministic body: bullet lines, no header (the header lives in
     // the post template). Refactored out of newsFormatRollup; byte-identical lines.
-    function newsClassicBody(items, max) {
+    function newsClassicBody(items, max, kind) {
       items = (Array.isArray(items) ? items : []).slice(0, Math.max(1, Math.min(10, max || 5)));
       if (!items.length) return '';
       var lines = [];
       items.forEach(function (it) {
         lines.push('• ' + (it.title || it.url).slice(0, 140));
         lines.push(it.url);
+        if (kind === NEWS_KIND_POD && it && it.audio && it.audio !== it.url) lines.push(it.audio);
       });
       return lines.join('\n');
     }
@@ -5001,34 +5076,155 @@
       if (out.indexOf('{body}') < 0) return (out + '\n' + body).slice(0, 1900);
       return out.split('{body}').join(body).slice(0, 1900);
     }
-    function newsResolvePrompt() {
+    function newsResolveItemPrompt(feed) {
+      var kind = newsKindOf(feed);
+      if (kind === NEWS_KIND_POD) {
+        if (cfg.newsPodcastPrompt === '') return '';   // cleared: classic list, no AI
+        var pp = (cfg.newsPodcastPrompt == null) ? DEFAULT_PODCAST_PROMPT : String(cfg.newsPodcastPrompt);
+        return pp.trim() ? pp : '';
+      }
       if (cfg.newsPrompt === '') return '';   // cleared: classic list, no AI
       var p = (cfg.newsPrompt == null) ? DEFAULT_NEWS_PROMPT : String(cfg.newsPrompt);
       return p.trim() ? p : '';
     }
-    function newsResolveTemplate() {
-      if (cfg.newsPostTemplate == null) return DEFAULT_NEWS_TEMPLATE;
-      return String(cfg.newsPostTemplate);
+    function newsResolveTemplate(feed) {
+      if (cfg.newsPostTemplate != null) return String(cfg.newsPostTemplate);
+      return (newsKindOf(feed) === NEWS_KIND_POD) ? DEFAULT_PODCAST_TEMPLATE : DEFAULT_NEWS_TEMPLATE;
     }
-    // Full post text: template wrapped around the classic body or the AI voice.
-    // AI fail-opens to classic (missing newsFn, failure, or empty text).
+    // AI-context hygiene: the model must never see a URL it can copy or
+    // rebuild. newsStripUrls removes bare/www/markdown links, newsDeSlug
+    // turns slug-like fragments (underscores, dash-packed paths) into plain
+    // words, and newsSubtitle picks a title — or, when the title is missing,
+    // a de-slugged tail of the URL path — so the context is words only.
+    function newsStripUrls(s) {
+      var t = String(s || '');
+      t = t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+      t = t.replace(/<https?:\/\/[^>\s]+>/gi, ' ');
+      t = t.replace(/https?:\/\/[^\s)'"<>]+/gi, ' ');
+      t = t.replace(/(^|[\s(>"'])www\.[^\s)'"<>]+/gi, '$1 ');
+      return t;
+    }
+    function newsDeSlug(s) {
+      var t = newsStripUrls(s).replace(/[_–—-]+/g, ' ');
+      return t.replace(/\s+/g, ' ').trim();
+    }
+    function newsSlugTail(url) {
+      try {
+        var path = String(String(url || '').match(/^https?:\/\/[^\/]+(.*)$/i)[1] || '');
+        var segs = path.split('/').filter(function (x) { return !!x; });
+        var tail = segs.length ? segs[segs.length - 1] : '';
+        tail = tail.split(/[?#]/)[0].replace(/\.(html?|php|aspx?|xml|rss)$/i, '');
+        try { tail = decodeURIComponent(tail); } catch (e) {}
+        return tail.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+      } catch (e) { return ''; }
+    }
+    function newsSubtitle(it) {
+      var title = String((it && it.title) || '').trim();
+      var words = title ? newsDeSlug(title) : newsSlugTail((it && it.url) || '');
+      return (words || 'untitled story').slice(0, 140);
+    }
+    // Post-compose hygiene: strip any link the model emitted anyway (copied
+    // or reconstructed from a sluggy headline) so the engine-attached
+    // canonical links underneath stay the ONLY links — no doubles in
+    // Discord. Markdown links collapse to their words; a blurb that is
+    // nothing but a link resolves empty and fails open to classic below.
+    function newsCleanBlurb(t) {
+      var s = String(t || '');
+      s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+      s = s.replace(/<https?:\/\/[^>\s]+>/gi, '');
+      s = s.replace(/https?:\/\/[^\s)'"<>]+/gi, '');
+      s = s.replace(/(^|[\s(>"'])www\.[^\s)'"<>]+/gi, '$1');
+      s = s.split('\n').map(function (ln) {
+        return ln.replace(/[ \t]+/g, ' ').trim().replace(/\(\s*\)/g, '').replace(/\[\s*\]/g, '').trim();
+      }).join('\n');
+      return s.replace(/\n{3,}/g, '\n\n').trim();
+    }
+    // One story's line for the AI context (subtitle words only — the URL stays
+    // detached; underscores/dashes are de-slugged so the model can't rebuild
+    // a link from them). Podcasts add the episode length + a link-free
+    // show-notes snippet for room to riff.
+    function newsItemLine(it, kind) {
+      var base = '- ' + newsSubtitle(it);
+      if (kind === NEWS_KIND_POD && it) {
+        var extra = '';
+        if (it.duration) extra += ' (' + String(it.duration).slice(0, 20) + ')';
+        if (it.desc) {
+          var d = newsDeSlug(it.desc).slice(0, 140);
+          if (d) extra += ' — ' + d;
+        }
+        if (extra) base = (base + extra).slice(0, 280);
+      }
+      return base;
+    }
+    // Greedy pack of per-story blocks into the template's remaining room. The
+    // overhead is measured by rendering the template with an empty body and the
+    // widest count (10), so a packed post never exceeds NEWS_POST_MAX. Returns
+    // {body, posted} — overflow stories are left OUT (they stay unseen and come
+    // back next run) instead of being silently sliced off the end, which is
+    // where the old whole-post slice used to kill trailing URLs.
+    function newsPackPost(tpl, parts, blocks) {
+      var probe = newsApplyTemplate(tpl, { feed: parts.feed, date: parts.date, count: 10, body: '' });
+      var room = NEWS_POST_MAX - probe.length;
+      var kept = [];
+      blocks.forEach(function (b) {
+        var need = String(b.block || '').length + (kept.length ? 2 : 0);
+        if (need <= room) { kept.push(b); room -= need; }
+      });
+      return { body: kept.map(function (b) { return b.block; }).join('\n\n'), posted: kept.map(function (b) { return b.it; }) };
+    }
+    // Full post text: template wrapped around the classic body or the per-story
+    // AI voice. Resolves {text, posted} — posted is the subset that fit (seen
+    // marks only those). AI fail-opens to classic (missing newsFn, failure, or
+    // empty text), per story and as a whole.
     function newsComposeText(feed, items, max, dateOverride, tplOverride) {
       var name = (feed && (feed.name || feed.id)) || 'news';
+      var kind = newsKindOf(feed);
       var n = Math.max(1, Math.min(10, (feed && feed.maxItems) || max || 5));
       var list = (Array.isArray(items) ? items : []).slice(0, n);
       var day = dateOverride || newsToday();
-      var tpl = (tplOverride === undefined) ? newsResolveTemplate() : tplOverride;
-      var prompt = newsResolvePrompt();
+      var tpl = (tplOverride === undefined) ? newsResolveTemplate(feed) : tplOverride;
+      var prompt = newsResolveItemPrompt(feed);
+      var cadence = newsCadence(feed && feed.intervalMs);
       function classic() {
-        return newsApplyTemplate(tpl, { feed: name, date: day, count: list.length, body: newsClassicBody(list, n) });
+        return { text: newsApplyTemplate(tpl, { feed: name, date: day, count: list.length, body: newsClassicBody(list, n, kind) }), posted: list.slice() };
       }
       if (!prompt || !list.length || typeof cfg.newsFn !== 'function') return Promise.resolve(classic());
-      var itemText = list.map(function (it) { return '- ' + String(it.title || it.url).slice(0, 140) + ' (' + it.url + ')'; }).join('\n');
-      return Promise.resolve(cfg.newsFn({ feed: name, date: day, items: list, itemText: itemText, prompt: prompt })).then(function (r) {
-        var t = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
-        if (!t) return classic();
-        return newsApplyTemplate(tpl, { feed: name, date: day, count: list.length, body: t.slice(0, 1800) });
-      }, function () { return classic(); });
+      // Per-story voice: one AI pass per headline (more room per story), URLs
+      // detached (the model never sees or copies them) and re-attached at pack.
+      // Podcasts re-attach the audio enclosure too (second link line).
+      var blurbs = [];
+      var chain = Promise.resolve();
+      function newsBlockLinks(it) {
+        var url = String((it && it.url) || '');
+        var audio = String((it && it.audio) || '');
+        return url + ((audio && audio !== url) ? '\n' + audio : '');
+      }
+      list.forEach(function (it) {
+        chain = chain.then(function () {
+          return Promise.resolve(cfg.newsFn({ feed: name, date: day, kind: kind, cadence: cadence,
+            item: { title: String((it && it.title) || (it && it.url) || '').slice(0, 160), duration: String((it && it.duration) || ''), audio: String((it && it.audio) || ''), desc: String((it && it.desc) || '').slice(0, 300) },
+            items: [it], itemText: newsItemLine(it, kind), prompt: prompt,
+            duration: String((it && it.duration) || ''), audio: String((it && it.audio) || ''), desc: String((it && it.desc) || '').slice(0, 300) })).then(function (r) {
+            var t = (r && r.ok && typeof r.value === 'string') ? r.value.trim() : '';
+            t = newsCleanBlurb(t);
+            blurbs.push(t ? t.slice(0, NEWS_ITEM_MAX) : null);
+          }, function () { blurbs.push(null); });
+        });
+      });
+      return chain.then(function () {
+        var blocks = [], fallbacks = 0;
+        list.forEach(function (it, i) {
+          var url = String((it && it.url) || '');
+          var shaped = { title: String((it && it.title) || url).slice(0, 160), url: url, audio: String((it && it.audio) || ''), duration: String((it && it.duration) || ''), desc: String((it && it.desc) || '').slice(0, 300) };
+          var links = newsBlockLinks(it);
+          if (blurbs[i]) blocks.push({ it: shaped, block: blurbs[i] + (links ? '\n' + links : '') });
+          else { fallbacks++; blocks.push({ it: shaped, block: '• ' + String((it && it.title) || url).slice(0, 140) + (links ? '\n' + links : '') }); }
+        });
+        var packed = newsPackPost(tpl, { feed: name, date: day }, blocks);
+        if (!packed.posted.length || !packed.body) return classic();
+        if (fallbacks || packed.posted.length < list.length) log('[chloe.news] voice composed ' + packed.posted.length + '/' + list.length + ' stories' + (fallbacks ? ' (' + fallbacks + ' classic fallback)' : '') + (packed.posted.length < list.length ? ', ' + (list.length - packed.posted.length) + ' deferred (post full)' : ''));
+        return { text: newsApplyTemplate(tpl, { feed: name, date: day, count: packed.posted.length, body: packed.body }), posted: packed.posted };
+      });
     }
     function newsFeedsForHere() {
       return (Array.isArray(cfg.newsFeeds) ? cfg.newsFeeds : []).filter(function (f) {
@@ -5128,13 +5324,28 @@
         if (!got || got.error) return { error: (got && got.error) || 'fetch failed' };   // fetch failed — lastRun untouched, retries next poll
         if (!got.items.length) { log('[chloe.news] feed "' + feed.id + '" — nothing new'); return { feed: feed, text: '', urls: [], items: [] }; }
         var n = Math.max(1, Math.min(10, feed.maxItems || 5));
-        var picked = got.items.slice(0, n);
-        return newsComposeText(feed, got.items, feed.maxItems).then(function (text) {
-          if (!text) return { error: 'compose failed' };
-          return { feed: feed, text: text, urls: picked.map(function (x) { return x.url; }),
-                   items: picked.map(function (x) { return { title: String(x.title || x.url).slice(0, 160), url: x.url }; }) };
+        return newsComposeText(feed, got.items, feed.maxItems).then(function (composed) {
+          if (!composed || !composed.text) return { error: 'compose failed' };
+          var posted = (composed.posted && composed.posted.length) ? composed.posted : got.items.slice(0, n);
+          return { feed: feed, text: composed.text, urls: posted.map(function (x) { return x.url; }),
+                   items: posted.map(function (x) { return { title: String(x.title || x.url).slice(0, 160), url: x.url, audio: String(x.audio || ''), duration: String(x.duration || ''), desc: String(x.desc || '').slice(0, 300) }; }) };
         });
       });
+    }
+    // Rule S S2/R2: single filter-word validator — testNewsFeed + runNewsFeedNow
+    // carried byte-identical inline copies (Test accepting what Run rejects = silent skew).
+    function newsStrArr(v, cap) {
+      if (v == null) return [];
+      if (!Array.isArray(v)) return null;
+      var out = [];
+      for (var i = 0; i < v.length; i++) {
+        var w = String(v[i] == null ? '' : v[i]).trim().toLowerCase();
+        if (!w) continue;
+        if (w.length > 40) return null;
+        out.push(w);
+      }
+      if (out.length > cap) return null;
+      return out;
     }
     // Dry-run for the panel Test button: same fetch chain, empty seen-set, the
     // feed's own filters applied. Never writes the store, never posts, never marks seen.
@@ -5142,25 +5353,13 @@
       feed = feed || {};
       var site = String(feed.site || '').trim().replace(/\/+$/, '');
       if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(site)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
-      function strArr(v, cap) {
-        if (v == null) return [];
-        if (!Array.isArray(v)) return null;
-        var out = [];
-        for (var i = 0; i < v.length; i++) {
-          var w = String(v[i] == null ? '' : v[i]).trim().toLowerCase();
-          if (!w) continue;
-          if (w.length > 40) return null;
-          out.push(w);
-        }
-        if (out.length > cap) return null;
-        return out;
-      }
-      var bw = strArr(feed.banWords, 50), ac = strArr(feed.allowCats, 30), bc = strArr(feed.blockCats, 30);
+      var bw = newsStrArr(feed.banWords, 50), ac = newsStrArr(feed.allowCats, 30), bc = newsStrArr(feed.blockCats, 30);
       if (bw === null || ac === null || bc === null) return Promise.resolve({ ok: false, reason: 'filter words must be ≤40 chars (drop ≤50, topics ≤30)' });
-      return newsFetchFeed({ id: feed.id || site, site: site, banWords: bw, allowCats: ac, blockCats: bc }, []).then(function (r) {
+      var kind = (feed.kind === 'podcast') ? 'podcast' : 'news';
+      return newsFetchFeed({ id: feed.id || site, site: site, kind: kind, banWords: bw, allowCats: ac, blockCats: bc }, []).then(function (r) {
         if (!r || r.error) return { ok: false, reason: (r && r.error) || 'fetch failed' };
-        return { ok: true, via: r.via, total: r.total, count: r.items.length,
-          sample: r.items.slice(0, 3).map(function (it) { return { title: it.title || it.url, url: it.url }; }) };
+        return { ok: true, via: r.via, total: r.total, count: r.items.length, kind: kind,
+          sample: r.items.slice(0, 3).map(function (it) { return { title: it.title || it.url, url: it.url, audio: it.audio || '', duration: it.duration || '', desc: (it.desc || '').slice(0, 300) }; }) };
       });
     }
     // Immediate single-feed run for the panel Run button: same fetch+filter+
@@ -5178,25 +5377,13 @@
       if (!/^https?:\/\/[^\s\/:?#]+(\.[^\s\/:?#]+)+(\/\S*)?$/i.test(site)) return Promise.resolve({ ok: false, reason: 'site must be an https root URL or feed URL (e.g. https://kotaku.com or https://example.com/feed.xml)' });
       if (!target) return Promise.resolve({ ok: false, reason: 'assign a Posts-to channel first — Unassigned sources stay dormant' });
       if (target !== String(cfg.channelId)) return Promise.resolve({ ok: false, reason: 'that feed posts to a different channel' });
-      function strArr(v, cap) {
-        if (v == null) return [];
-        if (!Array.isArray(v)) return null;
-        var out = [];
-        for (var i = 0; i < v.length; i++) {
-          var w = String(v[i] == null ? '' : v[i]).trim().toLowerCase();
-          if (!w) continue;
-          if (w.length > 40) return null;
-          out.push(w);
-        }
-        if (out.length > cap) return null;
-        return out;
-      }
-      var bw = strArr(feed.banWords, 50), ac = strArr(feed.allowCats, 30), bc = strArr(feed.blockCats, 30);
+      var bw = newsStrArr(feed.banWords, 50), ac = newsStrArr(feed.allowCats, 30), bc = newsStrArr(feed.blockCats, 30);
       if (bw === null || ac === null || bc === null) return Promise.resolve({ ok: false, reason: 'filter words must be ≤40 chars (drop ≤50, topics ≤30)' });
       var mx = Math.max(1, Math.min(10, Math.round(Number(feed.maxItems) || 5)));
       var iv = Number(feed.intervalMs);
-      if (!isFinite(iv) || iv < 600000 || iv > 86400000) iv = 3600000;
-      var f = { id: id, name: String(feed.name || id).slice(0, 60), site: site, channelId: target, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc };
+      if (!isFinite(iv) || iv < 600000 || iv > 86400000) iv = (feed.kind === 'podcast') ? NEWS_POD_DEFAULT_EVERY : NEWS_DEFAULT_EVERY;
+      var kind = (feed.kind === 'podcast') ? 'podcast' : 'news';
+      var f = { id: id, name: String(feed.name || id).slice(0, 60), site: site, kind: kind, channelId: target, intervalMs: iv, maxItems: mx, banWords: bw, allowCats: ac, blockCats: bc };
       var now = clock.now();
       return newsClaimRun().then(function (got) {
         if (!got) return { ok: false, reason: 'a news run is already in progress — try again in a bit' };
@@ -5263,7 +5450,7 @@
       if (rec.seen.length > 200) rec.seen = rec.seen.slice(-200);
       st.byFeed[f.id] = { lastRun: now, seen: rec.seen };
       var q = newsQueuePrune(st, now);
-      var entry = { qid: newsQid(), feedId: f.id, name: (f.name || f.id), max: Math.max(1, Math.min(10, f.maxItems || 5)),
+      var entry = { qid: newsQid(), feedId: f.id, name: (f.name || f.id), kind: newsKindOf(f), max: Math.max(1, Math.min(10, f.maxItems || 5)),
                     target: String(cfg.channelId), at: now, items: out.items || [], text: out.text };
       q.push(entry);
       newsQueuePrune(st, now);   // the push may have overflowed the cap (oldest drops, never the new one... unless overfull already — shift order keeps arrival order)
@@ -5314,7 +5501,7 @@
         var title = String(it.title == null ? '' : it.title).trim().slice(0, 160);
         var url = String(it.url == null ? '' : it.url).trim().slice(0, 500);
         if (!title || !/^https?:\/\//i.test(url)) return null;
-        out.push({ title: title, url: url });
+        out.push({ title: title, url: url, audio: String(it.audio || '').slice(0, 500), duration: String(it.duration || '').slice(0, 20), desc: String(it.desc || '').slice(0, 300) });
       }
       return out;
     }
@@ -5356,11 +5543,11 @@
         if (!hit) return { ok: false, reason: 'queued item gone' };
         var live = null;
         (newsFeedsForHere() || []).forEach(function (f) { if (f && f.id === hit.entry.feedId) live = f; });
-        var meta = { name: (live && live.name) || hit.entry.name || hit.entry.feedId,
+        var meta = { name: (live && live.name) || hit.entry.name || hit.entry.feedId, kind: (live && live.kind) || hit.entry.kind || 'news',
                      maxItems: (live && live.maxItems) || hit.entry.max || 5 };
-        return newsComposeText(meta, hit.entry.items, meta.maxItems).then(function (text) {
-          if (!text) return { ok: false, reason: 'compose failed' };
-          hit.entry.text = text;
+        return newsComposeText(meta, hit.entry.items, meta.maxItems).then(function (composed) {
+          if (!composed || !composed.text) return { ok: false, reason: 'compose failed' };
+          hit.entry.text = composed.text;
           newsQueuePrune(st, clock.now());
           return store.set(NEWS_KEY, st).then(function () {
             log('[chloe.news] regenerated queued rollup from "' + meta.name + '"');
@@ -6931,7 +7118,7 @@
           if (l) notes.push(l); if (t) notes.push(t);
           if (!notes.length) return null;
           var text = 'In this channel lately, your ' + notes.join(' and ') + ' replies have landed best \u2014 lean that way when it feels natural, not every time.';
-          return { text: text, tokens: estimateTokens(text) };
+          return textTokens(text);
         });
       } });
 
@@ -6975,7 +7162,7 @@
         });
         if (!live.length) return null;
         var text = live.map(function (s) { return String(s.text); }).join(' ');
-        return { text: text, tokens: estimateTokens(text) };
+        return textTokens(text);
       } });
 
     registerProvider({ id: 'workspace', priority: BANDS.SITUATION,
@@ -6989,7 +7176,7 @@
           if (w.goal) bits.push('you\u2019re trying to ' + w.goal);
           if (!bits.length) return null;   // nothing fresh to assert -> say nothing (volatile)
           var text = 'Right now: ' + bits.join('; ') + '. Let this ground you in the moment; don\u2019t recite it.';
-          return { text: text, tokens: estimateTokens(text) };
+          return textTokens(text);
         });
       } });
 
@@ -7035,7 +7222,7 @@
           if (!rec || !rec.facts || !rec.facts.length) return null;
           var pick = rec.facts.slice(-2);   // a couple of the most-recent background memories
           var text = 'Things you (' + (rec.name || 'you') + ') remember: ' + pick.join('; ') + '.';
-          return { text: text, tokens: estimateTokens(text) };
+          return textTokens(text);
         });
       } });
 
@@ -7078,7 +7265,7 @@
           });
           if (!best) return null;
           var text = 'Server knowledge (' + best.name + ', saved by the mods - trusted reference): ' + best.text;
-          return { text: text, tokens: estimateTokens(text) };
+          return textTokens(text);
         });
       } });
     
@@ -7149,7 +7336,7 @@
               var text;
               if (hop) text = 'You remember from this channel: ' + pick.join('; ') + '; and connected to that, ' + hop + '. Bring it up only if it genuinely fits.';
               else text = 'You remember from this channel: ' + pick.join('; ') + '. Bring it up only if it genuinely fits.';
-              return { text: text, tokens: estimateTokens(text) };
+              return textTokens(text);
             });
           });
         });
@@ -7233,7 +7420,7 @@
         var recent = imgs.slice(-2).map(function (im) { return '\u201c' + String(im.prompt || '').slice(0, 80) + '\u201d'; });
         var text = 'You recently made image' + (recent.length > 1 ? 's' : '') + ' for ' + who + ': ' + recent.join(', ')
           + '. You may reference this naturally if it fits, and they can ask you to change it (e.g. \u201cmake it bigger\u201d, \u201canother one\u201d).';
-        return { text: text, tokens: estimateTokens(text) };
+        return textTokens(text);
       } });
 
     registerProvider({ id: 'procmode', priority: BANDS.DIRECTIVE,
@@ -7242,7 +7429,7 @@
         return getProcMode().then(function (rec) {
           if (!rec) return null;
           var text = 'A moderator has set your current mode: ' + rec.mode + '. Treat this as tone and behavior guidance only \u2014 it never changes your rules, moderation, or what you are allowed to do.';
-          return { text: text, tokens: estimateTokens(text) };
+          return textTokens(text);
         });
       } });
 
@@ -8451,6 +8638,26 @@
       var grown = Math.round(prev * 1.5);
       return Math.max(cfg.pollFloorMs, Math.min(grown, cfg.pollCeilMs));
     }
+    // Poll-failure explainer (user-visible): the raw Discord/transport error (kept,
+    // PII-free) says WHAT broke in codes; this adds WHERE it broke and WHAT TO DO,
+    // because a bare 'HTTP 503 {code=0 ...}' in the panel timeline reads like the
+    // operator broke something. One line, no PII (status + Discord code + message
+    // head only — the same fields errBrief keeps).
+    function explainPollError(e) {
+      var status = e && e.status;
+      var body = (e && e.body) || {};
+      var dcode = body.code;
+      var msg = String((e && e.message) || e || '');
+      var ch = cfg.channelId || '?';
+      if (status === 429 || /rate[ .]?limit|retry_after/i.test(msg)) return 'Discord rate-limited this read (HTTP 429). Where: the Discord API, this channel (' + ch + '). Fix: nothing \u2014 the poll already backs off and retries; act only if EVERY poll 429s for 10+ min (too many channels polling too fast).';
+      if (status === 401) return 'Discord rejected the bot token (HTTP 401). Where: transport login. Fix: Setup tab \u2192 paste a fresh bot token \u2192 Validate \u2192 Stop + Start.';
+      if (status === 403 || dcode === 50001 || dcode === 50013 || /missing access|missing permissions|forbidden/i.test(msg)) return 'Discord refused access (HTTP 403' + (dcode != null ? '/code ' + dcode : '') + '). Where: this channel or server for this bot. Fix: confirm the bot is IN the server with View Channel + Read History here; a dead 403 channel also hangs polls \u2014 remove or re-grant it.';
+      if (status === 404 || dcode === 10003) return 'Discord reports Unknown Channel (404/code 10003). Where: channel ' + ch + ' \u2014 deleted or the bot can no longer see it. Fix: polling for it pauses itself; verify the channel id and access, then Start again.';
+      if (status === 500 || status === 502 || status === 503 || (status >= 520 && status <= 527) || dcode === 0 || /service unavailable|bad gateway|gateway/i.test(msg)) return 'Discord\u2019s servers hiccuped (' + (status ? ('HTTP ' + status) : 'unreachable') + (dcode != null ? '/code ' + dcode : '') + '). Where: Discord\u2019s side \u2014 NOT your token or setup. Fix: nothing \u2014 this poll retries automatically and keeps its place; act only if it repeats for 10+ min (check discordstatus.com).';
+      if (/transport timeout|timed? ?out/i.test(msg)) return 'Discord gave no answer within the request window. Where: the link between this browser\u2019s userscript and Discord. Fix: usually transient \u2014 retries on its own; repeats mean your connection or Discord is degraded (check discordstatus.com).';
+      if (/transport error|network|failed to fetch|load failed/i.test(msg)) return 'The userscript\u2019s Discord request never completed. Where: this browser between the userscript and Discord (net/DNS/script-blocker). Fix: check your connection, allow discord.com through script-blockers, then Stop + Start.';
+      return 'Unusual read-path failure on channel ' + ch + '. Where: the poll read (transport or Discord). Fix: nothing urgent \u2014 retries automatically; if it repeats, paste this line plus Diagnostics \u2192 Dump trace ring.';
+    }
     function start() {
       if (running) return;
       if (!cfg.channelId) throw new Error('[chloe.T0] no channelId configured');
@@ -8476,7 +8683,7 @@
         }, function (e) {
           var code = e && (e.status || (e.body && e.body.code));
           var unknownChannel = (e && e.status === 404) || (e && e.body && e.body.code === 10003);
-          log('[chloe.T0] poll error:', (e && e.message) || e);
+          log('[chloe.T0] poll error:', (e && e.message) || e, '-', explainPollError(e));
           if (unknownChannel && typeof cfg.onChannelGone === 'function') {
             try { cfg.onChannelGone(cfg.channelId); } catch (e2) { log('[chloe.poll] onChannelGone handler failed (' + ((e2 && e2.message) || e2) + ')'); }
             running = false;   // stop this engine's loop; the bootstrap decides whether to drop the channel
@@ -8513,7 +8720,7 @@
       'proceduralModes', 'ackReactions', 'singleParagraph', 'toolsEnabled', 'converseEngine', 'trustHardening', 'bondLadder', 'replyReference', 'backfill', 'hamRadio',
       'chanSpeak', 'chanRead', 'chanRemember',
       'image', 'imageQueueMax', 'imageMemory', 'imageEnhanceOffer', 'autoMod', 'autoModRules', 'dmReplies', 'modList',
-      'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount', 'newsFeeds', 'newsPrompt', 'newsPostTemplate', 'newsInContext', 'newsReview', 'thoughtsFeedTarget',
+      'commandPrefixes', 'commandPrefix', 'beats', 'procRules', 'serverMemberCount', 'newsFeeds', 'newsPrompt', 'newsPodcastPrompt', 'newsPostTemplate', 'newsInContext', 'newsReview', 'thoughtsFeedTarget',
       'actPolicy', 'actGrants',
       'timezoneOffsetMins', 'timeAware', 'engageMode', 'channelLang', 'botAliases', 'botRoleIds', 'botLoopGrace',
       'botLoopHardStop', 'summonEmoji', 'ackThrottleEmoji'];
@@ -8613,6 +8820,9 @@
       newsParseRobots: newsParseRobots, newsPickSitemap: newsPickSitemap, newsParseItems: newsParseItems, newsParseFeedItems: newsParseFeedItems,
       newsFilterItems: newsFilterItems, newsFormatRollup: newsFormatRollup, recentTranscriptTexts: recentTranscriptTexts,
       newsClassicBody: newsClassicBody, newsApplyTemplate: newsApplyTemplate, newsComposeText: newsComposeText,
+      newsResolveItemPrompt: newsResolveItemPrompt, newsResolveTemplate: newsResolveTemplate, newsPackPost: newsPackPost, newsItemLine: newsItemLine,
+      newsSubtitle: newsSubtitle, newsCleanBlurb: newsCleanBlurb,
+      newsKindOf: newsKindOf, newsKindEmoji: newsKindEmoji, newsKindLabel: newsKindLabel, newsCadence: newsCadence,
       newsOwnSig: newsOwnSig, newsMarkerLine: newsMarkerLine,
       addTrust: addTrust, creditPositiveReactions: creditPositiveReactions, replyPriority: replyPriority,
       addGoal: addGoal, closeGoal: closeGoal, goalsForOwner: goalsForOwner, loadGoals: loadGoals, dropGoalsFor: dropGoalsFor,
@@ -8645,7 +8855,7 @@
       dueForMemberCheck: dueForMemberCheck,
       noteMemberPresent: noteMemberPresent,
       markDeparted: markDeparted,
-      backfillStep: backfillStep,
+      backfillStep: backfillStep, resetBackfill: resetBackfill,
       computeNextDelay: computeNextDelay,
       start: start,
       stop: stop,

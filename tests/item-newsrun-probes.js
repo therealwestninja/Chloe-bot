@@ -15,6 +15,7 @@ CHANSTATE.pub = ['N1', 'N2']; CHANSTATE.dms = [];
 function restore() {
   CHANSTATE.pub = snapPub.slice(); CHANSTATE.dms = snapDms.slice();
   newsDrafts = snapDrafts ? JSON.parse(JSON.stringify(snapDrafts)) : null;
+  try { newsExpanded = {}; } catch (e) {}
   newsSeed = snapSeed; newsSawStatus = snapSaw; if (snapDirty !== null && typeof chanDirty !== 'undefined') chanDirty = snapDirty;
   renderNewsSources();
   try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
@@ -28,7 +29,7 @@ try {
   newsDirty = false; newsSeed = '[]'; renderNewsSources();
   const cards = runCards();
   const order0 = cards.length ? [...cards[0].querySelectorAll('.chanactions button')].map(b => b.textContent) : [];
-  ck('R0-render', cards.length === 2 && order0.join(',') === 'run,test,remove', order0.join(','));
+  ck('R0-render', cards.length === 2 && order0.join(',') === 'run,test,edit,remove', order0.join(','));
   const aria = cards.length ? cardBtn(cards[0], 'run').getAttribute('aria-label') : '';
   ck('R0-aria', /run source 1 now/.test(aria || ''), aria);
 
@@ -73,6 +74,29 @@ try {
   const midText = btn5.textContent, midDis = btn5.disabled;
   release(); await p5;
   ck('R5-busy', midText === 'running…' && midDis === true && btn5.textContent === 'run', midText + '/' + btn5.textContent);
+
+  // R6 — Edit reveals the raw fields (collapsed by default), Done hides them;
+  // the summary names the kind + target + cadence, and the kind select flips
+  // the draft kind (podcast default refresh is the slower 12h).
+  const card6 = runCards()[0];
+  const grid6 = card6.querySelector('.newsgrid');
+  ck('R6-collapsed', !!grid6 && grid6.hidden === true, 'hidden=' + (grid6 && grid6.hidden));
+  const sum6 = card6.querySelector('.newssum');
+  ck('R6-summary', !!sum6 && /news/.test(sum6.textContent) && /every/.test(sum6.textContent), sum6 ? sum6.textContent.slice(0, 120) : 'no summary');
+  cardBtn(card6, 'edit').click();
+  const grid6b = runCards()[0].querySelector('.newsgrid');
+  ck('R6-expanded', !!grid6b && grid6b.hidden === false, 'hidden=' + (grid6b && grid6b.hidden));
+  const kindSel = runCards()[0].querySelector('[aria-label="source kind"]');
+  ck('R6-kindselect', !!kindSel && kindSel.value === 'news', kindSel ? kindSel.value : 'no kind select');
+  if (kindSel) {
+    kindSel.value = 'podcast';
+    kindSel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  ck('R6-kindflip', newsDrafts[0].kind === 'podcast' && Number(newsDrafts[0].intervalMs) === 43200000, 'kind=' + newsDrafts[0].kind + ' every=' + newsDrafts[0].intervalMs);
+  const sum6b = runCards()[0].querySelector('.newssum');
+  ck('R6-podsum', !!sum6b && /podcast/.test(sum6b.textContent), sum6b ? sum6b.textContent.slice(0, 120) : 'no summary');
+  cardBtn(runCards()[0], 'done').click();
+  ck('R6-recollapsed', runCards()[0].querySelector('.newsgrid').hidden === true, 'hidden=' + runCards()[0].querySelector('.newsgrid').hidden);
 } catch (e) { ck('R-THREW', false, String((e && e.stack) || e).slice(0, 300)); }
 restore();
 return { pass: checks.every(c => c.ok), checks };

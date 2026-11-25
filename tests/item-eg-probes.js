@@ -1,11 +1,11 @@
 // Items E+G probes — populate direction (panel ← status value). Synthetic s.
-// Covers: 31 TOGGLES + hand-wired defaults-on + gates + automod/beats/procRules +
+// Covers: 30 TOGGLES + hand-wired defaults-on + gates + automod/beats/procRules +
 // Reaction-notes card follow + noticeState + charCurrent + engage/prefix/imageQueue/tz.
 // Restores inputs.
 const checks = [];
 function ck(id, ok, detail) { checks.push({ id, ok: !!ok, detail: String(detail || '') }); if (!ok) { try { console.error('[wire:EG]', id, detail); } catch (e) {} } }
 function byId(id) { return document.getElementById(id); }
-const TOG_IDS = ['affectChk','deferredIntentsChk','contradictionChk','convMemChk','feedbackChk','semanticChk','userModelChk','attentionChk','autoModChk','backfillChk','chansumChk','checkinChk','dmChk','epiChk','factChk','greetChk','imageChk','imageEnhanceChk','imageMemoryChk','lullChk','memChk','moodChk','procChk','reflectChk','selfKnowChk','spChk','summonChk','trustChk','volChk','toolsChk'];
+const TOG_IDS = ['affectChk','deferredIntentsChk','contradictionChk','convMemChk','feedbackChk','semanticChk','userModelChk','attentionChk','autoModChk','chansumChk','checkinChk','dmChk','epiChk','factChk','greetChk','imageChk','imageEnhanceChk','imageMemoryChk','lullChk','memChk','moodChk','procChk','reflectChk','selfKnowChk','spChk','summonChk','trustChk','volChk','toolsChk'];
 const EXTRA_IDS = ['ackChk','goalChk','sleepChk','paceChk','epiGraphChk','timeChk','deviceTimeChk','workChk','delibChk'];
 const ALL = TOG_IDS.concat(EXTRA_IDS);
 const beforeChk = {}; ALL.forEach(id => { const el = byId(id); beforeChk[id] = el ? el.checked : null; });
@@ -26,7 +26,7 @@ function restore() {
 }
 try {
   // E1 — all-true status lights every toggle
-  const s = { running: false, volunteer: true, greet: true, memberCheck: true, dmReplies: true, ackReactions: true, singleParagraph: true, lullFiller: true, checkins: true, factMemory: true, conversationMemory: true, feedbackLearning: true, semanticRecall: true, userModeling: true, contradictionAware: true, timeAware: true, deviceTime: true, selfKnowledge: true, moodAware: true, channelSummary: true, reflection: true, goalObjects: true, idleConsolidation: true, adaptivePace: true, workingMemory: true, idleDeliberation: true, deferredIntents: true, attentionManager: true, episodicMemory: true, episodeGraph: true, relationshipTrust: true, ownAffect: true, proceduralModes: true, reactionSummon: true, image: true, imageMemory: true, imageEnhanceOffer: true, autoMod: true, backfill: true, toolsEnabled: true };
+  const s = { running: false, volunteer: true, greet: true, memberCheck: true, dmReplies: true, ackReactions: true, singleParagraph: true, lullFiller: true, checkins: true, factMemory: true, conversationMemory: true, feedbackLearning: true, semanticRecall: true, userModeling: true, contradictionAware: true, timeAware: true, deviceTime: true, selfKnowledge: true, moodAware: true, channelSummary: true, reflection: true, goalObjects: true, idleConsolidation: true, adaptivePace: true, workingMemory: true, idleDeliberation: true, deferredIntents: true, attentionManager: true, episodicMemory: true, episodeGraph: true, relationshipTrust: true, ownAffect: true, proceduralModes: true, reactionSummon: true, image: true, imageMemory: true, imageEnhanceOffer: true, autoMod: true, toolsEnabled: true };
   try { applyStatus(s); } catch (e) { ck('E1-no-throw', false, String((e && e.message) || e)); }
   const off = ALL.filter(id => { const el = byId(id); return el && !el.checked; });
   ck('E1-all-on', off.length === 0, off.length ? 'unchecked: ' + off.join(',') : 'all ' + ALL.length + ' checked');

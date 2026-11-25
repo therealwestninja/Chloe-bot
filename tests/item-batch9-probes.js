@@ -12,7 +12,7 @@ const snapPub = CHANSTATE.pub.slice(), snapDms = CHANSTATE.dms.slice();
 const snapLabels = Object.assign({}, chanLabels);
 const snapDirty = chanDirty;
 function chanIds() { return [...document.querySelectorAll('#chanList .chanrow')].map(r => r.getAttribute('data-id')); }
-const CHKS = ['affectChk','deferredIntentsChk','contradictionChk','convMemChk','feedbackChk','semanticChk','userModelChk','attentionChk','autoModChk','backfillChk','chansumChk','checkinChk','dmChk','epiChk','factChk','greetChk','imageChk','imageEnhanceChk','imageMemoryChk','lullChk','memChk','moodChk','procChk','reflectChk','selfKnowChk','spChk','summonChk','trustChk','volChk','ackChk','goalChk','sleepChk','paceChk','epiGraphChk','timeChk','deviceTimeChk','workChk','delibChk','toolsChk','gate_emoji','gate_pings','gate_everyone','gate_links','gate_channelLinks'];
+const CHKS = ['affectChk','deferredIntentsChk','contradictionChk','convMemChk','feedbackChk','semanticChk','userModelChk','attentionChk','autoModChk','chansumChk','checkinChk','dmChk','epiChk','factChk','greetChk','imageChk','imageEnhanceChk','imageMemoryChk','lullChk','memChk','moodChk','procChk','reflectChk','selfKnowChk','spChk','summonChk','trustChk','volChk','ackChk','goalChk','sleepChk','paceChk','epiGraphChk','timeChk','deviceTimeChk','workChk','delibChk','toolsChk','gate_emoji','gate_pings','gate_everyone','gate_links','gate_channelLinks'];
 const beforeChk = {}; CHKS.forEach(id => { const el = byId(id); beforeChk[id] = el ? el.checked : null; });
 const STRIP = ['runDot','runTxt','sb_run_dot','sb_run','verTxt','tokTxt','botTxt','sb_brain','pollTxt'];
 const beforeStrip = {}; STRIP.forEach(id => { const el = byId(id); beforeStrip[id] = el ? { t: el.textContent, c: el.className } : null; });
