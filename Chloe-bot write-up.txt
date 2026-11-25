@@ -1,0 +1,24 @@
+**Chloe-bot — a natural-language Discord bot with real moderation, run from your browser (no server, no API key)**
+
+**What it is:** Chloe-bot is a free, locally hosted Discord bot that runs entirely inside your browser. There's no cloud host and no bot-hosting bill — a [Perchance](https://perchance.org) generator page provides the AI, and a Tampermonkey/Greasemonkey userscript bridges it to Discord. Any internet-connected device that can run the Chromium Tampermonkey extension can become the host.
+
+**How Claude helped:** The entire thing — the Discord event loop, the moderation engine, the memory/recall system, and the control panel UI — was architected and built with Claude Code across a long campaign of specs, factory-style parallel builds, and "prove-the-wire" verification passes. Claude wrote and tested the engine seams, the undo/approvals system, and the headless E2E suites that gate each change.
+
+**What it does (basics):**
+- **Talk to it like a person** — mention it or say "chloe, …"; it replies in natural language and remembers people (facts, goals, preferences) across channels and restarts.
+- **Per-user tools** — personal reminders, goals, AFK, per-user reply language (`fr`/`es`/`ja`/…), message highlights, and `aboutme` / `forget me` for memory control.
+- **Image generation** — just ask it ("draw me a fox in a raincoat").
+- **Polls, recaps, and an instant no-AI `time`/`date`.**
+
+**Advanced:**
+- **Full moderation suite** — warn ladders, timeouts (auto-expiry), soft-bans, ignore/block, per-user notes, lockdown & open-chat modes, moderator-only command gating, and emoji-reaction shortcuts (⚠️ 🔒 📢 📜).
+- **Auto-moderation that can only ever take *reversible* actions** — the one irreversible action (permaban) is panel-only and requires explicit confirmation.
+- **Operator safety rails** — a per-channel **undo stack**, an **approvals/grants** system (allow/ask/deny), and a "why did it stay silent?" decision log.
+- **Episodic memory recall**, per-channel personas (pin a message to set tone), attachment reading (txt/md/csv/json + a zero-dependency PDF text extractor), and a built-in games harness (Wordle).
+
+**Privacy & security disclaimer:** This is a self-hosted userscript — you run it yourself and you are the host.
+- **Your Discord bot token never touches the Perchance page.** It lives only in the userscript and is reached through nonce-matched `postMessage` with scoped commands, so the AI page can't read it.
+- It accesses only the Discord channels you point it at, via your bot token, plus Perchance for generation. Nothing is sent to any third-party server you don't control.
+- As with any userscript, review the source before installing and only grant it the token/permissions you're comfortable with. It's MIT-licensed and the full source is public.
+
+**Source & full command list:** https://github.com/therealwestninja/Chloe-bot
